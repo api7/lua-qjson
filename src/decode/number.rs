@@ -67,7 +67,7 @@ mod tests {
     }
 
     #[test] fn f64_zero()    { assert_eq!(parse_f64(b"0.0").unwrap(),  0.0); }
-    #[test] fn f64_decimal() { assert!((parse_f64(b"2.5").unwrap()  - 2.5).abs()  < 1e-12); }
+    #[test] fn f64_inexact_decimal() { assert!((parse_f64(b"1.7").unwrap() - 1.7).abs() < 1e-12); }
     #[test] fn f64_negative(){ assert_eq!(parse_f64(b"-1.5").unwrap(), -1.5); }
     #[test] fn f64_exponent(){ assert_eq!(parse_f64(b"1e2").unwrap(),  100.0); }
 
