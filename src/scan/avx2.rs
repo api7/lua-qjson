@@ -43,18 +43,16 @@ unsafe fn scan_avx2_impl(buf: &[u8], out: &mut Vec<u32>) -> Result<(), usize> {
         i += 64;
     }
 
-    // Safety: if we exit the chunked loop with non-zero state and there's
-    // a non-empty tail, the boundary case is hard to handle correctly without
-    // duplicating logic. Fall back to scalar for the whole buffer.
-    if (in_string != 0 || bs_carry != 0) && i < buf.len() {
+    // Whenever there's a tail, fall back to scalar for the whole buffer.
+    // This is necessary because ScalarScanner validates bracket matching against
+    // its own stack; a tail containing `]` or `}` that closes a bracket opened
+    // in the AVX2-processed prefix would cause ScalarScanner::scan on the tail
+    // slice to return Err, silently dropping those structural chars.
+    // The common case (input length is a multiple of 64) is unaffected.
+    if i < buf.len() {
         out.clear();
         return super::ScalarScanner::scan(buf, out);
     }
-
-    // Tail: scalar fallback for the remainder.
-    let mut tail = Vec::new();
-    super::ScalarScanner::scan(&buf[i..], &mut tail).map_err(|p| p + i)?;
-    out.extend(tail.into_iter().map(|p| p + i as u32));
     Ok(())
 }
 
