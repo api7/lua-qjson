@@ -31,6 +31,17 @@ unsafe fn scan_avx2_impl(buf: &[u8], out: &mut Vec<u32>) -> Result<(), usize> {
         let escaped   = find_escape_mask_with_carry(backslash, &mut bs_carry);
         let real_quote = quote & !escaped;
 
+        // String-skip fast path: when the previous chunk left us inside a
+        // string and this chunk contains no unescaped quote, the entire
+        // chunk is string interior. No structural chars to emit and
+        // in_string stays 1; bs_carry was already updated above. Skip the
+        // 14 cmpeq / movemask ops in structural_mask_chunk plus the PCLMUL
+        // prefix-XOR — the dominant cost on string-heavy payloads.
+        if in_string != 0 && real_quote == 0 {
+            i += 64;
+            continue;
+        }
+
         let (inside, new_in_string) = inside_string_mask(real_quote, in_string);
         in_string = new_in_string;
 
@@ -43,17 +54,30 @@ unsafe fn scan_avx2_impl(buf: &[u8], out: &mut Vec<u32>) -> Result<(), usize> {
         i += 64;
     }
 
-    // Whenever there's a tail, fall back to scalar for the whole buffer.
-    // This is necessary because ScalarScanner validates bracket matching against
-    // its own stack; a tail containing `]` or `}` that closes a bracket opened
-    // in the AVX2-processed prefix would cause ScalarScanner::scan on the tail
-    // slice to return Err, silently dropping those structural chars.
-    // The common case (input length is a multiple of 64) is unaffected.
+    // Tail (<64 bytes): continue emit-only via scalar, carrying the
+    // in_string / bs_carry state from the last AVX2 chunk. Bracket pairing
+    // is checked once at the end on the merged indices.
+    //
+    // If bs_carry == 1 the byte at position `i` is escape-targeted by the
+    // trailing backslash run of the prior chunk; inside a string we must
+    // skip it (treat as an escaped data byte, not a structural). Outside
+    // a string backslashes are plain characters and bs_carry has no effect.
     if i < buf.len() {
-        out.clear();
-        return super::ScalarScanner::scan(buf, out);
+        let scalar_start = if in_string != 0 && bs_carry != 0 {
+            i + 1
+        } else {
+            i
+        };
+        if scalar_start <= buf.len() {
+            super::scalar::scan_emit_resume(buf, scalar_start, in_string != 0, out)?;
+        } else if in_string != 0 {
+            return Err(buf.len());
+        }
+    } else if in_string != 0 {
+        return Err(buf.len());
     }
-    Ok(())
+
+    super::validate_brackets(buf, out)
 }
 
 #[inline(always)]
@@ -236,6 +260,96 @@ mod tests {
         buf.push(b'"');
         buf.push(b'}');
         assert_eq!(buf.len(), 64);
+        parity(&buf);
+    }
+
+    /// Exercises the string-skip fast path: a string spanning many AVX2
+    /// chunks with no internal quotes. The fast-path branch must produce
+    /// the same emitted offsets as the slow path (which the parity check
+    /// against scalar implicitly verifies).
+    #[test]
+    fn long_string_engages_skip_fastpath() {
+        if !host_supports_avx2() { return; }
+        let mut buf = Vec::new();
+        buf.extend_from_slice(b"{\"k\":\"");
+        // ~10 KB of string interior — many chunks fully inside the string.
+        for _ in 0..10_000 { buf.push(b'a'); }
+        buf.push(b'"');
+        buf.push(b'}');
+        // Pad to 64-aligned to also exercise the no-tail branch.
+        while buf.len() % 64 != 0 { buf.push(b' '); }
+        parity(&buf);
+    }
+
+    /// String contains escaped quotes — the fast path must NOT fire when
+    /// `real_quote != 0` even though we may still be inside a string at
+    /// the chunk boundary.
+    #[test]
+    fn escaped_quotes_do_not_trip_fastpath() {
+        if !host_supports_avx2() { return; }
+        let mut buf = Vec::new();
+        buf.extend_from_slice(b"{\"k\":\"");
+        // Embed real escape sequences periodically so quotes appear in the
+        // raw bytes but are escaped; real_quote should still be 0 over
+        // these chunks, fast path should fire.
+        for _ in 0..50 {
+            buf.extend_from_slice(b"aaaaaaaa\\\"");  // 8 a's + \"
+        }
+        buf.push(b'"');
+        buf.push(b'}');
+        while buf.len() % 64 != 0 { buf.push(b' '); }
+        parity(&buf);
+    }
+
+    /// AVX2 main loop + scalar tail: input length not a multiple of 64.
+    /// Exercises the path that used to bypass AVX2 entirely.
+    #[test]
+    fn unaligned_tail_parity() {
+        if !host_supports_avx2() { return; }
+        // Valid JSON of various non-64-aligned total lengths.
+        for tail_len in [1usize, 5, 17, 33, 63] {
+            let mut buf = Vec::new();
+            buf.extend_from_slice(b"{\"key\":\"");
+            while buf.len() < 60 { buf.push(b'x'); }
+            buf.extend_from_slice(b"abc\"}");
+            // buf now well-formed; pad with spaces after the closing `}`
+            // to land at 64 + tail_len total bytes.
+            let target = 64 + tail_len;
+            while buf.len() < target { buf.push(b' '); }
+            assert_eq!(buf.len(), target, "test setup");
+            parity(&buf);
+        }
+    }
+
+    /// String spans the 64-byte chunk boundary; the closing quote lives
+    /// in the scalar tail. Requires in_string state to carry correctly.
+    #[test]
+    fn string_crosses_avx2_boundary() {
+        if !host_supports_avx2() { return; }
+        let mut buf = Vec::new();
+        buf.extend_from_slice(b"{\"k\":\"");      // 6 bytes, in_string from byte 5
+        while buf.len() < 80 { buf.push(b'a'); }  // long string content past byte 64
+        buf.push(b'"');
+        buf.push(b'}');
+        parity(&buf);
+    }
+
+    /// Backslash at the LAST byte of the AVX2 chunk; the escaped target
+    /// is the FIRST byte of the scalar tail. Exercises bs_carry.
+    #[test]
+    fn backslash_at_chunk_boundary() {
+        if !host_supports_avx2() { return; }
+        // Bytes 0..63: `{"key":"` followed by 'x' padding ending with `\`.
+        // Byte 64 (first tail byte): an escaped `"` — must NOT close the string.
+        // Then real closing `"` and `}` follow.
+        let mut buf = Vec::new();
+        buf.extend_from_slice(b"{\"key\":\"");    // 8 bytes
+        while buf.len() < 63 { buf.push(b'x'); }  // pad to 63
+        buf.push(b'\\');                          // byte 63: backslash
+        buf.push(b'"');                           // byte 64: escaped quote (tail)
+        buf.push(b'y');                           // byte 65
+        buf.push(b'"');                           // byte 66: real string close
+        buf.push(b'}');                           // byte 67
         parity(&buf);
     }
 

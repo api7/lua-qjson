@@ -5,66 +5,58 @@ pub struct ScalarScanner;
 impl Scanner for ScalarScanner {
     fn scan(buf: &[u8], out: &mut Vec<u32>) -> Result<(), usize> {
         out.reserve(buf.len() / 6);
+        scan_emit_resume(buf, 0, false, out)?;
+        super::validate_brackets(buf, out)
+    }
+}
 
-        let mut i = 0usize;
-        let mut in_str = false;
-        let mut stack: Vec<u8> = Vec::with_capacity(32);
+/// Emit structural-character offsets for `buf[start..]`, continuing from a
+/// given in-string state. Does NOT validate bracket pairing; the caller is
+/// responsible for running `validate_brackets` over the emitted offsets.
+///
+/// Used by `ScalarScanner::scan` (with start=0, in_str_init=false) and as
+/// the unaligned-tail handler by `Avx2Scanner::scan` (with the carried
+/// in-string state from the last AVX2 chunk).
+pub(crate) fn scan_emit_resume(
+    buf: &[u8],
+    start: usize,
+    in_str_init: bool,
+    out: &mut Vec<u32>,
+) -> Result<(), usize> {
+    let mut i = start;
+    let mut in_str = in_str_init;
 
-        while i < buf.len() {
-            let b = buf[i];
-
-            if in_str {
-                if b == b'\\' {
-                    // Skip the escape and the next byte unconditionally.
-                    // Anything in a string cannot be a structural char.
-                    i += 2;
-                    continue;
-                }
-                if b == b'"' {
-                    in_str = false;
-                    out.push(i as u32);
-                }
-                i += 1;
-                continue;
-            }
-
-            match b {
-                b'"' => {
-                    in_str = true;
-                    out.push(i as u32);
-                }
-                b'{' | b'[' => {
-                    stack.push(b);
-                    out.push(i as u32);
-                }
-                b'}' => {
-                    match stack.pop() {
-                        Some(b'{') => {}
-                        _ => return Err(i),
-                    }
-                    out.push(i as u32);
-                }
-                b']' => {
-                    match stack.pop() {
-                        Some(b'[') => {}
-                        _ => return Err(i),
-                    }
-                    out.push(i as u32);
-                }
-                b',' | b':' => out.push(i as u32),
-                _ => {}
-            }
-            i += 1;
-        }
+    while i < buf.len() {
+        let b = buf[i];
 
         if in_str {
-            return Err(buf.len());
+            if b == b'\\' {
+                i += 2;
+                continue;
+            }
+            if b == b'"' {
+                in_str = false;
+                out.push(i as u32);
+            }
+            i += 1;
+            continue;
         }
-        if !stack.is_empty() {
-            return Err(buf.len());
+
+        match b {
+            b'"' => {
+                in_str = true;
+                out.push(i as u32);
+            }
+            b'{' | b'}' | b'[' | b']' | b',' | b':' => out.push(i as u32),
+            _ => {}
         }
-        Ok(())
+        i += 1;
     }
+
+    if in_str {
+        return Err(buf.len());
+    }
+    Ok(())
 }
 
 #[cfg(test)]
