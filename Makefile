@@ -8,7 +8,9 @@ LUA_ENV := LD_LIBRARY_PATH=$(LIB_DIR) LUA_CPATH='$(LUA_CPATH)'
 .PHONY: help build test lint bench clean
 
 help: ## Show this help
-	@awk 'BEGIN {FS = ":.*## "} /^[a-zA-Z_-]+:.*## / {printf "  \033[36m%-10s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
+	@# FS uses [^#]* (not .*) so a description containing `##` isn't truncated.
+	@# Consequence: targets whose prerequisite list contains `#` won't render — none today.
+	@awk 'BEGIN {FS = ":[^#]*## "} /^[a-zA-Z_-]+:[^#]*## / {printf "  \033[36m%-10s\033[0m — %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
 build: ## Build the release cdylib (target/release/libquickdecode.so)
 	cargo build --release

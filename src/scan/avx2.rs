@@ -63,17 +63,21 @@ unsafe fn scan_avx2_impl(buf: &[u8], out: &mut Vec<u32>) -> Result<(), usize> {
     // skip it (treat as an escaped data byte, not a structural). Outside
     // a string backslashes are plain characters and bs_carry has no effect.
     if i < buf.len() {
+        // Invariant: scalar_start ∈ {i, i+1} and i < buf.len(), so
+        // scalar_start <= buf.len(). The boundary case scalar_start ==
+        // buf.len() only fires when i == buf.len()-1 AND in_string != 0
+        // AND bs_carry != 0; scan_emit_resume handles it by entering with
+        // an empty loop body and returning Err(buf.len()) from its
+        // post-loop `if in_str` check.
         let scalar_start = if in_string != 0 && bs_carry != 0 {
             i + 1
         } else {
             i
         };
-        if scalar_start <= buf.len() {
-            super::scalar::scan_emit_resume(buf, scalar_start, in_string != 0, out)?;
-        } else if in_string != 0 {
-            return Err(buf.len());
-        }
+        super::scalar::scan_emit_resume(buf, scalar_start, in_string != 0, out)?;
     } else if in_string != 0 {
+        // 64-aligned input that ended mid-string: tail handler never runs,
+        // so flag the unterminated string here.
         return Err(buf.len());
     }
 
@@ -281,11 +285,11 @@ mod tests {
         parity(&buf);
     }
 
-    /// String contains escaped quotes — the fast path must NOT fire when
-    /// `real_quote != 0` even though we may still be inside a string at
-    /// the chunk boundary.
+    /// String contains escaped quotes — the parity output must still
+    /// match scalar. (We cannot directly observe whether the fast path
+    /// took the branch; parity asserts equivalence either way.)
     #[test]
-    fn escaped_quotes_do_not_trip_fastpath() {
+    fn escaped_quotes_remain_correct_with_fastpath() {
         if !host_supports_avx2() { return; }
         let mut buf = Vec::new();
         buf.extend_from_slice(b"{\"k\":\"");

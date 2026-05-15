@@ -14,8 +14,25 @@ end
 -- Shape: a multimodal chat-completion request with one ~1.5K text question
 -- and N base64-encoded image parts (each 50-500 KB) until the payload reaches
 -- target_bytes. Mirrors the production case the bench is meant to reflect.
+--
+-- Image sizes are drawn from a deterministic Park-Miller LCG (not math.random,
+-- which delegates to libc rand() and varies across machines) so the same
+-- target_bytes produces byte-identical output on any LuaJIT 2.1 host.
+--
+-- Size accuracy: the normal-branch upper is `min(500K, remaining)` so the
+-- loop cannot overshoot during steady state. When fewer than 50 KB remain
+-- the final image falls through to `math.max(1024, remaining)` — undershoot
+-- is at most a few hundred bytes; worst-case overshoot is ~1 KB (only when
+-- `remaining < 1024`, which the seed=42 walk does not hit for our ladder).
 local function make_payload(target_bytes)
-    math.randomseed(42)
+    local rng_state = 42
+    local function rng_range(lo, hi)
+        -- Park-Miller minimal-standard LCG: a=48271, m=2^31-1. Multiplication
+        -- fits in double precision (48271 * 2^31 < 2^53).
+        rng_state = (rng_state * 48271) % 2147483647
+        return lo + (rng_state % (hi - lo + 1))
+    end
+
     local text = string.rep("Q", 1500)
     local text_part = '{"type":"text","text":"' .. text .. '"}'
     local parts = { text_part }
@@ -23,9 +40,17 @@ local function make_payload(target_bytes)
 
     while current < target_bytes do
         local remaining = target_bytes - current
-        local upper = math.min(500 * 1024, math.max(50 * 1024, remaining + 50 * 1024))
-        local lower = math.min(50 * 1024, upper)
-        local img_size = math.random(lower, upper)
+        local img_size
+        if remaining < 50 * 1024 then
+            -- Final image: shrink below the 50 KB floor so the label matches
+            -- the actual payload size. Bench iters all see the same payload
+            -- regardless, so the smaller tail blob doesn't change what's
+            -- being measured.
+            img_size = math.max(1024, remaining)
+        else
+            local upper = math.min(500 * 1024, remaining)
+            img_size = rng_range(50 * 1024, upper)
+        end
         local b64 = string.rep("A", img_size)
         local img_part = '{"type":"image_url","image_url":{"url":"data:image/jpeg;base64,'
             .. b64 .. '"}}'
@@ -57,9 +82,9 @@ local scenarios = {
     {name = "200k",   iters = 50,   payload = make_payload(200 * 1024)},
     {name = "500k",   iters = 20,   payload = make_payload(500 * 1024)},
     {name = "1m",     iters = 15,   payload = make_payload(1024 * 1024)},
-    {name = "2m",     iters = 10,   payload = make_payload(2 * 1024 * 1024)},
-    {name = "5m",     iters = 10,   payload = make_payload(5 * 1024 * 1024)},
-    {name = "10m",    iters = 10,   payload = make_payload(10 * 1024 * 1024)},
+    {name = "2m",     iters = 20,   payload = make_payload(2 * 1024 * 1024)},
+    {name = "5m",     iters = 20,   payload = make_payload(5 * 1024 * 1024)},
+    {name = "10m",    iters = 20,   payload = make_payload(10 * 1024 * 1024)},
 }
 
 for _, s in ipairs(scenarios) do

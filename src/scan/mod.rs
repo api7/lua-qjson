@@ -36,9 +36,11 @@ pub(crate) fn scan(buf: &[u8], out: &mut Vec<u32>) -> Result<(), usize> {
 
 /// Walk a sequence of already-emitted structural offsets and verify that
 /// `{`/`}` and `[`/`]` are properly paired. String quotes toggle an
-/// `in_string` flag and are otherwise skipped — well-formed emit paths
-/// never push structural chars from inside strings, but the check is
-/// defensive.
+/// `in_string` flag and are otherwise skipped. This pass trusts the emit
+/// phase: a forged quote in the index list would flip `in_string` and
+/// mask subsequent bracket mismatches, so the function is correctness-
+/// coupled with the scanner that produced `indices`, not defensive
+/// against arbitrary inputs.
 ///
 /// On the first mismatch, returns `Err(offset_in_buf)`. On unmatched
 /// openers at end of input, returns `Err(buf.len())`.
