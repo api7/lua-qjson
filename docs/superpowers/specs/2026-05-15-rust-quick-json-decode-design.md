@@ -62,16 +62,18 @@ It does so by performing a **single fast SIMD structural scan** in Phase 1 (only
 src/
 ├── lib.rs               — crate root, re-exports
 ├── ffi.rs               — pub extern "C" symbols (C ABI layer)
-├── doc.rs               — Document & Cursor (internal Rust API)
+├── doc.rs               — Document type (Phase 1 + container helpers)
+├── cursor.rs            — Cursor, path resolution, skip-cache walk
+├── path.rs              — path string parse (zero-alloc iterator)
+├── error.rs             — error / type enums
 ├── scan/
-│   ├── mod.rs           — StructScanner trait, dispatch
+│   ├── mod.rs           — Scanner trait + runtime dispatch (OnceCell-cached)
 │   ├── scalar.rs        — scalar fallback
-│   ├── avx2.rs          — x86_64 AVX2 + PCLMUL
-│   └── runtime_dispatch.rs
+│   └── avx2.rs          — x86_64 AVX2 + PCLMUL (gated by `avx2` feature)
 ├── decode/
+│   ├── mod.rs
 │   ├── number.rs        — lazy i64/f64 parse
-│   ├── string.rs        — lazy escape decode + UTF-8 check on \u
-│   └── path.rs          — path string parse (zero-alloc iterator)
+│   └── string.rs        — lazy escape decode + UTF-8 check on \u
 └── skip_cache.rs        — Phase 2 sibling-skip cache
 
 lua/
@@ -144,8 +146,8 @@ typedef struct {
     const qjd_doc* doc;
     uint32_t       idx_start;     /* opener position in doc.indices */
     uint32_t       idx_end;       /* one past closer */
-    uint32_t       cache_slot;    /* skip-cache slot; 0 if not populated */
-    uint32_t       _pad;
+    uint32_t       _reserved0;    /* reserved for future fast-path */
+    uint32_t       _reserved1;    /* reserved / padding */
 } qjd_cursor;   /* 24 bytes, by-value, no allocation */
 ```
 
@@ -337,10 +339,10 @@ pub(crate) struct Cursor<'d> {
     /// idx_start points at '{' or '['; idx_end points one past matching '}' / ']'.
     idx_start:  u32,
     idx_end:    u32,
-    /// Skip-cache slot for this range (0 = not yet built).
-    cache_slot: u32,
 }
 ```
+
+The published `qjd_cursor` carries two `_reservedN` slots beyond `idx_start`/`idx_end`; they are unused in v1 but reserved so a future per-cursor skip-cache fast-path can be added without breaking the ABI.
 
 `Cursor` is `Copy` and never allocates. `open()`, `field()`, `index()` return new cursors by value.
 
@@ -375,8 +377,9 @@ pub(crate) struct SkipSlot {
     /// (for object: pointing at the key's opening '"';
     ///  for array: pointing at the value's first token).
     child_starts: Vec<u32>,
-    /// Position of the closing '}' / ']' in doc.indices.
-    closer_idx:   u32,
+    /// child_ends[i] = idx_end for a Cursor pointing at the i-th child's value.
+    /// Storing this lets cache-hit lookups skip the brace-counting walk.
+    child_ends:   Vec<u32>,
 }
 ```
 

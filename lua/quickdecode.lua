@@ -4,7 +4,7 @@ ffi.cdef[[
 typedef struct qjd_doc qjd_doc;
 typedef struct {
     const qjd_doc* doc;
-    uint32_t idx_start, idx_end, cache_slot, _pad;
+    uint32_t idx_start, idx_end, _reserved0, _reserved1;
 } qjd_cursor;
 
 const char* qjd_strerror(int code);
@@ -161,24 +161,21 @@ function Cursor:len(path)
 end
 
 function Cursor:open(path)
-    local out = ffi.new("qjd_cursor[1]")
-    local rc = C.qjd_cursor_open(self._cur, path, #path, out)
+    local rc = C.qjd_cursor_open(self._cur, path, #path, cur_box)
     if not check_err(rc) then return nil end
-    return setmetatable({ _cur = out[0], _doc = self._doc }, Cursor)
+    return setmetatable({ _cur = cur_box[0], _doc = self._doc }, Cursor)
 end
 
 function Cursor:field(key)
-    local out = ffi.new("qjd_cursor[1]")
-    local rc = C.qjd_cursor_field(self._cur, key, #key, out)
+    local rc = C.qjd_cursor_field(self._cur, key, #key, cur_box)
     if not check_err(rc) then return nil end
-    return setmetatable({ _cur = out[0], _doc = self._doc }, Cursor)
+    return setmetatable({ _cur = cur_box[0], _doc = self._doc }, Cursor)
 end
 
 function Cursor:index(i)
-    local out = ffi.new("qjd_cursor[1]")
-    local rc = C.qjd_cursor_index(self._cur, i, out)
+    local rc = C.qjd_cursor_index(self._cur, i, cur_box)
     if not check_err(rc) then return nil end
-    return setmetatable({ _cur = out[0], _doc = self._doc }, Cursor)
+    return setmetatable({ _cur = cur_box[0], _doc = self._doc }, Cursor)
 end
 
 return _M

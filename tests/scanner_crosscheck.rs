@@ -1,9 +1,10 @@
+#[cfg(all(target_arch = "x86_64", feature = "avx2"))]
 use proptest::prelude::*;
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", feature = "avx2"))]
 use quickdecode::__test_api::{Scanner, ScalarScanner, Avx2Scanner};
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", feature = "avx2"))]
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(2000))]
 
@@ -26,7 +27,7 @@ proptest! {
     }
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", feature = "avx2"))]
 fn valid_jsonish() -> impl Strategy<Value = String> {
     proptest::collection::vec(
         prop_oneof![
@@ -50,5 +51,5 @@ fn valid_jsonish() -> impl Strategy<Value = String> {
     ).prop_map(|v| v.concat())
 }
 
-#[cfg(not(target_arch = "x86_64"))]
+#[cfg(not(all(target_arch = "x86_64", feature = "avx2")))]
 #[test] fn skip() {}

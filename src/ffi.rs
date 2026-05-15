@@ -20,7 +20,6 @@ macro_rules! ffi_catch {
 }
 
 /// Opaque type exported to C as `qjd_doc*`.
-#[allow(dead_code)]
 pub struct qjd_doc(pub(crate) Document<'static>);
 
 #[no_mangle]
@@ -169,12 +168,8 @@ pub unsafe extern "C" fn qjd_get_str(
         // String ends at the close quote, whose indices position is idx_start + 1.
         let close = d.indices[(cur.idx_start + 1) as usize] as usize;
 
-        // SAFETY: scratch is owned by the qjd_doc; we obtain a mutable reference
-        // to it through the raw *mut qjd_doc pointer (not through the shared &Document
-        // alias `d`). Lua-side callers consume the returned ptr before any further
-        // FFI calls. Single-threaded use enforced by C ABI contract.
-        let scratch = &mut (*doc).0.scratch;
-        match string::decode_string(d.buf, pos + 1, close, scratch) {
+        let mut scratch = d.scratch.borrow_mut();
+        match string::decode_string(d.buf, pos + 1, close, &mut scratch) {
             Ok((p, n)) => { *out_ptr = p; *out_len = n; qjd_err::QJD_OK as c_int }
             Err(e) => e as c_int,
         }
@@ -262,8 +257,8 @@ pub struct qjd_cursor {
     pub doc:        *const qjd_doc,
     pub idx_start:  u32,
     pub idx_end:    u32,
-    pub cache_slot: u32,
-    pub _pad:       u32,
+    pub _reserved0: u32,
+    pub _reserved1: u32,
 }
 
 /// Turn a `*const qjd_cursor` into `(&'static Document<'static>, Cursor)` for Rust use.
@@ -278,10 +273,10 @@ unsafe fn cursor_to_internal(c: *const qjd_cursor) -> Result<(&'static Document<
 fn internal_to_cursor(doc: *const qjd_doc, cur: Cursor) -> qjd_cursor {
     qjd_cursor {
         doc,
-        idx_start: cur.idx_start,
-        idx_end:   cur.idx_end,
-        cache_slot: 0,
-        _pad:       0,
+        idx_start:  cur.idx_start,
+        idx_end:    cur.idx_end,
+        _reserved0: 0,
+        _reserved1: 0,
     }
 }
 
@@ -372,10 +367,8 @@ pub unsafe extern "C" fn qjd_cursor_get_str(
         }
         let close = d.indices[(cur.idx_start + 1) as usize] as usize;
 
-        // Access scratch via raw pointer through doc to avoid aliasing the &Document.
-        let doc_ptr = (*c).doc as *mut qjd_doc;
-        let scratch = &mut (*doc_ptr).0.scratch;
-        match string::decode_string(d.buf, pos + 1, close, scratch) {
+        let mut scratch = d.scratch.borrow_mut();
+        match string::decode_string(d.buf, pos + 1, close, &mut scratch) {
             Ok((p, n)) => { *out_ptr = p; *out_len = n; qjd_err::QJD_OK as c_int }
             Err(e) => e as c_int,
         }

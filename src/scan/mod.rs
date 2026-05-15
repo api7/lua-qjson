@@ -1,5 +1,5 @@
 pub(crate) mod scalar;
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", feature = "avx2"))]
 pub(crate) mod avx2;
 
 use once_cell::sync::OnceCell;
@@ -21,7 +21,7 @@ static SCAN_FN: OnceCell<ScanFn> = OnceCell::new();
 
 pub(crate) fn scan(buf: &[u8], out: &mut Vec<u32>) -> Result<(), usize> {
     let f = *SCAN_FN.get_or_init(|| {
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(all(target_arch = "x86_64", feature = "avx2"))]
         {
             if std::is_x86_feature_detected!("avx2")
                 && std::is_x86_feature_detected!("pclmulqdq")

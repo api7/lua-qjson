@@ -31,8 +31,8 @@ typedef struct {
     const qjd_doc* doc;
     uint32_t       idx_start;
     uint32_t       idx_end;
-    uint32_t       cache_slot;
-    uint32_t       _pad;
+    uint32_t       _reserved0;
+    uint32_t       _reserved1;
 } qjd_cursor;
 
 const char* qjd_strerror(int code);

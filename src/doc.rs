@@ -3,11 +3,10 @@ use std::cell::RefCell;
 use crate::error::qjd_err;
 use crate::skip_cache::SkipCache;
 
-#[allow(dead_code)]
 pub struct Document<'a> {
     pub(crate) buf:     &'a [u8],
     pub(crate) indices: Vec<u32>,
-    pub(crate) scratch: Vec<u8>,
+    pub(crate) scratch: RefCell<Vec<u8>>,
     pub(crate) skip:    RefCell<SkipCache>,
 }
 
@@ -20,8 +19,8 @@ impl<'a> Document<'a> {
         Ok(Self {
             buf,
             indices,
-            scratch: Vec::new(),
-            skip: RefCell::new(SkipCache::new()),
+            scratch: RefCell::new(Vec::new()),
+            skip:    RefCell::new(SkipCache::new()),
         })
     }
 }

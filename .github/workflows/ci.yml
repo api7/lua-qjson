@@ -37,6 +37,9 @@ jobs:
       - name: Test (release)
         run: cargo test --release
 
+      - name: Test scalar-only (no AVX2 feature)
+        run: cargo test --release --no-default-features
+
       - name: Test with test-panic feature
         run: cargo test --features test-panic --release
 
