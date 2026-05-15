@@ -13,6 +13,6 @@ pub mod ffi;
 #[doc(hidden)]
 pub mod __test_api {
     pub use crate::scan::{Scanner, ScalarScanner};
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(target_arch = "x86_64", feature = "avx2"))]
     pub use crate::scan::avx2::Avx2Scanner;
 }

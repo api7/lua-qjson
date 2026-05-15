@@ -13,12 +13,16 @@ pub(crate) struct SkipSlot {
     /// marker. For object children this is the key's opening '"'; for array
     /// children, the value's first marker.
     pub(crate) child_starts: Vec<u32>,
+    /// child_ends[i] = the `cursor_end` value for the i-th child (i.e. the
+    /// idx_end to put in a Cursor pointing at that child's value). Storing
+    /// this lets cache-hit resolution skip the brace-counting find_value_span.
+    pub(crate) child_ends:   Vec<u32>,
 }
 
 impl SkipCache {
     pub(crate) fn new() -> Self {
         Self {
-            slots: vec![SkipSlot { child_starts: Vec::new() }],
+            slots: vec![SkipSlot { child_starts: Vec::new(), child_ends: Vec::new() }],
             by_opener: FxHashMap::default(),
         }
     }
@@ -30,7 +34,7 @@ impl SkipCache {
             return (slot, true);
         }
         let new = self.slots.len() as u32;
-        self.slots.push(SkipSlot { child_starts: Vec::new() });
+        self.slots.push(SkipSlot { child_starts: Vec::new(), child_ends: Vec::new() });
         self.by_opener.insert(opener_idx, new);
         (new, false)
     }
@@ -43,5 +47,6 @@ impl SkipCache {
         &self.slots[n as usize]
     }
 
+    #[cfg(test)]
     pub(crate) fn len(&self) -> usize { self.by_opener.len() }
 }

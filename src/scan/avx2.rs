@@ -170,6 +170,10 @@ mod tests {
     use super::*;
     use crate::scan::{Scanner, scalar::ScalarScanner};
 
+    fn host_supports_avx2() -> bool {
+        std::is_x86_feature_detected!("avx2") && std::is_x86_feature_detected!("pclmulqdq")
+    }
+
     fn parity(input: &[u8]) {
         let mut a = Vec::new();
         let mut b = Vec::new();
@@ -180,6 +184,7 @@ mod tests {
 
     #[test]
     fn no_strings_matches_scalar() {
+        if !host_supports_avx2() { return; }
         parity(b"{}");
         parity(b"[]");
         parity(b"[{}]");
@@ -190,6 +195,7 @@ mod tests {
 
     #[test]
     fn within_chunk_strings_match_scalar() {
+        if !host_supports_avx2() { return; }
         // These are <64 bytes so they go through the scalar tail path only;
         // they still verify Avx2Scanner does not corrupt the output for these
         // inputs, but they do NOT exercise the AVX2 string handling.
@@ -203,6 +209,7 @@ mod tests {
     /// within a single 64-byte chunk.
     #[test]
     fn chunked_path_with_string() {
+        if !host_supports_avx2() { return; }
         // Build a 64-byte input where bytes 0..64 are a single AVX2 chunk
         // containing a string, and there is no tail.
         // Layout: `{"k":"<48 a's>"}` = 1 + 4 + 1 + 48 + 1 + 1 = 56 bytes. Need 64.
@@ -219,6 +226,7 @@ mod tests {
     /// String with internal escapes inside a 64-byte chunk.
     #[test]
     fn chunked_path_with_escapes() {
+        if !host_supports_avx2() { return; }
         // Bytes: {"k":"aa\"bb\\cc<padding>"}
         // Need exactly 64 bytes. Build it carefully.
         let mut buf = Vec::with_capacity(64);
@@ -235,6 +243,7 @@ mod tests {
     /// for multiple strings in a single 64-byte chunk.
     #[test]
     fn pclmul_inside_string_correct() {
+        if !host_supports_avx2() { return; }
         // {"a":"foo","b":"bar"}<padding to 64>
         // Strings "foo" and "bar" both fully within the chunk.
         let mut buf = Vec::with_capacity(64);

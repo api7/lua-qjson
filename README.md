@@ -2,11 +2,11 @@
 
 Rust-implemented fast JSON decoder exposed to LuaJIT via FFI. Optimized for the common case where a large JSON is parsed once and only a small number of fields are extracted before the document is discarded.
 
-Design document: `docs/superpowers/specs/2026-05-15-rust-quick-json-decode-design.md` (in progress).
+Design document: `docs/superpowers/specs/2026-05-15-rust-quick-json-decode-design.md`.
 
 ## Status
 
-Currently in design phase. No implementation yet.
+Initial implementation complete: scalar + AVX2/PCLMUL structural scanner, root-path and cursor APIs, escape-decoded strings, integer/float/bool/typeof/len, FFI panic barrier, and a LuaJIT wrapper. Rust unit/integration tests and Lua busted tests run in CI. The benchmark harness compares against lua-cjson but tuning is pending — see `Roadmap / Deferred` below.
 
 ## Building
 
@@ -68,3 +68,4 @@ Items intentionally pushed out of the first implementation. Each will be picked 
 - **Skip-cache LRU eviction** — only if memory pressure on huge documents proves problematic in practice.
 - **Path-position info on Phase 1 errors** — currently only an opaque `QJD_PARSE_ERROR`.
 - **AVX2 tail-bypass optimization** — current implementation falls back to whole-buffer scalar when a tail exists; could be optimized by emitting tail structural offsets directly.
+- **Large bench fixtures** — spec §9.3 lists `large_dump.json` (~20 MB) and `deep_nest.json` (depth stress test); not yet committed. Only `small_api.json` and `medium_resp.json` ship today.

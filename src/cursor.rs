@@ -61,14 +61,17 @@ fn walk_children(doc: &Document, cur: Cursor, seg: &PathSeg) -> Result<Cursor, q
     let (slot_n, was_cached) = cache.get_or_insert(cur.idx_start);
 
     if was_cached {
-        // Fast path: iterate cached child_starts.
-        let starts = cache.slot(slot_n).child_starts.clone();
+        // Fast path: iterate cached (start, end) pairs. No brace counting.
+        let slot = cache.slot(slot_n);
+        let starts = slot.child_starts.clone();
+        let ends   = slot.child_ends.clone();
         drop(cache);
-        return resolve_in_known_children(doc, &starts, is_obj, seg);
+        return resolve_in_known_children(doc, &starts, &ends, is_obj, seg);
     }
 
     // Slow path: walk all children, populate cache fully, record match if any.
     let mut starts: Vec<u32> = Vec::new();
+    let mut ends:   Vec<u32> = Vec::new();
     let mut i = cur.idx_start + 1;
     let end = cur.idx_end;
     let mut arr_idx: u32 = 0;
@@ -79,6 +82,7 @@ fn walk_children(doc: &Document, cur: Cursor, seg: &PathSeg) -> Result<Cursor, q
 
         let value_idx_start = if is_obj { i + 3 } else { i };
         let (cursor_end, skip_end) = find_value_span(doc, value_idx_start)?;
+        ends.push(cursor_end);
 
         // Match check (we keep walking after a match to populate the cache).
         if result.is_none() {
@@ -108,7 +112,9 @@ fn walk_children(doc: &Document, cur: Cursor, seg: &PathSeg) -> Result<Cursor, q
         }
     }
 
-    cache.slot_mut(slot_n).child_starts = starts;
+    let slot = cache.slot_mut(slot_n);
+    slot.child_starts = starts;
+    slot.child_ends   = ends;
 
     match result {
         Some(c) => Ok(c),
@@ -117,9 +123,9 @@ fn walk_children(doc: &Document, cur: Cursor, seg: &PathSeg) -> Result<Cursor, q
 }
 
 fn resolve_in_known_children(
-    doc: &Document, starts: &[u32], is_obj: bool, seg: &PathSeg,
+    doc: &Document, starts: &[u32], ends: &[u32], is_obj: bool, seg: &PathSeg,
 ) -> Result<Cursor, qjd_err> {
-    for (k, &i) in starts.iter().enumerate() {
+    for (k, (&i, &cursor_end)) in starts.iter().zip(ends.iter()).enumerate() {
         let matched = if is_obj {
             let key_open = doc.indices[i as usize] as usize;
             let key_close = doc.indices[(i + 1) as usize] as usize;
@@ -130,7 +136,6 @@ fn resolve_in_known_children(
         };
         if matched {
             let value_idx_start = if is_obj { i + 3 } else { i };
-            let (cursor_end, _) = find_value_span(doc, value_idx_start)?;
             return Ok(Cursor { idx_start: value_idx_start, idx_end: cursor_end });
         }
     }

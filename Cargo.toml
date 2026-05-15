@@ -9,6 +9,8 @@ name = "quickdecode"
 crate-type = ["cdylib", "rlib"]
 
 [features]
+default    = ["avx2"]
+avx2       = []
 test-panic = []
 
 [dependencies]
