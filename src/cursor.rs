@@ -53,55 +53,85 @@ fn container_opener_byte(doc: &Document, cur: Cursor) -> Option<u8> {
 }
 
 /// Iterate children of the container at `cur` and return a Cursor for the
-/// matching child.
+/// matching child. Populates the skip cache on the first visit; uses it on
+/// subsequent visits.
 fn walk_children(doc: &Document, cur: Cursor, seg: &PathSeg) -> Result<Cursor, qjd_err> {
-    let mut i = cur.idx_start + 1;            // skip opener
-    let end = cur.idx_end;                    // closer position in indices
-    let mut arr_idx: u32 = 0;
     let is_obj = matches!(seg, PathSeg::Key(_));
+    let mut cache = doc.skip.borrow_mut();
+    let (slot_n, was_cached) = cache.get_or_insert(cur.idx_start);
+
+    if was_cached {
+        // Fast path: iterate cached child_starts.
+        let starts = cache.slot(slot_n).child_starts.clone();
+        drop(cache);
+        return resolve_in_known_children(doc, &starts, is_obj, seg);
+    }
+
+    // Slow path: walk all children, populate cache fully, record match if any.
+    let mut starts: Vec<u32> = Vec::new();
+    let mut i = cur.idx_start + 1;
+    let end = cur.idx_end;
+    let mut arr_idx: u32 = 0;
+    let mut result: Option<Cursor> = None;
 
     while i < end {
-        // For object: i points at the key's opening '"'.
-        // For array:  i points at the value's first structural marker (or
-        // the position of the next structural char after a scalar).
+        starts.push(i);
 
-        let child_key_match = if is_obj {
-            let key_open = doc.indices[i as usize] as usize;
-            let key_close = doc.indices[(i + 1) as usize] as usize;
-            if doc.buf.get(key_open).copied() != Some(b'"') {
-                return Err(qjd_err::QJD_PARSE_ERROR);
-            }
-            let key_bytes = &doc.buf[key_open + 1 .. key_close];
-            match seg {
-                PathSeg::Key(want) => key_bytes == *want,
-                _ => unreachable!(),
-            }
-        } else {
-            match seg {
-                PathSeg::Idx(want) => arr_idx == *want,
-                _ => unreachable!(),
-            }
-        };
-
-        // Advance to the value's leading marker.
         let value_idx_start = if is_obj { i + 3 } else { i };
-        // cursor_end: the idx_end to store in the returned Cursor (convention).
-        // skip_end: the indices position whose buf byte is the separator/closer
-        //           used to advance the iteration pointer.
         let (cursor_end, skip_end) = find_value_span(doc, value_idx_start)?;
 
-        if child_key_match {
-            return Ok(Cursor { idx_start: value_idx_start, idx_end: cursor_end });
+        // Match check (we keep walking after a match to populate the cache).
+        if result.is_none() {
+            let matched = if is_obj {
+                let key_open = doc.indices[i as usize] as usize;
+                let key_close = doc.indices[(i + 1) as usize] as usize;
+                if doc.buf.get(key_open).copied() != Some(b'"') {
+                    return Err(qjd_err::QJD_PARSE_ERROR);
+                }
+                let key_bytes = &doc.buf[key_open + 1 .. key_close];
+                matches!(seg, PathSeg::Key(want) if key_bytes == *want)
+            } else {
+                matches!(seg, PathSeg::Idx(want) if arr_idx == *want)
+            };
+            if matched {
+                result = Some(Cursor { idx_start: value_idx_start, idx_end: cursor_end });
+            }
         }
 
-        // Move past this child using skip_end: indices[skip_end] is the
-        // separator ',' or the parent closer '}'/']'.
+        // Advance to next sibling.
         let after_pos = doc.indices[skip_end as usize] as usize;
-        if after_pos >= doc.buf.len() { return Err(qjd_err::QJD_NOT_FOUND); }
+        if after_pos >= doc.buf.len() { break; }
         match doc.buf[after_pos] {
             b',' => { i = skip_end + 1; arr_idx += 1; }
-            b'}' | b']' => return Err(qjd_err::QJD_NOT_FOUND),
+            b'}' | b']' => break,
             _ => return Err(qjd_err::QJD_PARSE_ERROR),
+        }
+    }
+
+    cache.slot_mut(slot_n).child_starts = starts;
+
+    match result {
+        Some(c) => Ok(c),
+        None    => Err(qjd_err::QJD_NOT_FOUND),
+    }
+}
+
+fn resolve_in_known_children(
+    doc: &Document, starts: &[u32], is_obj: bool, seg: &PathSeg,
+) -> Result<Cursor, qjd_err> {
+    for (k, &i) in starts.iter().enumerate() {
+        let matched = if is_obj {
+            let key_open = doc.indices[i as usize] as usize;
+            let key_close = doc.indices[(i + 1) as usize] as usize;
+            let key_bytes = &doc.buf[key_open + 1 .. key_close];
+            matches!(seg, PathSeg::Key(want) if key_bytes == *want)
+        } else {
+            matches!(seg, PathSeg::Idx(want) if (k as u32) == *want)
+        };
+        if matched {
+            let value_idx_start = if is_obj { i + 3 } else { i };
+            let (cursor_end, _) = find_value_span(doc, value_idx_start)?;
+            return Ok(Cursor { idx_start: value_idx_start, idx_end: cursor_end });
         }
     }
     Err(qjd_err::QJD_NOT_FOUND)
@@ -225,5 +255,19 @@ mod tests {
         let d = doc_of(b"[10,20]");
         let r = Cursor::root(&d).resolve(&d, b"[5]");
         assert_eq!(r, Err(qjd_err::QJD_NOT_FOUND));
+    }
+
+    #[test]
+    fn cache_hit_on_repeated_access() {
+        let d = doc_of(b"{\"a\":1,\"b\":2,\"c\":3}");
+        let r1 = Cursor::root(&d).resolve(&d, b"a").unwrap();
+        let r2 = Cursor::root(&d).resolve(&d, b"b").unwrap();
+        let r3 = Cursor::root(&d).resolve(&d, b"c").unwrap();
+        // All succeed; they should differ.
+        assert_ne!(r1, r2);
+        assert_ne!(r2, r3);
+        // Verify exactly one cache slot was created for the root container.
+        let cache = d.skip.borrow();
+        assert_eq!(cache.len(), 1);
     }
 }
