@@ -15,6 +15,8 @@ cargo build --release
 # Output: target/release/libquickdecode.so
 ```
 
+A `Makefile` wraps the common workflows; run `make help` to see `build`, `test`, `lint`, `bench`, and `clean` targets. Override `LUAJIT` / `LUA_CPATH` per invocation if your environment differs from the defaults.
+
 ## Testing
 
 ```sh
@@ -69,3 +71,4 @@ Items intentionally pushed out of the first implementation. Each will be picked 
 - **Path-position info on Phase 1 errors** — currently only an opaque `QJD_PARSE_ERROR`.
 - **AVX2 tail-bypass optimization** — current implementation falls back to whole-buffer scalar when a tail exists; could be optimized by emitting tail structural offsets directly.
 - **Large bench fixtures** — spec §9.3 lists `large_dump.json` (~20 MB) and `deep_nest.json` (depth stress test); not yet committed. Only `small_api.json` and `medium_resp.json` ship today.
+- **`# Safety` docs on unsafe FFI exports** — `make lint` currently fails on 22 `missing_safety_doc` clippy warnings from the public `qjd_*` C-ABI functions. Tracked separately so the Makefile can ship with `-D warnings` already wired up.
