@@ -57,8 +57,12 @@ impl Scanner for ScalarScanner {
             i += 1;
         }
 
-        if in_str { return Err(buf.len()); }
-        if !stack.is_empty() { return Err(buf.len()); }
+        if in_str {
+            return Err(buf.len());
+        }
+        if !stack.is_empty() {
+            return Err(buf.len());
+        }
         Ok(())
     }
 }
@@ -142,8 +146,12 @@ mod tests {
     #[test]
     fn deeply_nested() {
         let mut buf = Vec::new();
-        for _ in 0..100 { buf.push(b'['); }
-        for _ in 0..100 { buf.push(b']'); }
+        for _ in 0..100 {
+            buf.push(b'[');
+        }
+        for _ in 0..100 {
+            buf.push(b']');
+        }
         let r = scan(&buf).unwrap();
         assert_eq!(r.len(), 200);
     }
