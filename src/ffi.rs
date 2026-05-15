@@ -476,6 +476,7 @@ pub unsafe extern "C" fn qjd_cursor_len(
     })
 }
 
+#[cfg(feature = "test-panic")]
 #[no_mangle]
 pub unsafe extern "C" fn qjd_test_panic() -> c_int {
     ffi_catch!({

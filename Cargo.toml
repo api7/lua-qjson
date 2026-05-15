@@ -8,6 +8,9 @@ publish = false
 name = "quickdecode"
 crate-type = ["cdylib", "rlib"]
 
+[features]
+test-panic = []
+
 [dependencies]
 memchr = "2"
 rustc-hash = "2"
