@@ -69,6 +69,5 @@ Items intentionally pushed out of the first implementation. Each will be picked 
 - **Lossless 64-bit integer mode** — return cdata `int64_t` to LuaJIT to preserve precision > 2⁵³.
 - **Skip-cache LRU eviction** — only if memory pressure on huge documents proves problematic in practice.
 - **Path-position info on Phase 1 errors** — currently only an opaque `QJD_PARSE_ERROR`.
-- **AVX2 tail-bypass optimization** — current implementation falls back to whole-buffer scalar when a tail exists; could be optimized by emitting tail structural offsets directly.
 - **Large bench fixtures** — spec §9.3 lists `large_dump.json` (~20 MB) and `deep_nest.json` (depth stress test); not yet committed. Only `small_api.json` and `medium_resp.json` ship today.
 - **`# Safety` docs on unsafe FFI exports** — `make lint` currently fails on 22 `missing_safety_doc` clippy warnings from the public `qjd_*` C-ABI functions. Tracked separately so the Makefile can ship with `-D warnings` already wired up.

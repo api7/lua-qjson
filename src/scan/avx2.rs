@@ -43,17 +43,30 @@ unsafe fn scan_avx2_impl(buf: &[u8], out: &mut Vec<u32>) -> Result<(), usize> {
         i += 64;
     }
 
-    // Whenever there's a tail, fall back to scalar for the whole buffer.
-    // This is necessary because ScalarScanner validates bracket matching against
-    // its own stack; a tail containing `]` or `}` that closes a bracket opened
-    // in the AVX2-processed prefix would cause ScalarScanner::scan on the tail
-    // slice to return Err, silently dropping those structural chars.
-    // The common case (input length is a multiple of 64) is unaffected.
+    // Tail (<64 bytes): continue emit-only via scalar, carrying the
+    // in_string / bs_carry state from the last AVX2 chunk. Bracket pairing
+    // is checked once at the end on the merged indices.
+    //
+    // If bs_carry == 1 the byte at position `i` is escape-targeted by the
+    // trailing backslash run of the prior chunk; inside a string we must
+    // skip it (treat as an escaped data byte, not a structural). Outside
+    // a string backslashes are plain characters and bs_carry has no effect.
     if i < buf.len() {
-        out.clear();
-        return super::ScalarScanner::scan(buf, out);
+        let scalar_start = if in_string != 0 && bs_carry != 0 {
+            i + 1
+        } else {
+            i
+        };
+        if scalar_start <= buf.len() {
+            super::scalar::scan_emit_resume(buf, scalar_start, in_string != 0, out)?;
+        } else if in_string != 0 {
+            return Err(buf.len());
+        }
+    } else if in_string != 0 {
+        return Err(buf.len());
     }
-    Ok(())
+
+    super::validate_brackets(buf, out)
 }
 
 #[inline(always)]
@@ -236,6 +249,58 @@ mod tests {
         buf.push(b'"');
         buf.push(b'}');
         assert_eq!(buf.len(), 64);
+        parity(&buf);
+    }
+
+    /// AVX2 main loop + scalar tail: input length not a multiple of 64.
+    /// Exercises the path that used to bypass AVX2 entirely.
+    #[test]
+    fn unaligned_tail_parity() {
+        if !host_supports_avx2() { return; }
+        // Valid JSON of various non-64-aligned total lengths.
+        for tail_len in [1usize, 5, 17, 33, 63] {
+            let mut buf = Vec::new();
+            buf.extend_from_slice(b"{\"key\":\"");
+            while buf.len() < 60 { buf.push(b'x'); }
+            buf.extend_from_slice(b"abc\"}");
+            // buf now well-formed; pad with spaces after the closing `}`
+            // to land at 64 + tail_len total bytes.
+            let target = 64 + tail_len;
+            while buf.len() < target { buf.push(b' '); }
+            assert_eq!(buf.len(), target, "test setup");
+            parity(&buf);
+        }
+    }
+
+    /// String spans the 64-byte chunk boundary; the closing quote lives
+    /// in the scalar tail. Requires in_string state to carry correctly.
+    #[test]
+    fn string_crosses_avx2_boundary() {
+        if !host_supports_avx2() { return; }
+        let mut buf = Vec::new();
+        buf.extend_from_slice(b"{\"k\":\"");      // 6 bytes, in_string from byte 5
+        while buf.len() < 80 { buf.push(b'a'); }  // long string content past byte 64
+        buf.push(b'"');
+        buf.push(b'}');
+        parity(&buf);
+    }
+
+    /// Backslash at the LAST byte of the AVX2 chunk; the escaped target
+    /// is the FIRST byte of the scalar tail. Exercises bs_carry.
+    #[test]
+    fn backslash_at_chunk_boundary() {
+        if !host_supports_avx2() { return; }
+        // Bytes 0..63: `{"key":"` followed by 'x' padding ending with `\`.
+        // Byte 64 (first tail byte): an escaped `"` — must NOT close the string.
+        // Then real closing `"` and `}` follow.
+        let mut buf = Vec::new();
+        buf.extend_from_slice(b"{\"key\":\"");    // 8 bytes
+        while buf.len() < 63 { buf.push(b'x'); }  // pad to 63
+        buf.push(b'\\');                          // byte 63: backslash
+        buf.push(b'"');                           // byte 64: escaped quote (tail)
+        buf.push(b'y');                           // byte 65
+        buf.push(b'"');                           // byte 66: real string close
+        buf.push(b'}');                           // byte 67
         parity(&buf);
     }
 
