@@ -197,6 +197,14 @@ pub(crate) fn find_value_span(doc: &Document, start: u32) -> Result<(u32, u32), 
     }
 }
 
+pub(crate) fn resolve_single_key(doc: &Document, cur: Cursor, key: &[u8]) -> Result<Cursor, qjd_err> {
+    step(doc, cur, &PathSeg::Key(key))
+}
+
+pub(crate) fn resolve_single_idx(doc: &Document, cur: Cursor, idx: u32) -> Result<Cursor, qjd_err> {
+    step(doc, cur, &PathSeg::Idx(idx))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
