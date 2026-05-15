@@ -1,4 +1,4 @@
-use crate::decoder::Decoder;
+use crate::doc::Document;
 use crate::error::qjd_err;
 use crate::path::{PathIter, PathSeg};
 
@@ -13,7 +13,7 @@ pub(crate) struct Cursor {
 }
 
 impl Cursor {
-    pub(crate) fn root(doc: &Decoder) -> Self {
+    pub(crate) fn root(doc: &Document) -> Self {
         // Find the closing index of the outermost container.
         // indices has a u32::MAX sentinel at the end.
         let n = doc.indices.len() as u32;
@@ -21,7 +21,7 @@ impl Cursor {
         Cursor { idx_start: 0, idx_end: n - 2 }
     }
 
-    pub(crate) fn resolve(self, doc: &Decoder, path: &[u8]) -> Result<Cursor, qjd_err> {
+    pub(crate) fn resolve(self, doc: &Document, path: &[u8]) -> Result<Cursor, qjd_err> {
         let mut cur = self;
         for seg in PathIter::new(path) {
             let seg = seg?;
@@ -31,7 +31,7 @@ impl Cursor {
     }
 }
 
-fn step(doc: &Decoder, cur: Cursor, seg: &PathSeg) -> Result<Cursor, qjd_err> {
+fn step(doc: &Document, cur: Cursor, seg: &PathSeg) -> Result<Cursor, qjd_err> {
     // The cursor must point at a container.
     let opener_byte = container_opener_byte(doc, cur)
         .ok_or(qjd_err::QJD_TYPE_MISMATCH)?;
@@ -45,7 +45,7 @@ fn step(doc: &Decoder, cur: Cursor, seg: &PathSeg) -> Result<Cursor, qjd_err> {
 
 /// If `cur` points at a container, return its opener byte (`{` or `[`).
 /// Returns None for scalars.
-fn container_opener_byte(doc: &Decoder, cur: Cursor) -> Option<u8> {
+fn container_opener_byte(doc: &Document, cur: Cursor) -> Option<u8> {
     if cur.idx_start as usize >= doc.indices.len() { return None; }
     let pos = doc.indices[cur.idx_start as usize] as usize;
     let b = *doc.buf.get(pos)?;
@@ -55,7 +55,7 @@ fn container_opener_byte(doc: &Decoder, cur: Cursor) -> Option<u8> {
 /// Iterate children of the container at `cur` and return a Cursor for the
 /// matching child. Populates the skip cache on the first visit; uses it on
 /// subsequent visits.
-fn walk_children(doc: &Decoder, cur: Cursor, seg: &PathSeg) -> Result<Cursor, qjd_err> {
+fn walk_children(doc: &Document, cur: Cursor, seg: &PathSeg) -> Result<Cursor, qjd_err> {
     let is_obj = matches!(seg, PathSeg::Key(_));
     let mut cache = doc.skip.borrow_mut();
     let (slot_n, was_cached) = cache.get_or_insert(cur.idx_start);
@@ -123,7 +123,7 @@ fn walk_children(doc: &Decoder, cur: Cursor, seg: &PathSeg) -> Result<Cursor, qj
 }
 
 fn resolve_in_known_children(
-    doc: &Decoder, starts: &[u32], ends: &[u32], is_obj: bool, seg: &PathSeg,
+    doc: &Document, starts: &[u32], ends: &[u32], is_obj: bool, seg: &PathSeg,
 ) -> Result<Cursor, qjd_err> {
     for (k, (&i, &cursor_end)) in starts.iter().zip(ends.iter()).enumerate() {
         let matched = if is_obj {
@@ -155,7 +155,7 @@ fn resolve_in_known_children(
 ///   - container: index after the matching closer (= closer_idx + 1)
 ///   - string:    index after the close '"' (= start + 2)
 ///   - scalar:    start itself (indices[start] IS the separator/closer)
-pub(crate) fn find_value_span(doc: &Decoder, start: u32) -> Result<(u32, u32), qjd_err> {
+pub(crate) fn find_value_span(doc: &Document, start: u32) -> Result<(u32, u32), qjd_err> {
     let pos = doc.indices[start as usize] as usize;
     let b = *doc.buf.get(pos).ok_or(qjd_err::QJD_PARSE_ERROR)?;
     match b {
@@ -202,11 +202,11 @@ pub(crate) fn find_value_span(doc: &Decoder, start: u32) -> Result<(u32, u32), q
     }
 }
 
-pub(crate) fn resolve_single_key(doc: &Decoder, cur: Cursor, key: &[u8]) -> Result<Cursor, qjd_err> {
+pub(crate) fn resolve_single_key(doc: &Document, cur: Cursor, key: &[u8]) -> Result<Cursor, qjd_err> {
     step(doc, cur, &PathSeg::Key(key))
 }
 
-pub(crate) fn resolve_single_idx(doc: &Decoder, cur: Cursor, idx: u32) -> Result<Cursor, qjd_err> {
+pub(crate) fn resolve_single_idx(doc: &Document, cur: Cursor, idx: u32) -> Result<Cursor, qjd_err> {
     step(doc, cur, &PathSeg::Idx(idx))
 }
 
@@ -214,7 +214,7 @@ pub(crate) fn resolve_single_idx(doc: &Decoder, cur: Cursor, idx: u32) -> Result
 mod tests {
     use super::*;
 
-    fn doc_of(s: &[u8]) -> Decoder { Decoder::parse_oneshot(s).unwrap() }
+    fn doc_of(s: &[u8]) -> Document<'_> { Document::parse(s).unwrap() }
 
     #[test]
     fn root_path_returns_root() {
