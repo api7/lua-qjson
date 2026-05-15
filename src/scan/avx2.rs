@@ -63,9 +63,12 @@ unsafe fn scan_avx2_impl(buf: &[u8], out: &mut Vec<u32>) -> Result<(), usize> {
     // skip it (treat as an escaped data byte, not a structural). Outside
     // a string backslashes are plain characters and bs_carry has no effect.
     if i < buf.len() {
-        // i < buf.len() and the only adjustment below is +1, so
-        // scalar_start <= buf.len() always; scan_emit_resume itself returns
-        // Err(buf.len()) when start == buf.len() and in_string is true.
+        // Invariant: scalar_start ∈ {i, i+1} and i < buf.len(), so
+        // scalar_start <= buf.len(). The boundary case scalar_start ==
+        // buf.len() only fires when i == buf.len()-1 AND in_string != 0
+        // AND bs_carry != 0; scan_emit_resume handles it by entering with
+        // an empty loop body and returning Err(buf.len()) from its
+        // post-loop `if in_str` check.
         let scalar_start = if in_string != 0 && bs_carry != 0 {
             i + 1
         } else {

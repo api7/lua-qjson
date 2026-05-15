@@ -22,8 +22,10 @@ proptest! {
         // pipeline, so Result equality is required: same Ok/Err verdict
         // AND same error offset when Err.
         prop_assert_eq!(&ra, &rb, "scan results differ for {:?}", input);
-        // Emit order is also expected to be identical; both phases push
-        // through end-of-buffer before any potential Err is returned.
+        // Indices are produced entirely by scan_emit_resume (which walks
+        // through end-of-buffer before any Err) and are not modified by
+        // validate_brackets, so both `a` and `b` reflect the full emit
+        // regardless of whether the final result was Ok or Err.
         prop_assert_eq!(&a, &b, "indices differ for {:?}", input);
     }
 }
