@@ -1,4 +1,6 @@
 pub(crate) mod scalar;
+#[cfg(target_arch = "x86_64")]
+pub(crate) mod avx2;
 
 /// A structural scanner: given a JSON byte buffer, append the byte offset of
 /// every structural character (`{` `}` `[` `]` `:` `,` `"`) that is NOT inside
@@ -9,3 +11,5 @@ pub(crate) mod scalar;
 pub(crate) trait Scanner {
     fn scan(buf: &[u8], out: &mut Vec<u32>) -> Result<(), usize>;
 }
+
+pub(crate) use scalar::ScalarScanner;
