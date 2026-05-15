@@ -26,21 +26,26 @@ unsafe fn scan_avx2_impl(buf: &[u8], out: &mut Vec<u32>) -> Result<(), usize> {
         let chunk_lo = _mm256_loadu_si256(buf.as_ptr().add(i)        as *const __m256i);
         let chunk_hi = _mm256_loadu_si256(buf.as_ptr().add(i + 32)   as *const __m256i);
 
+        // In-string fast-probe: when the previous chunk left us inside a
+        // string, check for `"` or `\` BEFORE computing the backslash /
+        // escape masks. If neither byte appears in the chunk, the whole
+        // chunk is pure string interior — skip without computing the
+        // ~10-op scalar `find_escape_mask_with_carry`. bs_carry must be
+        // 0 leaving this chunk (no backslashes in chunk → no trailing
+        // run); in_string stays 1 (no real quote → no polarity flip).
+        if in_string != 0 {
+            let interesting = quote_or_backslash_mask(chunk_lo, chunk_hi);
+            if interesting == 0 {
+                bs_carry = 0;
+                i += 64;
+                continue;
+            }
+        }
+
         let backslash = byte_mask(chunk_lo, chunk_hi, b'\\');
         let quote     = byte_mask(chunk_lo, chunk_hi, b'"');
         let escaped   = find_escape_mask_with_carry(backslash, &mut bs_carry);
         let real_quote = quote & !escaped;
-
-        // String-skip fast path: when the previous chunk left us inside a
-        // string and this chunk contains no unescaped quote, the entire
-        // chunk is string interior. No structural chars to emit and
-        // in_string stays 1; bs_carry was already updated above. Skip the
-        // 14 cmpeq / movemask ops in structural_mask_chunk plus the PCLMUL
-        // prefix-XOR — the dominant cost on string-heavy payloads.
-        if in_string != 0 && real_quote == 0 {
-            i += 64;
-            continue;
-        }
 
         let (inside, new_in_string) = inside_string_mask(real_quote, in_string);
         in_string = new_in_string;
@@ -108,6 +113,21 @@ fn emit_bits(mut mask: u64, base: u32, out: &mut Vec<u32>) {
         out.push(base + tz);
         mask &= mask - 1; // clear lowest bit
     }
+}
+
+/// Build a u64 mask where bit i is 1 if byte i in (lo|hi) equals `"` OR `\`.
+/// Used by the in-string fast-probe to detect pure string-interior chunks
+/// in ~10 vector ops (4 cmpeq + 2 or + 2 movemask + shift/or), avoiding
+/// the ~25-op slow path including find_escape_mask_with_carry.
+#[inline(always)]
+unsafe fn quote_or_backslash_mask(lo: __m256i, hi: __m256i) -> u64 {
+    let vq = _mm256_set1_epi8(b'"' as i8);
+    let vb = _mm256_set1_epi8(b'\\' as i8);
+    let lo_or = _mm256_or_si256(_mm256_cmpeq_epi8(lo, vq), _mm256_cmpeq_epi8(lo, vb));
+    let hi_or = _mm256_or_si256(_mm256_cmpeq_epi8(hi, vq), _mm256_cmpeq_epi8(hi, vb));
+    let mlo = _mm256_movemask_epi8(lo_or) as u32 as u64;
+    let mhi = _mm256_movemask_epi8(hi_or) as u32 as u64;
+    mlo | (mhi << 32)
 }
 
 /// Build a u64 mask where bit i is 1 if byte i in (lo|hi) equals `c`.
@@ -270,15 +290,85 @@ mod tests {
     /// chunks with no internal quotes. The fast-path branch must produce
     /// the same emitted offsets as the slow path (which the parity check
     /// against scalar implicitly verifies).
+    ///
+    /// Sized at ≥1 MB so thousands of consecutive probe-hit chunks exercise
+    /// the new in-string fast-probe path; smaller inputs would only hit a
+    /// few hundred chunks and miss patterns that need a long pure-interior
+    /// run to surface.
     #[test]
     fn long_string_engages_skip_fastpath() {
         if !host_supports_avx2() { return; }
         let mut buf = Vec::new();
         buf.extend_from_slice(b"{\"k\":\"");
-        // ~10 KB of string interior — many chunks fully inside the string.
-        buf.resize(buf.len() + 10_000, b'a');
+        // ≥1 MB of string interior — thousands of chunks fully inside the
+        // string, all hitting the in_string probe path.
+        buf.resize(buf.len() + 1_048_576, b'a');
         buf.extend_from_slice(b"\"}");
         // Pad to 64-aligned to also exercise the no-tail branch.
+        while buf.len() % 64 != 0 { buf.push(b' '); }
+        parity(&buf);
+    }
+
+    /// Long string with periodic backslash-escape sequences. Alternates
+    /// probe-hit chunks (pure interior) and probe-miss chunks (containing
+    /// `\` or escaped `"`), so the slow path engages every few chunks
+    /// while the fast probe handles the rest. Parity guarantees the two
+    /// paths agree under the new condition.
+    #[test]
+    fn long_string_with_periodic_backslash() {
+        if !host_supports_avx2() { return; }
+        let mut buf = Vec::new();
+        buf.extend_from_slice(b"{\"k\":\"");
+        // ~5 chunks (320 bytes) of pure interior, then an escape sequence,
+        // repeated. Mix `\\n` (escaped newline letter) and `\\\"` (escaped
+        // quote) so both backslash-only and quote-after-backslash chunks
+        // appear.
+        for i in 0..200 {
+            buf.resize(buf.len() + 320, b'a');
+            if i % 2 == 0 {
+                buf.extend_from_slice(b"\\n");
+            } else {
+                buf.extend_from_slice(b"\\\"");
+            }
+        }
+        buf.push(b'"');
+        buf.push(b'}');
+        while buf.len() % 64 != 0 { buf.push(b' '); }
+        parity(&buf);
+    }
+
+    /// bs_carry = 1 leaving a chunk that ends in an odd-length backslash
+    /// run, then the next chunk is pure string interior (no `"`, no `\`).
+    /// Verifies that the in-string fast probe correctly resets bs_carry
+    /// to 0 (matching the slow path's `find_escape_mask_with_carry` else
+    /// branch). If the probe forgot to clear bs_carry, the third chunk's
+    /// byte 0 would be wrongly treated as escaped.
+    #[test]
+    fn bs_carry_one_at_pure_string_chunk_boundary() {
+        if !host_supports_avx2() { return; }
+        let mut buf = Vec::new();
+        // Chunk 0 (bytes 0..64): open object, open string, then padding
+        // ending with exactly one trailing backslash at byte 63. The
+        // backslash is preceded by even bytes of non-backslash, so the
+        // trailing run has length 1 (odd) → bs_carry=1 leaving chunk 0.
+        buf.extend_from_slice(b"{\"k\":\"");          // 6 bytes
+        buf.resize(63, b'a');                         // pad to byte 63
+        buf.push(b'\\');                              // byte 63: single backslash
+        assert_eq!(buf.len(), 64);
+        // Chunk 1 (bytes 64..128): byte 64 is the escape TARGET (any
+        // non-special byte). Then pure interior — no `"`, no `\` — for
+        // the rest of the chunk. This is the chunk the probe must handle
+        // correctly. With incoming bs_carry=1, slow path would set
+        // escaped[0]=1; new fast probe just clears bs_carry to 0. Both
+        // produce zero emitted offsets in this chunk.
+        buf.push(b'n');                               // byte 64: escape target
+        buf.resize(128, b'a');                        // bytes 65..128: pure interior
+        // Chunk 2 (bytes 128..192): another pure-interior chunk to
+        // confirm bs_carry stays clean across multiple probe hits.
+        buf.resize(192, b'a');
+        // Close the string and object in a third chunk.
+        buf.push(b'"');
+        buf.push(b'}');
         while buf.len() % 64 != 0 { buf.push(b' '); }
         parity(&buf);
     }
