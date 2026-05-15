@@ -61,4 +61,10 @@ The benchmark measures end-to-end "parse + extract 3 fields" cost on small (~5KB
 Items intentionally pushed out of the first implementation. Each will be picked up individually.
 
 - **ARM64 NEON scanner backend** — first version ships with scalar + AVX2 backends only. NEON backend (for Apple Silicon / Graviton / 鲲鹏) is deferred.
-- *(more deferred items will be added as design and planning proceed)*
+- **SmallVec fast path for small documents (< 4 KB)** — avoid heap allocation for `indices` on tiny inputs.
+- **SIMD-accelerated backslash search** in the `decode_string` fast path.
+- **`lexical` fast float parser** if `<f64>::from_str` benchmarks as a bottleneck.
+- **Lossless 64-bit integer mode** — return cdata `int64_t` to LuaJIT to preserve precision > 2⁵³.
+- **Skip-cache LRU eviction** — only if memory pressure on huge documents proves problematic in practice.
+- **Path-position info on Phase 1 errors** — currently only an opaque `QJD_PARSE_ERROR`.
+- **AVX2 tail-bypass optimization** — current implementation falls back to whole-buffer scalar when a tail exists; could be optimized by emitting tail structural offsets directly.
