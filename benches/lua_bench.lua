@@ -11,17 +11,30 @@ local function read_file(p)
     return s
 end
 
+-- Shape: a multimodal chat-completion request with one ~1.5K text question
+-- and N base64-encoded image parts (each 50-500 KB) until the payload reaches
+-- target_bytes. Mirrors the production case the bench is meant to reflect.
 local function make_payload(target_bytes)
-    local header = '{"model":"gpt-4","temperature":0.7,"messages":['
-    local footer = ']}'
-    local msg = '{"role":"user","content":"' .. string.rep("x", 64) .. '"}'
-    local parts = {}
-    local current = #header + #footer
-    while current + #msg + 1 <= target_bytes do
-        parts[#parts + 1] = msg
-        current = current + #msg + 1
+    math.randomseed(42)
+    local text = string.rep("Q", 1500)
+    local text_part = '{"type":"text","text":"' .. text .. '"}'
+    local parts = { text_part }
+    local current = 200 + #text_part  -- approx outer envelope overhead
+
+    while current < target_bytes do
+        local remaining = target_bytes - current
+        local upper = math.min(500 * 1024, math.max(50 * 1024, remaining + 50 * 1024))
+        local lower = math.min(50 * 1024, upper)
+        local img_size = math.random(lower, upper)
+        local b64 = string.rep("A", img_size)
+        local img_part = '{"type":"image_url","image_url":{"url":"data:image/jpeg;base64,'
+            .. b64 .. '"}}'
+        parts[#parts + 1] = img_part
+        current = current + #img_part + 1  -- +1 for comma
     end
-    return header .. table.concat(parts, ",") .. footer
+
+    return '{"model":"gpt-4-vision","temperature":0.7,"messages":'
+        .. '[{"role":"user","content":[' .. table.concat(parts, ",") .. ']}]}'
 end
 
 local function bench(name, iters, fn)
