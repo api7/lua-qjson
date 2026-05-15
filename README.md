@@ -21,6 +21,21 @@ cargo build --release
 cargo test
 ```
 
+## LuaJIT Usage
+
+```lua
+local qd = require("quickdecode")
+local doc = qd.parse(json_str)
+
+-- Root-path getter:
+local model = doc:get_str("body.model")
+
+-- Cursor (avoid re-walking shared prefix):
+local body = doc:open("body")
+local model = body:get_str("model")
+local temp  = body:get_f64("temperature")
+```
+
 ## Roadmap / Deferred
 
 Items intentionally pushed out of the first implementation. Each will be picked up individually.

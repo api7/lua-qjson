@@ -25,9 +25,42 @@ typedef enum {
     QJD_T_STR  = 3, QJD_T_ARR  = 4, QJD_T_OBJ = 5
 } qjd_type;
 
+typedef struct qjd_doc qjd_doc;
+
+typedef struct {
+    const qjd_doc* doc;
+    uint32_t       idx_start;
+    uint32_t       idx_end;
+    uint32_t       cache_slot;
+    uint32_t       _pad;
+} qjd_cursor;
+
 const char* qjd_strerror(int code);
 
-/* Forward declarations; full prototypes filled in Task 14. */
+qjd_doc* qjd_parse(const uint8_t* buf, size_t len, int* err_out);
+void     qjd_free (qjd_doc* doc);
+
+int qjd_get_str  (qjd_doc*, const char* path, size_t path_len,
+                  const uint8_t** out_ptr, size_t* out_len);
+int qjd_get_i64  (qjd_doc*, const char* path, size_t path_len, int64_t* out);
+int qjd_get_f64  (qjd_doc*, const char* path, size_t path_len, double*  out);
+int qjd_get_bool (qjd_doc*, const char* path, size_t path_len, int*     out);
+int qjd_is_null  (qjd_doc*, const char* path, size_t path_len, int*     out);
+int qjd_typeof   (qjd_doc*, const char* path, size_t path_len, int*     type_out);
+int qjd_len      (qjd_doc*, const char* path, size_t path_len, size_t*  out);
+
+int qjd_open            (qjd_doc*, const char* path, size_t path_len, qjd_cursor* out);
+int qjd_cursor_open     (const qjd_cursor*, const char* path, size_t path_len, qjd_cursor* out);
+int qjd_cursor_field    (const qjd_cursor*, const char* key,  size_t key_len, qjd_cursor* out);
+int qjd_cursor_index    (const qjd_cursor*, size_t i, qjd_cursor* out);
+
+int qjd_cursor_get_str  (const qjd_cursor*, const char* path, size_t path_len,
+                         const uint8_t** out_ptr, size_t* out_len);
+int qjd_cursor_get_i64  (const qjd_cursor*, const char* path, size_t path_len, int64_t* out);
+int qjd_cursor_get_f64  (const qjd_cursor*, const char* path, size_t path_len, double*  out);
+int qjd_cursor_get_bool (const qjd_cursor*, const char* path, size_t path_len, int*     out);
+int qjd_cursor_typeof   (const qjd_cursor*, const char* path, size_t path_len, int*     out);
+int qjd_cursor_len      (const qjd_cursor*, const char* path, size_t path_len, size_t*  out);
 
 #ifdef __cplusplus
 }
