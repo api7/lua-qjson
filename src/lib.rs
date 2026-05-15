@@ -4,4 +4,5 @@
 pub mod error;
 mod scan;
 mod doc;
+mod path;
 pub mod ffi;
