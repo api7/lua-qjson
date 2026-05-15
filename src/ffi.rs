@@ -9,6 +9,16 @@ use std::ptr;
 use crate::doc::Document;
 use crate::error::qjd_err;
 
+macro_rules! ffi_catch {
+    ($body:block) => {{
+        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| $body));
+        match r {
+            Ok(code) => code,
+            Err(_)   => qjd_err::QJD_OOM as c_int,
+        }
+    }};
+}
+
 /// Opaque type exported to C as `qjd_doc*`.
 #[allow(dead_code)]
 pub struct qjd_doc(pub(crate) Document<'static>);
@@ -37,19 +47,28 @@ pub unsafe extern "C" fn qjd_parse(
     len:     usize,
     err_out: *mut c_int,
 ) -> *mut qjd_doc {
-    if buf.is_null() || err_out.is_null() {
-        if !err_out.is_null() { *err_out = qjd_err::QJD_INVALID_ARG as c_int; }
-        return ptr::null_mut();
-    }
-    let slice: &'static [u8] = std::slice::from_raw_parts(buf, len);
-    match Document::parse(slice) {
-        Ok(d) => {
-            *err_out = qjd_err::QJD_OK as c_int;
-            Box::into_raw(Box::new(qjd_doc(d)))
+    let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        if buf.is_null() || err_out.is_null() {
+            if !err_out.is_null() { *err_out = qjd_err::QJD_INVALID_ARG as c_int; }
+            return ptr::null_mut();
         }
-        Err(e) => {
-            *err_out = e as c_int;
-            ptr::null_mut()
+        let slice: &'static [u8] = std::slice::from_raw_parts(buf, len);
+        match Document::parse(slice) {
+            Ok(d) => {
+                *err_out = qjd_err::QJD_OK as c_int;
+                Box::into_raw(Box::new(qjd_doc(d)))
+            }
+            Err(e) => {
+                *err_out = e as c_int;
+                ptr::null_mut()
+            }
+        }
+    }));
+    match r {
+        Ok(p) => p,
+        Err(_) => {
+            if !err_out.is_null() { *err_out = qjd_err::QJD_OOM as c_int; }
+            std::ptr::null_mut()
         }
     }
 }
@@ -83,43 +102,49 @@ unsafe fn resolve_root_path(
 pub unsafe extern "C" fn qjd_typeof(
     doc: *mut qjd_doc, path: *const c_char, path_len: usize, type_out: *mut c_int,
 ) -> c_int {
-    if type_out.is_null() { return qjd_err::QJD_INVALID_ARG as c_int; }
-    match resolve_root_path(doc, path, path_len) {
-        Ok((d, cur)) => match d.type_of(cur) {
-            Ok(t) => { *type_out = t as c_int; qjd_err::QJD_OK as c_int }
+    ffi_catch!({
+        if type_out.is_null() { return qjd_err::QJD_INVALID_ARG as c_int; }
+        match resolve_root_path(doc, path, path_len) {
+            Ok((d, cur)) => match d.type_of(cur) {
+                Ok(t) => { *type_out = t as c_int; qjd_err::QJD_OK as c_int }
+                Err(e) => e as c_int,
+            },
             Err(e) => e as c_int,
-        },
-        Err(e) => e as c_int,
-    }
+        }
+    })
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn qjd_is_null(
     doc: *mut qjd_doc, path: *const c_char, path_len: usize, out: *mut c_int,
 ) -> c_int {
-    if out.is_null() { return qjd_err::QJD_INVALID_ARG as c_int; }
-    match resolve_root_path(doc, path, path_len) {
-        Ok((d, cur)) => match d.type_of(cur) {
-            Ok(qjd_type::QJD_T_NULL) => { *out = 1; qjd_err::QJD_OK as c_int }
-            Ok(_)                    => { *out = 0; qjd_err::QJD_OK as c_int }
+    ffi_catch!({
+        if out.is_null() { return qjd_err::QJD_INVALID_ARG as c_int; }
+        match resolve_root_path(doc, path, path_len) {
+            Ok((d, cur)) => match d.type_of(cur) {
+                Ok(qjd_type::QJD_T_NULL) => { *out = 1; qjd_err::QJD_OK as c_int }
+                Ok(_)                    => { *out = 0; qjd_err::QJD_OK as c_int }
+                Err(e) => e as c_int,
+            },
             Err(e) => e as c_int,
-        },
-        Err(e) => e as c_int,
-    }
+        }
+    })
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn qjd_len(
     doc: *mut qjd_doc, path: *const c_char, path_len: usize, out: *mut usize,
 ) -> c_int {
-    if out.is_null() { return qjd_err::QJD_INVALID_ARG as c_int; }
-    match resolve_root_path(doc, path, path_len) {
-        Ok((d, cur)) => match d.cursor_len(cur) {
-            Ok(n) => { *out = n; qjd_err::QJD_OK as c_int }
+    ffi_catch!({
+        if out.is_null() { return qjd_err::QJD_INVALID_ARG as c_int; }
+        match resolve_root_path(doc, path, path_len) {
+            Ok((d, cur)) => match d.cursor_len(cur) {
+                Ok(n) => { *out = n; qjd_err::QJD_OK as c_int }
+                Err(e) => e as c_int,
+            },
             Err(e) => e as c_int,
-        },
-        Err(e) => e as c_int,
-    }
+        }
+    })
 }
 
 use crate::decode::number;
@@ -130,80 +155,88 @@ pub unsafe extern "C" fn qjd_get_str(
     doc: *mut qjd_doc, path: *const c_char, path_len: usize,
     out_ptr: *mut *const u8, out_len: *mut usize,
 ) -> c_int {
-    if out_ptr.is_null() || out_len.is_null() {
-        return qjd_err::QJD_INVALID_ARG as c_int;
-    }
-    let (d, cur) = match resolve_root_path(doc, path, path_len) {
-        Ok(x) => x, Err(e) => return e as c_int,
-    };
-    let pos = d.indices[cur.idx_start as usize] as usize;
-    if d.buf.get(pos).copied() != Some(b'"') {
-        return qjd_err::QJD_TYPE_MISMATCH as c_int;
-    }
-    // String ends at the close quote, whose indices position is idx_start + 1.
-    let close = d.indices[(cur.idx_start + 1) as usize] as usize;
+    ffi_catch!({
+        if out_ptr.is_null() || out_len.is_null() {
+            return qjd_err::QJD_INVALID_ARG as c_int;
+        }
+        let (d, cur) = match resolve_root_path(doc, path, path_len) {
+            Ok(x) => x, Err(e) => return e as c_int,
+        };
+        let pos = d.indices[cur.idx_start as usize] as usize;
+        if d.buf.get(pos).copied() != Some(b'"') {
+            return qjd_err::QJD_TYPE_MISMATCH as c_int;
+        }
+        // String ends at the close quote, whose indices position is idx_start + 1.
+        let close = d.indices[(cur.idx_start + 1) as usize] as usize;
 
-    // SAFETY: scratch is owned by the qjd_doc; we obtain a mutable reference
-    // to it through the raw *mut qjd_doc pointer (not through the shared &Document
-    // alias `d`). Lua-side callers consume the returned ptr before any further
-    // FFI calls. Single-threaded use enforced by C ABI contract.
-    let scratch = &mut (*doc).0.scratch;
-    match string::decode_string(d.buf, pos + 1, close, scratch) {
-        Ok((p, n)) => { *out_ptr = p; *out_len = n; qjd_err::QJD_OK as c_int }
-        Err(e) => e as c_int,
-    }
+        // SAFETY: scratch is owned by the qjd_doc; we obtain a mutable reference
+        // to it through the raw *mut qjd_doc pointer (not through the shared &Document
+        // alias `d`). Lua-side callers consume the returned ptr before any further
+        // FFI calls. Single-threaded use enforced by C ABI contract.
+        let scratch = &mut (*doc).0.scratch;
+        match string::decode_string(d.buf, pos + 1, close, scratch) {
+            Ok((p, n)) => { *out_ptr = p; *out_len = n; qjd_err::QJD_OK as c_int }
+            Err(e) => e as c_int,
+        }
+    })
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn qjd_get_i64(
     doc: *mut qjd_doc, path: *const c_char, path_len: usize, out: *mut i64,
 ) -> c_int {
-    if out.is_null() { return qjd_err::QJD_INVALID_ARG as c_int; }
-    let (d, cur) = match resolve_root_path(doc, path, path_len) {
-        Ok(x) => x, Err(e) => return e as c_int,
-    };
-    let bytes = match scalar_bytes(d, cur) {
-        Ok(b) => b, Err(e) => return e as c_int,
-    };
-    match number::parse_i64(bytes) {
-        Ok(v) => { *out = v; qjd_err::QJD_OK as c_int }
-        Err(e) => e as c_int,
-    }
+    ffi_catch!({
+        if out.is_null() { return qjd_err::QJD_INVALID_ARG as c_int; }
+        let (d, cur) = match resolve_root_path(doc, path, path_len) {
+            Ok(x) => x, Err(e) => return e as c_int,
+        };
+        let bytes = match scalar_bytes(d, cur) {
+            Ok(b) => b, Err(e) => return e as c_int,
+        };
+        match number::parse_i64(bytes) {
+            Ok(v) => { *out = v; qjd_err::QJD_OK as c_int }
+            Err(e) => e as c_int,
+        }
+    })
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn qjd_get_f64(
     doc: *mut qjd_doc, path: *const c_char, path_len: usize, out: *mut f64,
 ) -> c_int {
-    if out.is_null() { return qjd_err::QJD_INVALID_ARG as c_int; }
-    let (d, cur) = match resolve_root_path(doc, path, path_len) {
-        Ok(x) => x, Err(e) => return e as c_int,
-    };
-    let bytes = match scalar_bytes(d, cur) {
-        Ok(b) => b, Err(e) => return e as c_int,
-    };
-    match number::parse_f64(bytes) {
-        Ok(v) => { *out = v; qjd_err::QJD_OK as c_int }
-        Err(e) => e as c_int,
-    }
+    ffi_catch!({
+        if out.is_null() { return qjd_err::QJD_INVALID_ARG as c_int; }
+        let (d, cur) = match resolve_root_path(doc, path, path_len) {
+            Ok(x) => x, Err(e) => return e as c_int,
+        };
+        let bytes = match scalar_bytes(d, cur) {
+            Ok(b) => b, Err(e) => return e as c_int,
+        };
+        match number::parse_f64(bytes) {
+            Ok(v) => { *out = v; qjd_err::QJD_OK as c_int }
+            Err(e) => e as c_int,
+        }
+    })
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn qjd_get_bool(
     doc: *mut qjd_doc, path: *const c_char, path_len: usize, out: *mut c_int,
 ) -> c_int {
-    if out.is_null() { return qjd_err::QJD_INVALID_ARG as c_int; }
-    let (d, cur) = match resolve_root_path(doc, path, path_len) {
-        Ok(x) => x, Err(e) => return e as c_int,
-    };
-    let bytes = match scalar_bytes(d, cur) {
-        Ok(b) => b, Err(e) => return e as c_int,
-    };
-    match bytes {
-        b"true"  => { *out = 1; qjd_err::QJD_OK as c_int }
-        b"false" => { *out = 0; qjd_err::QJD_OK as c_int }
-        _ => qjd_err::QJD_TYPE_MISMATCH as c_int,
-    }
+    ffi_catch!({
+        if out.is_null() { return qjd_err::QJD_INVALID_ARG as c_int; }
+        let (d, cur) = match resolve_root_path(doc, path, path_len) {
+            Ok(x) => x, Err(e) => return e as c_int,
+        };
+        let bytes = match scalar_bytes(d, cur) {
+            Ok(b) => b, Err(e) => return e as c_int,
+        };
+        match bytes {
+            b"true"  => { *out = 1; qjd_err::QJD_OK as c_int }
+            b"false" => { *out = 0; qjd_err::QJD_OK as c_int }
+            _ => qjd_err::QJD_TYPE_MISMATCH as c_int,
+        }
+    })
 }
 
 /// Return the byte slice for a scalar value (number, true, false, null).
@@ -256,59 +289,67 @@ fn internal_to_cursor(doc: *const qjd_doc, cur: Cursor) -> qjd_cursor {
 pub unsafe extern "C" fn qjd_open(
     doc: *mut qjd_doc, path: *const c_char, path_len: usize, out: *mut qjd_cursor,
 ) -> c_int {
-    if out.is_null() { return qjd_err::QJD_INVALID_ARG as c_int; }
-    match resolve_root_path(doc, path, path_len) {
-        Ok((_, cur)) => {
-            *out = internal_to_cursor(doc as *const qjd_doc, cur);
-            qjd_err::QJD_OK as c_int
+    ffi_catch!({
+        if out.is_null() { return qjd_err::QJD_INVALID_ARG as c_int; }
+        match resolve_root_path(doc, path, path_len) {
+            Ok((_, cur)) => {
+                *out = internal_to_cursor(doc as *const qjd_doc, cur);
+                qjd_err::QJD_OK as c_int
+            }
+            Err(e) => e as c_int,
         }
-        Err(e) => e as c_int,
-    }
+    })
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn qjd_cursor_open(
     c: *const qjd_cursor, path: *const c_char, path_len: usize, out: *mut qjd_cursor,
 ) -> c_int {
-    if out.is_null() { return qjd_err::QJD_INVALID_ARG as c_int; }
-    let (d, cur) = match cursor_to_internal(c) { Ok(x) => x, Err(e) => return e as c_int };
-    let p: &[u8] = if path.is_null() { &[] } else {
-        std::slice::from_raw_parts(path as *const u8, path_len)
-    };
-    match cur.resolve(d, p) {
-        Ok(child) => { *out = internal_to_cursor((*c).doc, child); qjd_err::QJD_OK as c_int }
-        Err(e) => e as c_int,
-    }
+    ffi_catch!({
+        if out.is_null() { return qjd_err::QJD_INVALID_ARG as c_int; }
+        let (d, cur) = match cursor_to_internal(c) { Ok(x) => x, Err(e) => return e as c_int };
+        let p: &[u8] = if path.is_null() { &[] } else {
+            std::slice::from_raw_parts(path as *const u8, path_len)
+        };
+        match cur.resolve(d, p) {
+            Ok(child) => { *out = internal_to_cursor((*c).doc, child); qjd_err::QJD_OK as c_int }
+            Err(e) => e as c_int,
+        }
+    })
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn qjd_cursor_field(
     c: *const qjd_cursor, key: *const c_char, key_len: usize, out: *mut qjd_cursor,
 ) -> c_int {
-    if out.is_null() || (key.is_null() && key_len != 0) {
-        return qjd_err::QJD_INVALID_ARG as c_int;
-    }
-    let (d, cur) = match cursor_to_internal(c) { Ok(x) => x, Err(e) => return e as c_int };
-    let k = if key.is_null() { &[][..] } else { std::slice::from_raw_parts(key as *const u8, key_len) };
-    let child = match crate::cursor::resolve_single_key(d, cur, k) {
-        Ok(x) => x, Err(e) => return e as c_int,
-    };
-    *out = internal_to_cursor((*c).doc, child);
-    qjd_err::QJD_OK as c_int
+    ffi_catch!({
+        if out.is_null() || (key.is_null() && key_len != 0) {
+            return qjd_err::QJD_INVALID_ARG as c_int;
+        }
+        let (d, cur) = match cursor_to_internal(c) { Ok(x) => x, Err(e) => return e as c_int };
+        let k = if key.is_null() { &[][..] } else { std::slice::from_raw_parts(key as *const u8, key_len) };
+        let child = match crate::cursor::resolve_single_key(d, cur, k) {
+            Ok(x) => x, Err(e) => return e as c_int,
+        };
+        *out = internal_to_cursor((*c).doc, child);
+        qjd_err::QJD_OK as c_int
+    })
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn qjd_cursor_index(
     c: *const qjd_cursor, i: usize, out: *mut qjd_cursor,
 ) -> c_int {
-    if out.is_null() { return qjd_err::QJD_INVALID_ARG as c_int; }
-    if i > u32::MAX as usize { return qjd_err::QJD_INVALID_ARG as c_int; }
-    let (d, cur) = match cursor_to_internal(c) { Ok(x) => x, Err(e) => return e as c_int };
-    let child = match crate::cursor::resolve_single_idx(d, cur, i as u32) {
-        Ok(x) => x, Err(e) => return e as c_int,
-    };
-    *out = internal_to_cursor((*c).doc, child);
-    qjd_err::QJD_OK as c_int
+    ffi_catch!({
+        if out.is_null() { return qjd_err::QJD_INVALID_ARG as c_int; }
+        if i > u32::MAX as usize { return qjd_err::QJD_INVALID_ARG as c_int; }
+        let (d, cur) = match cursor_to_internal(c) { Ok(x) => x, Err(e) => return e as c_int };
+        let child = match crate::cursor::resolve_single_idx(d, cur, i as u32) {
+            Ok(x) => x, Err(e) => return e as c_int,
+        };
+        *out = internal_to_cursor((*c).doc, child);
+        qjd_err::QJD_OK as c_int
+    })
 }
 
 #[no_mangle]
@@ -316,109 +357,128 @@ pub unsafe extern "C" fn qjd_cursor_get_str(
     c: *const qjd_cursor, path: *const c_char, path_len: usize,
     out_ptr: *mut *const u8, out_len: *mut usize,
 ) -> c_int {
-    if out_ptr.is_null() || out_len.is_null() {
-        return qjd_err::QJD_INVALID_ARG as c_int;
-    }
-    let (d, cur) = match cursor_to_internal(c) { Ok(x) => x, Err(e) => return e as c_int };
-    let p: &[u8] = if path.is_null() { &[] } else {
-        std::slice::from_raw_parts(path as *const u8, path_len)
-    };
-    let cur = match cur.resolve(d, p) { Ok(x) => x, Err(e) => return e as c_int };
-    let pos = d.indices[cur.idx_start as usize] as usize;
-    if d.buf.get(pos).copied() != Some(b'"') {
-        return qjd_err::QJD_TYPE_MISMATCH as c_int;
-    }
-    let close = d.indices[(cur.idx_start + 1) as usize] as usize;
+    ffi_catch!({
+        if out_ptr.is_null() || out_len.is_null() {
+            return qjd_err::QJD_INVALID_ARG as c_int;
+        }
+        let (d, cur) = match cursor_to_internal(c) { Ok(x) => x, Err(e) => return e as c_int };
+        let p: &[u8] = if path.is_null() { &[] } else {
+            std::slice::from_raw_parts(path as *const u8, path_len)
+        };
+        let cur = match cur.resolve(d, p) { Ok(x) => x, Err(e) => return e as c_int };
+        let pos = d.indices[cur.idx_start as usize] as usize;
+        if d.buf.get(pos).copied() != Some(b'"') {
+            return qjd_err::QJD_TYPE_MISMATCH as c_int;
+        }
+        let close = d.indices[(cur.idx_start + 1) as usize] as usize;
 
-    // Access scratch via raw pointer through doc to avoid aliasing the &Document.
-    let doc_ptr = (*c).doc as *mut qjd_doc;
-    let scratch = &mut (*doc_ptr).0.scratch;
-    match string::decode_string(d.buf, pos + 1, close, scratch) {
-        Ok((p, n)) => { *out_ptr = p; *out_len = n; qjd_err::QJD_OK as c_int }
-        Err(e) => e as c_int,
-    }
+        // Access scratch via raw pointer through doc to avoid aliasing the &Document.
+        let doc_ptr = (*c).doc as *mut qjd_doc;
+        let scratch = &mut (*doc_ptr).0.scratch;
+        match string::decode_string(d.buf, pos + 1, close, scratch) {
+            Ok((p, n)) => { *out_ptr = p; *out_len = n; qjd_err::QJD_OK as c_int }
+            Err(e) => e as c_int,
+        }
+    })
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn qjd_cursor_get_i64(
     c: *const qjd_cursor, path: *const c_char, path_len: usize, out: *mut i64,
 ) -> c_int {
-    if out.is_null() { return qjd_err::QJD_INVALID_ARG as c_int; }
-    let (d, cur) = match cursor_to_internal(c) { Ok(x) => x, Err(e) => return e as c_int };
-    let p: &[u8] = if path.is_null() { &[] } else {
-        std::slice::from_raw_parts(path as *const u8, path_len)
-    };
-    let cur = match cur.resolve(d, p) { Ok(x) => x, Err(e) => return e as c_int };
-    let bytes = match scalar_bytes(d, cur) { Ok(b) => b, Err(e) => return e as c_int };
-    match number::parse_i64(bytes) {
-        Ok(v) => { *out = v; qjd_err::QJD_OK as c_int }
-        Err(e) => e as c_int,
-    }
+    ffi_catch!({
+        if out.is_null() { return qjd_err::QJD_INVALID_ARG as c_int; }
+        let (d, cur) = match cursor_to_internal(c) { Ok(x) => x, Err(e) => return e as c_int };
+        let p: &[u8] = if path.is_null() { &[] } else {
+            std::slice::from_raw_parts(path as *const u8, path_len)
+        };
+        let cur = match cur.resolve(d, p) { Ok(x) => x, Err(e) => return e as c_int };
+        let bytes = match scalar_bytes(d, cur) { Ok(b) => b, Err(e) => return e as c_int };
+        match number::parse_i64(bytes) {
+            Ok(v) => { *out = v; qjd_err::QJD_OK as c_int }
+            Err(e) => e as c_int,
+        }
+    })
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn qjd_cursor_get_f64(
     c: *const qjd_cursor, path: *const c_char, path_len: usize, out: *mut f64,
 ) -> c_int {
-    if out.is_null() { return qjd_err::QJD_INVALID_ARG as c_int; }
-    let (d, cur) = match cursor_to_internal(c) { Ok(x) => x, Err(e) => return e as c_int };
-    let p: &[u8] = if path.is_null() { &[] } else {
-        std::slice::from_raw_parts(path as *const u8, path_len)
-    };
-    let cur = match cur.resolve(d, p) { Ok(x) => x, Err(e) => return e as c_int };
-    let bytes = match scalar_bytes(d, cur) { Ok(b) => b, Err(e) => return e as c_int };
-    match number::parse_f64(bytes) {
-        Ok(v) => { *out = v; qjd_err::QJD_OK as c_int }
-        Err(e) => e as c_int,
-    }
+    ffi_catch!({
+        if out.is_null() { return qjd_err::QJD_INVALID_ARG as c_int; }
+        let (d, cur) = match cursor_to_internal(c) { Ok(x) => x, Err(e) => return e as c_int };
+        let p: &[u8] = if path.is_null() { &[] } else {
+            std::slice::from_raw_parts(path as *const u8, path_len)
+        };
+        let cur = match cur.resolve(d, p) { Ok(x) => x, Err(e) => return e as c_int };
+        let bytes = match scalar_bytes(d, cur) { Ok(b) => b, Err(e) => return e as c_int };
+        match number::parse_f64(bytes) {
+            Ok(v) => { *out = v; qjd_err::QJD_OK as c_int }
+            Err(e) => e as c_int,
+        }
+    })
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn qjd_cursor_get_bool(
     c: *const qjd_cursor, path: *const c_char, path_len: usize, out: *mut c_int,
 ) -> c_int {
-    if out.is_null() { return qjd_err::QJD_INVALID_ARG as c_int; }
-    let (d, cur) = match cursor_to_internal(c) { Ok(x) => x, Err(e) => return e as c_int };
-    let p: &[u8] = if path.is_null() { &[] } else {
-        std::slice::from_raw_parts(path as *const u8, path_len)
-    };
-    let cur = match cur.resolve(d, p) { Ok(x) => x, Err(e) => return e as c_int };
-    let bytes = match scalar_bytes(d, cur) { Ok(b) => b, Err(e) => return e as c_int };
-    match bytes {
-        b"true"  => { *out = 1; qjd_err::QJD_OK as c_int }
-        b"false" => { *out = 0; qjd_err::QJD_OK as c_int }
-        _ => qjd_err::QJD_TYPE_MISMATCH as c_int,
-    }
+    ffi_catch!({
+        if out.is_null() { return qjd_err::QJD_INVALID_ARG as c_int; }
+        let (d, cur) = match cursor_to_internal(c) { Ok(x) => x, Err(e) => return e as c_int };
+        let p: &[u8] = if path.is_null() { &[] } else {
+            std::slice::from_raw_parts(path as *const u8, path_len)
+        };
+        let cur = match cur.resolve(d, p) { Ok(x) => x, Err(e) => return e as c_int };
+        let bytes = match scalar_bytes(d, cur) { Ok(b) => b, Err(e) => return e as c_int };
+        match bytes {
+            b"true"  => { *out = 1; qjd_err::QJD_OK as c_int }
+            b"false" => { *out = 0; qjd_err::QJD_OK as c_int }
+            _ => qjd_err::QJD_TYPE_MISMATCH as c_int,
+        }
+    })
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn qjd_cursor_typeof(
     c: *const qjd_cursor, path: *const c_char, path_len: usize, type_out: *mut c_int,
 ) -> c_int {
-    if type_out.is_null() { return qjd_err::QJD_INVALID_ARG as c_int; }
-    let (d, cur) = match cursor_to_internal(c) { Ok(x) => x, Err(e) => return e as c_int };
-    let p: &[u8] = if path.is_null() { &[] } else {
-        std::slice::from_raw_parts(path as *const u8, path_len)
-    };
-    let cur = match cur.resolve(d, p) { Ok(x) => x, Err(e) => return e as c_int };
-    match d.type_of(cur) {
-        Ok(t) => { *type_out = t as c_int; qjd_err::QJD_OK as c_int }
-        Err(e) => e as c_int,
-    }
+    ffi_catch!({
+        if type_out.is_null() { return qjd_err::QJD_INVALID_ARG as c_int; }
+        let (d, cur) = match cursor_to_internal(c) { Ok(x) => x, Err(e) => return e as c_int };
+        let p: &[u8] = if path.is_null() { &[] } else {
+            std::slice::from_raw_parts(path as *const u8, path_len)
+        };
+        let cur = match cur.resolve(d, p) { Ok(x) => x, Err(e) => return e as c_int };
+        match d.type_of(cur) {
+            Ok(t) => { *type_out = t as c_int; qjd_err::QJD_OK as c_int }
+            Err(e) => e as c_int,
+        }
+    })
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn qjd_cursor_len(
     c: *const qjd_cursor, path: *const c_char, path_len: usize, out: *mut usize,
 ) -> c_int {
-    if out.is_null() { return qjd_err::QJD_INVALID_ARG as c_int; }
-    let (d, cur) = match cursor_to_internal(c) { Ok(x) => x, Err(e) => return e as c_int };
-    let p: &[u8] = if path.is_null() { &[] } else {
-        std::slice::from_raw_parts(path as *const u8, path_len)
-    };
-    let cur = match cur.resolve(d, p) { Ok(x) => x, Err(e) => return e as c_int };
-    match d.cursor_len(cur) {
-        Ok(n) => { *out = n; qjd_err::QJD_OK as c_int }
-        Err(e) => e as c_int,
-    }
+    ffi_catch!({
+        if out.is_null() { return qjd_err::QJD_INVALID_ARG as c_int; }
+        let (d, cur) = match cursor_to_internal(c) { Ok(x) => x, Err(e) => return e as c_int };
+        let p: &[u8] = if path.is_null() { &[] } else {
+            std::slice::from_raw_parts(path as *const u8, path_len)
+        };
+        let cur = match cur.resolve(d, p) { Ok(x) => x, Err(e) => return e as c_int };
+        match d.cursor_len(cur) {
+            Ok(n) => { *out = n; qjd_err::QJD_OK as c_int }
+            Err(e) => e as c_int,
+        }
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn qjd_test_panic() -> c_int {
+    ffi_catch!({
+        panic!("forced panic for test");
+    })
 }
