@@ -7,4 +7,5 @@ mod skip_cache;
 mod doc;
 mod path;
 mod cursor;
+mod decode;
 pub mod ffi;
