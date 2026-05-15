@@ -31,6 +31,17 @@ unsafe fn scan_avx2_impl(buf: &[u8], out: &mut Vec<u32>) -> Result<(), usize> {
         let escaped   = find_escape_mask_with_carry(backslash, &mut bs_carry);
         let real_quote = quote & !escaped;
 
+        // String-skip fast path: when the previous chunk left us inside a
+        // string and this chunk contains no unescaped quote, the entire
+        // chunk is string interior. No structural chars to emit and
+        // in_string stays 1; bs_carry was already updated above. Skip the
+        // 14 cmpeq / movemask ops in structural_mask_chunk plus the PCLMUL
+        // prefix-XOR — the dominant cost on string-heavy payloads.
+        if in_string != 0 && real_quote == 0 {
+            i += 64;
+            continue;
+        }
+
         let (inside, new_in_string) = inside_string_mask(real_quote, in_string);
         in_string = new_in_string;
 
@@ -249,6 +260,44 @@ mod tests {
         buf.push(b'"');
         buf.push(b'}');
         assert_eq!(buf.len(), 64);
+        parity(&buf);
+    }
+
+    /// Exercises the string-skip fast path: a string spanning many AVX2
+    /// chunks with no internal quotes. The fast-path branch must produce
+    /// the same emitted offsets as the slow path (which the parity check
+    /// against scalar implicitly verifies).
+    #[test]
+    fn long_string_engages_skip_fastpath() {
+        if !host_supports_avx2() { return; }
+        let mut buf = Vec::new();
+        buf.extend_from_slice(b"{\"k\":\"");
+        // ~10 KB of string interior — many chunks fully inside the string.
+        for _ in 0..10_000 { buf.push(b'a'); }
+        buf.push(b'"');
+        buf.push(b'}');
+        // Pad to 64-aligned to also exercise the no-tail branch.
+        while buf.len() % 64 != 0 { buf.push(b' '); }
+        parity(&buf);
+    }
+
+    /// String contains escaped quotes — the fast path must NOT fire when
+    /// `real_quote != 0` even though we may still be inside a string at
+    /// the chunk boundary.
+    #[test]
+    fn escaped_quotes_do_not_trip_fastpath() {
+        if !host_supports_avx2() { return; }
+        let mut buf = Vec::new();
+        buf.extend_from_slice(b"{\"k\":\"");
+        // Embed real escape sequences periodically so quotes appear in the
+        // raw bytes but are escaped; real_quote should still be 0 over
+        // these chunks, fast path should fire.
+        for _ in 0..50 {
+            buf.extend_from_slice(b"aaaaaaaa\\\"");  // 8 a's + \"
+        }
+        buf.push(b'"');
+        buf.push(b'}');
+        while buf.len() % 64 != 0 { buf.push(b' '); }
         parity(&buf);
     }
 
