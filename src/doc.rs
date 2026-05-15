@@ -78,9 +78,14 @@ impl<'a> Document<'a> {
             return Err(qjd_err::QJD_TYPE_MISMATCH);
         }
         let is_obj = b == b'{';
-        // Empty container: opener is immediately followed by closer.
-        // Detect by checking whether the next structural index IS the closer.
-        if cur.idx_start + 1 == cur.idx_end {
+        // Empty container detection: byte after opener (skipping whitespace)
+        // is the closer position itself, meaning no value sits between them.
+        let closer_pos = self.indices[cur.idx_end as usize] as usize;
+        let mut p = pos + 1;
+        while p < closer_pos && matches!(self.buf[p], b' '|b'\t'|b'\n'|b'\r') {
+            p += 1;
+        }
+        if p == closer_pos {
             return Ok(0);
         }
         let mut count: usize = 0;
