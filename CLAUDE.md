@@ -41,7 +41,7 @@ cargo test --features test-panic --release
 
 `ffi.load("quickdecode")` uses `dlopen`, which respects `LD_LIBRARY_PATH` — **not** LuaJIT's `package.cpath`. The Makefile sets `LD_LIBRARY_PATH=target/release` for `test`/`bench`; if you invoke `busted` or `luajit` directly, set it yourself.
 
-`make lint` currently fails on 22 `missing_safety_doc` clippy warnings on the public `qjd_*` FFI exports. This is a known deferred item (see README "Roadmap / Deferred"); don't treat the lint failure as a regression unless the count changes.
+`make lint` runs clippy only (with `-D warnings`); `cargo fmt --check` is intentionally **not** part of the lint gate because the codebase uses manual column alignment in struct definitions and compact single-line literals that default rustfmt would reflow. See the README "Roadmap / Deferred" entry on fmt for context.
 
 ## Architecture
 

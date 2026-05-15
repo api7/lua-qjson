@@ -137,13 +137,8 @@ mod tests {
 
     #[test]
     fn deeply_nested() {
-        let mut buf = Vec::new();
-        for _ in 0..100 {
-            buf.push(b'[');
-        }
-        for _ in 0..100 {
-            buf.push(b']');
-        }
+        let mut buf = vec![b'['; 100];
+        buf.resize(200, b']');
         let r = scan(&buf).unwrap();
         assert_eq!(r.len(), 200);
     }
