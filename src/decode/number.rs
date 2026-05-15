@@ -1,1 +1,78 @@
-// Placeholder. Implementation in Task 8.
+use crate::error::qjd_err;
+
+pub(crate) fn parse_i64(bytes: &[u8]) -> Result<i64, qjd_err> {
+    if bytes.is_empty() {
+        return Err(qjd_err::QJD_DECODE_FAILED);
+    }
+    // Reject non-integer JSON numbers (with decimal point or exponent).
+    if bytes.iter().any(|&b| b == b'.' || b == b'e' || b == b'E') {
+        return Err(qjd_err::QJD_TYPE_MISMATCH);
+    }
+    let (neg, rest) = match bytes[0] {
+        b'-' => (true, &bytes[1..]),
+        _    => (false, bytes),
+    };
+    if rest.is_empty() || !rest.iter().all(|c| c.is_ascii_digit()) {
+        return Err(qjd_err::QJD_DECODE_FAILED);
+    }
+    let mut v: i64 = 0;
+    for &c in rest {
+        let d = (c - b'0') as i64;
+        v = match v.checked_mul(10).and_then(|x| {
+            if neg { x.checked_sub(d) } else { x.checked_add(d) }
+        }) {
+            Some(n) => n,
+            None    => return Err(qjd_err::QJD_OUT_OF_RANGE),
+        };
+    }
+    Ok(v)
+}
+
+pub(crate) fn parse_f64(bytes: &[u8]) -> Result<f64, qjd_err> {
+    if bytes.is_empty() {
+        return Err(qjd_err::QJD_DECODE_FAILED);
+    }
+    let s = std::str::from_utf8(bytes).map_err(|_| qjd_err::QJD_DECODE_FAILED)?;
+    s.parse::<f64>().map_err(|_| qjd_err::QJD_DECODE_FAILED)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test] fn i64_zero()       { assert_eq!(parse_i64(b"0"),  Ok(0)); }
+    #[test] fn i64_positive()   { assert_eq!(parse_i64(b"42"), Ok(42)); }
+    #[test] fn i64_negative()   { assert_eq!(parse_i64(b"-7"), Ok(-7)); }
+    #[test] fn i64_max() { assert_eq!(parse_i64(b"9223372036854775807"), Ok(i64::MAX)); }
+    #[test] fn i64_min() { assert_eq!(parse_i64(b"-9223372036854775808"), Ok(i64::MIN)); }
+
+    #[test]
+    fn i64_overflow() {
+        assert_eq!(parse_i64(b"9223372036854775808"), Err(qjd_err::QJD_OUT_OF_RANGE));
+    }
+
+    #[test]
+    fn i64_rejects_decimal() {
+        assert_eq!(parse_i64(b"1.5"), Err(qjd_err::QJD_TYPE_MISMATCH));
+    }
+
+    #[test]
+    fn i64_rejects_exponent() {
+        assert_eq!(parse_i64(b"1e5"), Err(qjd_err::QJD_TYPE_MISMATCH));
+    }
+
+    #[test]
+    fn i64_rejects_empty() {
+        assert_eq!(parse_i64(b""), Err(qjd_err::QJD_DECODE_FAILED));
+    }
+
+    #[test] fn f64_zero()    { assert_eq!(parse_f64(b"0.0").unwrap(),  0.0); }
+    #[test] fn f64_pi()      { assert!((parse_f64(b"3.14").unwrap() - 3.14).abs() < 1e-12); }
+    #[test] fn f64_negative(){ assert_eq!(parse_f64(b"-1.5").unwrap(), -1.5); }
+    #[test] fn f64_exponent(){ assert_eq!(parse_f64(b"1e2").unwrap(),  100.0); }
+
+    #[test]
+    fn f64_rejects_garbage() {
+        assert_eq!(parse_f64(b"hello"), Err(qjd_err::QJD_DECODE_FAILED));
+    }
+}
