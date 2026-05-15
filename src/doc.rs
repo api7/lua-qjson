@@ -1,8 +1,6 @@
 use std::cell::RefCell;
 
 use crate::error::qjd_err;
-use crate::scan::Scanner;
-use crate::scan::scalar::ScalarScanner;
 use crate::skip_cache::SkipCache;
 
 #[allow(dead_code)]
@@ -16,7 +14,7 @@ pub struct Document<'a> {
 impl<'a> Document<'a> {
     pub fn parse(buf: &'a [u8]) -> Result<Self, qjd_err> {
         let mut indices = Vec::new();
-        ScalarScanner::scan(buf, &mut indices).map_err(|_| qjd_err::QJD_PARSE_ERROR)?;
+        crate::scan::scan(buf, &mut indices).map_err(|_| qjd_err::QJD_PARSE_ERROR)?;
         // Sentinel simplifies boundary checks during Phase 2.
         indices.push(u32::MAX);
         Ok(Self {
