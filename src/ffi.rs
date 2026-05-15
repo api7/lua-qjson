@@ -6,9 +6,17 @@
 //! Most exports share the same FFI obligations on the caller:
 //!
 //! - A `*mut qjd_doc` argument must be NULL or a pointer previously returned
-//!   by [`qjd_parse`] that has not yet been passed to [`qjd_free`].
+//!   by [`qjd_parse`] or [`qjd_decoder_parse`] that has not yet been passed
+//!   to [`qjd_free`].
+//! - A `*mut qjd_decoder` argument must be NULL or a pointer previously
+//!   returned by [`qjd_decoder_new`] that has not yet been passed to
+//!   [`qjd_decoder_free`].
 //! - The input buffer passed to [`qjd_parse`] must remain valid and
-//!   unmodified for as long as the document is alive; the document borrows it.
+//!   unmodified for the lifetime of the returned document.
+//! - The input buffer passed to [`qjd_decoder_parse`] must remain valid and
+//!   unmodified until the next [`qjd_decoder_parse`] / [`qjd_decoder_reset`]
+//!   / [`qjd_decoder_destroy`] / [`qjd_decoder_free`] call on the same
+//!   decoder, or any doc operation referencing it.
 //! - Path / key pointer arguments must point to the indicated number of
 //!   readable bytes, or be NULL when the length is `0`.
 //! - Out pointers must be non-NULL and writable for their target type when
@@ -20,15 +28,20 @@
 //! - A pointer/length pair returned by any `*_get_str` is invalidated by
 //!   the next `*_get_str` call on the same document (scratch buffer reuse).
 //!
+//! After [`qjd_decoder_parse`] is called on a decoder, all docs and cursors
+//! produced by *prior* parses on that decoder become stale; operations on
+//! them return [`qjd_err::QJD_STALE_DOC`] (Lua wrapper: `nil`). After
+//! [`qjd_decoder_destroy`], all operations return `QJD_INVALID_ARG`.
+//!
 //! Every export catches Rust panics at the FFI boundary and converts them
 //! to `QJD_OOM`; a panic must not be allowed to unwind across the boundary.
 
 #![allow(non_camel_case_types)]
 
 use std::os::raw::{c_char, c_int};
-use std::ptr;
+use std::ptr::{self, NonNull};
 
-use crate::doc::Document;
+use crate::decoder::{Decoder, DecoderState};
 use crate::error::qjd_err;
 
 macro_rules! ffi_catch {
@@ -41,8 +54,43 @@ macro_rules! ffi_catch {
     }};
 }
 
-/// Opaque type exported to C as `qjd_doc*`.
-pub struct qjd_doc(pub(crate) Document<'static>);
+// ── Opaque types ────────────────────────────────────────────────────────────
+
+/// Opaque type exported to C as `qjd_decoder*`.
+pub struct qjd_decoder(pub(crate) Decoder);
+
+/// Opaque type exported to C as `qjd_doc*`. A doc is a thin handle:
+/// a pointer to the owning decoder plus the generation that was current
+/// at the time the doc was produced. Successive [`qjd_decoder_parse`] (or
+/// `reset` / `destroy`) calls bump the decoder's generation, so prior docs
+/// detect they are stale via the gen check at every entry point.
+pub struct qjd_doc {
+    decoder:      NonNull<qjd_decoder>,
+    gen:          u32,
+    /// True for the one-shot [`qjd_parse`] path: the decoder is owned by
+    /// this doc and is freed when the doc is freed. False for docs produced
+    /// by [`qjd_decoder_parse`] (the user owns the decoder).
+    owns_decoder: bool,
+}
+
+// ── Entry-point safety helpers ──────────────────────────────────────────────
+
+/// Validate `doc` and return the live decoder. Order matters: a destroyed
+/// decoder is reported as `QJD_INVALID_ARG`, not `QJD_STALE_DOC`.
+unsafe fn check_doc_alive(doc: *mut qjd_doc) -> Result<&'static Decoder, qjd_err> {
+    if doc.is_null() { return Err(qjd_err::QJD_INVALID_ARG); }
+    let d = &*doc;
+    let dec: &Decoder = &d.decoder.as_ref().0;
+    if matches!(dec.state, DecoderState::Destroyed) {
+        return Err(qjd_err::QJD_INVALID_ARG);
+    }
+    if dec.gen != d.gen {
+        return Err(qjd_err::QJD_STALE_DOC);
+    }
+    Ok(std::mem::transmute::<&Decoder, &'static Decoder>(dec))
+}
+
+// ── strerror ────────────────────────────────────────────────────────────────
 
 /// Return a static NUL-terminated message for the given error code.
 ///
@@ -53,7 +101,6 @@ pub struct qjd_doc(pub(crate) Document<'static>);
 /// and must not be freed.
 #[no_mangle]
 pub unsafe extern "C" fn qjd_strerror(code: c_int) -> *const c_char {
-    // Hardcoded NUL-terminated map; avoids runtime allocation and lifetime issues.
     let s: &'static [u8] = match code {
         0 => b"ok\0",
         1 => b"JSON parse error\0",
@@ -64,12 +111,19 @@ pub unsafe extern "C" fn qjd_strerror(code: c_int) -> *const c_char {
         6 => b"invalid path syntax\0",
         7 => b"invalid argument\0",
         8 => b"out of memory\0",
+        9 => b"stale document or cursor\0",
         _ => b"unknown error code\0",
     };
     s.as_ptr() as *const c_char
 }
 
-/// Parse a JSON buffer into a document (Phase 1: structural scan).
+// ── qjd_parse / qjd_free (one-shot, backward-compatible) ────────────────────
+
+/// Parse a JSON buffer into a one-shot document (Phase 1: structural scan).
+///
+/// Internally allocates a private decoder owned by the returned document.
+/// For repeated parses on hot paths, prefer [`qjd_decoder_new`] +
+/// [`qjd_decoder_parse`].
 ///
 /// # Safety
 ///
@@ -78,7 +132,7 @@ pub unsafe extern "C" fn qjd_strerror(code: c_int) -> *const c_char {
 /// - `err_out` must point to a writable `int`, or be NULL (in which case the
 ///   function returns NULL with no error code written).
 /// - The buffer must remain valid and unmodified for the lifetime of the
-///   returned `qjd_doc*`; the document borrows it.
+///   returned `qjd_doc*`; the underlying decoder borrows it.
 /// - On success, the returned pointer must be freed exactly once with
 ///   [`qjd_free`].
 #[no_mangle]
@@ -92,11 +146,159 @@ pub unsafe extern "C" fn qjd_parse(
             if !err_out.is_null() { *err_out = qjd_err::QJD_INVALID_ARG as c_int; }
             return ptr::null_mut();
         }
-        let slice: &'static [u8] = std::slice::from_raw_parts(buf, len);
-        match Document::parse(slice) {
-            Ok(d) => {
+        let dec_ptr = Box::into_raw(Box::new(qjd_decoder(Decoder::new())));
+        let slice: &[u8] = std::slice::from_raw_parts(buf, len);
+        match (*dec_ptr).0.parse(slice) {
+            Ok(()) => {
                 *err_out = qjd_err::QJD_OK as c_int;
-                Box::into_raw(Box::new(qjd_doc(d)))
+                let doc = qjd_doc {
+                    decoder:      NonNull::new_unchecked(dec_ptr),
+                    gen:          (*dec_ptr).0.gen,
+                    owns_decoder: true,
+                };
+                Box::into_raw(Box::new(doc))
+            }
+            Err(e) => {
+                let _ = Box::from_raw(dec_ptr);
+                *err_out = e as c_int;
+                ptr::null_mut()
+            }
+        }
+    }));
+    match r {
+        Ok(p) => p,
+        Err(_) => {
+            if !err_out.is_null() { *err_out = qjd_err::QJD_OOM as c_int; }
+            std::ptr::null_mut()
+        }
+    }
+}
+
+/// Free a document returned by [`qjd_parse`] or [`qjd_decoder_parse`].
+/// NULL is a no-op. For docs produced by [`qjd_parse`], this also frees the
+/// private decoder. For docs produced by [`qjd_decoder_parse`], the decoder
+/// is left alone — free it with [`qjd_decoder_free`].
+///
+/// # Safety
+///
+/// `doc` must be NULL or a pointer previously returned by [`qjd_parse`] or
+/// [`qjd_decoder_parse`] that has not yet been freed. Double-free or passing
+/// a pointer not produced by those functions is undefined behavior.
+#[no_mangle]
+pub unsafe extern "C" fn qjd_free(doc: *mut qjd_doc) {
+    if doc.is_null() { return; }
+    let d = Box::from_raw(doc);
+    if d.owns_decoder {
+        let _ = Box::from_raw(d.decoder.as_ptr());
+    }
+}
+
+// ── qjd_decoder_* (pooled API) ──────────────────────────────────────────────
+
+/// Allocate a reusable decoder. Returns NULL on allocation failure.
+///
+/// # Safety
+///
+/// Has no preconditions. The returned pointer must be freed exactly once
+/// with [`qjd_decoder_free`].
+#[no_mangle]
+pub unsafe extern "C" fn qjd_decoder_new() -> *mut qjd_decoder {
+    let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        Box::into_raw(Box::new(qjd_decoder(Decoder::new())))
+    }));
+    r.unwrap_or(std::ptr::null_mut())
+}
+
+/// Free a decoder returned by [`qjd_decoder_new`]. NULL is a no-op.
+///
+/// # Safety
+///
+/// `dec` must be NULL or a pointer previously returned by
+/// [`qjd_decoder_new`] that has not yet been freed. All docs and cursors
+/// produced by this decoder must have been freed first, or the caller must
+/// ensure they are not used after this call.
+#[no_mangle]
+pub unsafe extern "C" fn qjd_decoder_free(dec: *mut qjd_decoder) {
+    if dec.is_null() { return; }
+    let _ = Box::from_raw(dec);
+}
+
+/// Reset a decoder: drop all cached state and release allocated capacity.
+/// The decoder remains usable and its generation advances so any
+/// outstanding docs/cursors become stale.
+///
+/// # Safety
+///
+/// `dec` must be NULL or a pointer previously returned by
+/// [`qjd_decoder_new`] that has not yet been freed.
+#[no_mangle]
+pub unsafe extern "C" fn qjd_decoder_reset(dec: *mut qjd_decoder) {
+    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        if !dec.is_null() { (*dec).0.reset(); }
+    }));
+}
+
+/// Permanently retire a decoder. Frees the bulk internal buffers; the
+/// decoder struct itself is freed when [`qjd_decoder_free`] is called.
+/// After destroy, all subsequent decoder operations return errors and all
+/// doc/cursor operations against docs produced by this decoder return
+/// `QJD_INVALID_ARG`.
+///
+/// # Safety
+///
+/// `dec` must be NULL or a pointer previously returned by
+/// [`qjd_decoder_new`] that has not yet been freed.
+#[no_mangle]
+pub unsafe extern "C" fn qjd_decoder_destroy(dec: *mut qjd_decoder) {
+    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        if !dec.is_null() { (*dec).0.destroy(); }
+    }));
+}
+
+/// Parse `buf` into `dec` and return a new doc handle. Any prior doc/cursor
+/// produced by this decoder is invalidated (their generation no longer
+/// matches and operations on them return `QJD_STALE_DOC`).
+///
+/// # Safety
+///
+/// - `dec` must be a live decoder pointer returned by [`qjd_decoder_new`].
+///   NULL or a destroyed decoder yields `QJD_INVALID_ARG`.
+/// - `buf` must point to `len` readable bytes, or be NULL when `len == 0`.
+/// - `err_out` must point to a writable `int`; NULL yields NULL with no
+///   error code written.
+/// - The buffer must remain valid and unmodified until the next
+///   `qjd_decoder_parse` / `_reset` / `_destroy` / `_free` call on `dec`,
+///   or any operation on a doc/cursor produced by this parse.
+/// - On success, the returned pointer must be freed with [`qjd_free`].
+#[no_mangle]
+pub unsafe extern "C" fn qjd_decoder_parse(
+    dec:     *mut qjd_decoder,
+    buf:     *const u8,
+    len:     usize,
+    err_out: *mut c_int,
+) -> *mut qjd_doc {
+    let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        if err_out.is_null() { return ptr::null_mut(); }
+        if dec.is_null() || (buf.is_null() && len != 0) {
+            *err_out = qjd_err::QJD_INVALID_ARG as c_int;
+            return ptr::null_mut();
+        }
+        if matches!((*dec).0.state, DecoderState::Destroyed) {
+            *err_out = qjd_err::QJD_INVALID_ARG as c_int;
+            return ptr::null_mut();
+        }
+        let slice: &[u8] = if buf.is_null() { &[] } else {
+            std::slice::from_raw_parts(buf, len)
+        };
+        match (*dec).0.parse(slice) {
+            Ok(()) => {
+                *err_out = qjd_err::QJD_OK as c_int;
+                let doc = qjd_doc {
+                    decoder:      NonNull::new_unchecked(dec),
+                    gen:          (*dec).0.gen,
+                    owns_decoder: false,
+                };
+                Box::into_raw(Box::new(doc))
             }
             Err(e) => {
                 *err_out = e as c_int;
@@ -113,37 +315,28 @@ pub unsafe extern "C" fn qjd_parse(
     }
 }
 
-/// Free a document returned by [`qjd_parse`]. NULL is a no-op.
-///
-/// # Safety
-///
-/// `doc` must be NULL or a pointer previously returned by [`qjd_parse`]
-/// that has not yet been freed. Double-free or passing a pointer not
-/// produced by `qjd_parse` is undefined behavior.
-#[no_mangle]
-pub unsafe extern "C" fn qjd_free(doc: *mut qjd_doc) {
-    if doc.is_null() { return; }
-    let _ = Box::from_raw(doc);
-}
+// ── Root-path resolution helper ─────────────────────────────────────────────
 
 use crate::cursor::Cursor;
 use crate::error::qjd_type;
 
 unsafe fn resolve_root_path(
     doc: *mut qjd_doc, path: *const c_char, path_len: usize,
-) -> Result<(&'static Document<'static>, Cursor), qjd_err> {
-    if doc.is_null() || (path.is_null() && path_len != 0) {
+) -> Result<(&'static Decoder, Cursor), qjd_err> {
+    if path.is_null() && path_len != 0 {
         return Err(qjd_err::QJD_INVALID_ARG);
     }
-    let d: &Document = &(*doc).0;
+    let d = check_doc_alive(doc)?;
     let p: &[u8] = if path.is_null() {
         &[]
     } else {
         std::slice::from_raw_parts(path as *const u8, path_len)
     };
     let cur = Cursor::root(d).resolve(d, p)?;
-    Ok((std::mem::transmute::<&Document<'_>, &'static Document<'static>>(d), cur))
+    Ok((std::mem::transmute::<&Decoder, &'static Decoder>(d), cur))
 }
+
+// ── Path-based getters ──────────────────────────────────────────────────────
 
 /// Write the JSON value type at `path` into `*type_out` (see [`qjd_type`]).
 ///
@@ -344,7 +537,7 @@ pub unsafe extern "C" fn qjd_get_bool(
 /// Return the byte slice for a scalar value (number, true, false, null).
 /// Uses the cursor convention: cur.idx_start is the position in indices of
 /// the structural char AFTER the scalar (a separator or closer).
-unsafe fn scalar_bytes<'d>(d: &'d Document<'d>, cur: Cursor) -> Result<&'d [u8], qjd_err> {
+unsafe fn scalar_bytes(d: &Decoder, cur: Cursor) -> Result<&[u8], qjd_err> {
     // First byte: just after the previous structural char (skip whitespace).
     let start = d.find_scalar_start(cur.idx_start)?;
     // End byte: position of the structural char at cur.idx_start (exclusive).
@@ -368,16 +561,14 @@ pub struct qjd_cursor {
     pub _reserved1: u32,
 }
 
-/// Turn a `*const qjd_cursor` into `(&'static Document<'static>, Cursor)` for Rust use.
-unsafe fn cursor_to_internal(c: *const qjd_cursor) -> Result<(&'static Document<'static>, Cursor), qjd_err> {
+/// Turn a `*const qjd_cursor` into `(&Decoder, Cursor)` for Rust use, after
+/// validating both the doc handle and the gen against the underlying decoder.
+unsafe fn cursor_to_internal(c: *const qjd_cursor) -> Result<(&'static Decoder, Cursor), qjd_err> {
     if c.is_null() { return Err(qjd_err::QJD_INVALID_ARG); }
     let cc = &*c;
     if cc.doc.is_null() { return Err(qjd_err::QJD_INVALID_ARG); }
-    let d: &Document = &(*(cc.doc as *mut qjd_doc)).0;
-    Ok((
-        std::mem::transmute::<&Document<'_>, &'static Document<'static>>(d),
-        Cursor { idx_start: cc.idx_start, idx_end: cc.idx_end },
-    ))
+    let d = check_doc_alive(cc.doc as *mut qjd_doc)?;
+    Ok((d, Cursor { idx_start: cc.idx_start, idx_end: cc.idx_end }))
 }
 
 fn internal_to_cursor(doc: *const qjd_doc, cur: Cursor) -> qjd_cursor {
