@@ -3,3 +3,5 @@
 
 pub mod error;
 mod scan;
+mod doc;
+pub mod ffi;
