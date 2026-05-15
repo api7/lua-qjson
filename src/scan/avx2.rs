@@ -3,7 +3,7 @@
 use core::arch::x86_64::*;
 use super::Scanner;
 
-pub(crate) struct Avx2Scanner;
+pub struct Avx2Scanner;
 
 impl Scanner for Avx2Scanner {
     fn scan(buf: &[u8], out: &mut Vec<u32>) -> Result<(), usize> {
@@ -19,6 +19,8 @@ impl Scanner for Avx2Scanner {
 #[target_feature(enable = "avx2,pclmulqdq")]
 unsafe fn scan_avx2_impl(buf: &[u8], out: &mut Vec<u32>) -> Result<(), usize> {
     let mut i: usize = 0;
+    let mut bs_carry: u64 = 0;
+    let mut in_string: u64 = 0;
 
     while i + 64 <= buf.len() {
         let chunk_lo = _mm256_loadu_si256(buf.as_ptr().add(i)        as *const __m256i);
@@ -26,10 +28,11 @@ unsafe fn scan_avx2_impl(buf: &[u8], out: &mut Vec<u32>) -> Result<(), usize> {
 
         let backslash = byte_mask(chunk_lo, chunk_hi, b'\\');
         let quote     = byte_mask(chunk_lo, chunk_hi, b'"');
-        let escaped   = find_escape_mask(backslash);
+        let escaped   = find_escape_mask_with_carry(backslash, &mut bs_carry);
         let real_quote = quote & !escaped;
 
-        let (inside, _new_in_string) = inside_string_mask(real_quote, 0);
+        let (inside, new_in_string) = inside_string_mask(real_quote, in_string);
+        in_string = new_in_string;
 
         let struct_mask = structural_mask_chunk(chunk_lo, chunk_hi);
         // Exclude structural chars inside strings; re-add real quotes.
@@ -40,6 +43,15 @@ unsafe fn scan_avx2_impl(buf: &[u8], out: &mut Vec<u32>) -> Result<(), usize> {
         i += 64;
     }
 
+    // Safety: if we exit the chunked loop with non-zero state and there's
+    // a non-empty tail, the boundary case is hard to handle correctly without
+    // duplicating logic. Fall back to scalar for the whole buffer.
+    if (in_string != 0 || bs_carry != 0) && i < buf.len() {
+        out.clear();
+        return super::ScalarScanner::scan(buf, out);
+    }
+
+    // Tail: scalar fallback for the remainder.
     let mut tail = Vec::new();
     super::ScalarScanner::scan(&buf[i..], &mut tail).map_err(|p| p + i)?;
     out.extend(tail.into_iter().map(|p| p + i as u32));
@@ -83,25 +95,58 @@ unsafe fn byte_mask(lo: __m256i, hi: __m256i, c: u8) -> u64 {
     mlo | (mhi << 32)
 }
 
-/// Compute the mask of bytes that are escaped by a preceding backslash.
-/// Algorithm (simdjson): find run-starts, split by parity, carry-add to find
-/// run-ends. The byte AFTER an odd-length run is escaped.
-///
-/// Chunk-local: assumes the chunk does NOT begin inside a backslash run.
-/// Cross-chunk carry comes in Task 16.
+/// Compute escape mask + new carry. Pure bit-twiddling, no SIMD intrinsics.
+/// `prev_carry` is 1 iff the previous chunk ended such that the FIRST byte of
+/// the current chunk is "escaped" (preceded by an odd-length run of backslashes
+/// that ends at byte 0 of this chunk).
 #[inline(always)]
-unsafe fn find_escape_mask(backslash_mask: u64) -> u64 {
-    let starts = backslash_mask & !(backslash_mask << 1);
+fn find_escape_mask_with_carry(bs: u64, prev_carry: &mut u64) -> u64 {
+    let pc = *prev_carry;
+
+    // Identify run starts: positions where bs[i] is set AND bs[i-1] is not.
+    // Bit 0's "i-1" is the prev-chunk carry. If prev_carry is 1, bit 0
+    // continues a previous run (not a new start). If 0, bit 0 is a new start
+    // iff bs bit 0 is set.
+    let starts = bs & !((bs << 1) | pc);
+
     let even_bits: u64 = 0x5555_5555_5555_5555;
     let odd_bits:  u64 = 0xAAAA_AAAA_AAAA_AAAA;
     let even_starts = starts & even_bits;
     let odd_starts  = starts & odd_bits;
-    let even_carries = backslash_mask.wrapping_add(even_starts);
-    let odd_carries  = backslash_mask.wrapping_add(odd_starts);
-    let even_carry_ends = even_carries & !backslash_mask;
-    let odd_carry_ends  = odd_carries  & !backslash_mask;
-    // Even-start runs of odd length end at odd positions; odd-start odd-length end at even.
-    (even_carry_ends & odd_bits) | (odd_carry_ends & even_bits)
+
+    // Carry-adding: each start propagates 1-bits through the run via the bs mask.
+    let even_carries = bs.wrapping_add(even_starts);
+    let odd_carries  = bs.wrapping_add(odd_starts);
+
+    let even_carry_ends = even_carries & !bs;
+    let odd_carry_ends  = odd_carries  & !bs;
+
+    // Bytes that follow odd-length runs are escaped.
+    // Even-start, odd-length runs end at an odd position.
+    // Odd-start, odd-length runs end at an even position.
+    let escaped_from_runs = (even_carry_ends & odd_bits) | (odd_carry_ends & even_bits);
+
+    // If carry-in is 1, bit 0 is also escaped (the prev-chunk run ended exactly
+    // at the boundary with odd parity).
+    let escaped = escaped_from_runs | pc;
+
+    // Compute the new carry: it's 1 iff the chunk ends mid-run AND the run's
+    // length (combined with any continuation from prev_carry) is odd at the
+    // boundary.
+    //
+    // Count trailing backslashes in bs (consecutive 1-bits ending at bit 63):
+    let trailing_bs = (!bs).leading_zeros();
+
+    let new_carry = if bs == u64::MAX {
+        // Whole chunk is backslashes — parity flips by 64 (even).
+        pc
+    } else {
+        // The trailing run is isolated in this chunk.
+        (trailing_bs as u64) & 1
+    };
+
+    *prev_carry = new_carry;
+    escaped
 }
 
 /// Given the chunk's real-quote mask and the prior chunk's "ended-in-string"

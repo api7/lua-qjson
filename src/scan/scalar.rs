@@ -1,6 +1,6 @@
 use super::Scanner;
 
-pub(crate) struct ScalarScanner;
+pub struct ScalarScanner;
 
 impl Scanner for ScalarScanner {
     fn scan(buf: &[u8], out: &mut Vec<u32>) -> Result<(), usize> {
