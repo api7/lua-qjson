@@ -62,16 +62,8 @@ pub(crate) fn validate_brackets(buf: &[u8], indices: &[u32]) -> Result<(), usize
 
         match b {
             b'{' | b'[' => stack.push(b),
-            b'}' => {
-                if stack.pop() != Some(b'{') {
-                    return Err(pos);
-                }
-            }
-            b']' => {
-                if stack.pop() != Some(b'[') {
-                    return Err(pos);
-                }
-            }
+            b'}' if stack.pop() != Some(b'{') => return Err(pos),
+            b']' if stack.pop() != Some(b'[') => return Err(pos),
             _ => {}
         }
     }

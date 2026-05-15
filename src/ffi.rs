@@ -1,5 +1,27 @@
 //! C ABI surface. Every public function is `unsafe extern "C"`.
 //! All public symbols use the `qjd_` prefix.
+//!
+//! # Shared safety contract
+//!
+//! Most exports share the same FFI obligations on the caller:
+//!
+//! - A `*mut qjd_doc` argument must be NULL or a pointer previously returned
+//!   by [`qjd_parse`] that has not yet been passed to [`qjd_free`].
+//! - The input buffer passed to [`qjd_parse`] must remain valid and
+//!   unmodified for as long as the document is alive; the document borrows it.
+//! - Path / key pointer arguments must point to the indicated number of
+//!   readable bytes, or be NULL when the length is `0`.
+//! - Out pointers must be non-NULL and writable for their target type when
+//!   the function returns `QJD_OK`. Functions return `QJD_INVALID_ARG`
+//!   instead of writing through a NULL out pointer.
+//! - A `*const qjd_cursor` must point to a cursor produced by one of
+//!   [`qjd_open`], [`qjd_cursor_open`], [`qjd_cursor_field`], or
+//!   [`qjd_cursor_index`], and whose `doc` field is still alive.
+//! - A pointer/length pair returned by any `*_get_str` is invalidated by
+//!   the next `*_get_str` call on the same document (scratch buffer reuse).
+//!
+//! Every export catches Rust panics at the FFI boundary and converts them
+//! to `QJD_OOM`; a panic must not be allowed to unwind across the boundary.
 
 #![allow(non_camel_case_types)]
 
@@ -22,6 +44,13 @@ macro_rules! ffi_catch {
 /// Opaque type exported to C as `qjd_doc*`.
 pub struct qjd_doc(pub(crate) Document<'static>);
 
+/// Return a static NUL-terminated message for the given error code.
+///
+/// # Safety
+///
+/// Has no preconditions. Marked `unsafe extern "C"` for C-ABI consistency
+/// with the rest of the surface. The returned pointer is to static storage
+/// and must not be freed.
 #[no_mangle]
 pub unsafe extern "C" fn qjd_strerror(code: c_int) -> *const c_char {
     // Hardcoded NUL-terminated map; avoids runtime allocation and lifetime issues.
@@ -40,6 +69,18 @@ pub unsafe extern "C" fn qjd_strerror(code: c_int) -> *const c_char {
     s.as_ptr() as *const c_char
 }
 
+/// Parse a JSON buffer into a document (Phase 1: structural scan).
+///
+/// # Safety
+///
+/// - `buf` must point to `len` readable bytes, or be NULL (in which case the
+///   function returns NULL with `*err_out = QJD_INVALID_ARG`).
+/// - `err_out` must point to a writable `int`, or be NULL (in which case the
+///   function returns NULL with no error code written).
+/// - The buffer must remain valid and unmodified for the lifetime of the
+///   returned `qjd_doc*`; the document borrows it.
+/// - On success, the returned pointer must be freed exactly once with
+///   [`qjd_free`].
 #[no_mangle]
 pub unsafe extern "C" fn qjd_parse(
     buf:     *const u8,
@@ -72,6 +113,13 @@ pub unsafe extern "C" fn qjd_parse(
     }
 }
 
+/// Free a document returned by [`qjd_parse`]. NULL is a no-op.
+///
+/// # Safety
+///
+/// `doc` must be NULL or a pointer previously returned by [`qjd_parse`]
+/// that has not yet been freed. Double-free or passing a pointer not
+/// produced by `qjd_parse` is undefined behavior.
 #[no_mangle]
 pub unsafe extern "C" fn qjd_free(doc: *mut qjd_doc) {
     if doc.is_null() { return; }
@@ -94,9 +142,16 @@ unsafe fn resolve_root_path(
         std::slice::from_raw_parts(path as *const u8, path_len)
     };
     let cur = Cursor::root(d).resolve(d, p)?;
-    Ok((std::mem::transmute(d), cur))
+    Ok((std::mem::transmute::<&Document<'_>, &'static Document<'static>>(d), cur))
 }
 
+/// Write the JSON value type at `path` into `*type_out` (see [`qjd_type`]).
+///
+/// # Safety
+///
+/// See the module-level [shared safety contract](self#shared-safety-contract).
+/// `doc` must be live or NULL; `path` must point to `path_len` bytes or be
+/// NULL with `path_len == 0`; `type_out` must be non-NULL and writable.
 #[no_mangle]
 pub unsafe extern "C" fn qjd_typeof(
     doc: *mut qjd_doc, path: *const c_char, path_len: usize, type_out: *mut c_int,
@@ -113,6 +168,13 @@ pub unsafe extern "C" fn qjd_typeof(
     })
 }
 
+/// Write `1` into `*out` if the value at `path` is JSON `null`, else `0`.
+///
+/// # Safety
+///
+/// See the module-level [shared safety contract](self#shared-safety-contract).
+/// `doc` must be live or NULL; `path` must point to `path_len` bytes or be
+/// NULL with `path_len == 0`; `out` must be non-NULL and writable.
 #[no_mangle]
 pub unsafe extern "C" fn qjd_is_null(
     doc: *mut qjd_doc, path: *const c_char, path_len: usize, out: *mut c_int,
@@ -130,6 +192,14 @@ pub unsafe extern "C" fn qjd_is_null(
     })
 }
 
+/// Write the number of direct children of the container at `path` into `*out`.
+/// Returns `QJD_TYPE_MISMATCH` if the target is not an array or object.
+///
+/// # Safety
+///
+/// See the module-level [shared safety contract](self#shared-safety-contract).
+/// `doc` must be live or NULL; `path` must point to `path_len` bytes or be
+/// NULL with `path_len == 0`; `out` must be non-NULL and writable.
 #[no_mangle]
 pub unsafe extern "C" fn qjd_len(
     doc: *mut qjd_doc, path: *const c_char, path_len: usize, out: *mut usize,
@@ -149,6 +219,20 @@ pub unsafe extern "C" fn qjd_len(
 use crate::decode::number;
 use crate::decode::string;
 
+/// Decode the JSON string at `path` and write `(ptr, len)` into the outputs.
+///
+/// # Safety
+///
+/// See the module-level [shared safety contract](self#shared-safety-contract).
+/// `doc` must be live or NULL; `path` must point to `path_len` bytes or be
+/// NULL with `path_len == 0`; `out_ptr` and `out_len` must be non-NULL and
+/// writable.
+///
+/// **The returned `(*out_ptr, *out_len)` pair is invalidated by the next
+/// `qjd_get_str` / `qjd_cursor_get_str` call on the same document**: the
+/// scratch buffer used for escape decoding is reused. Callers must consume
+/// the result (e.g. `ffi.string(p, n)` in LuaJIT) before issuing another
+/// string read on the same document.
 #[no_mangle]
 pub unsafe extern "C" fn qjd_get_str(
     doc: *mut qjd_doc, path: *const c_char, path_len: usize,
@@ -176,6 +260,14 @@ pub unsafe extern "C" fn qjd_get_str(
     })
 }
 
+/// Parse the JSON number at `path` as `i64` and write into `*out`.
+/// Returns `QJD_OUT_OF_RANGE` if the value does not fit in `i64`.
+///
+/// # Safety
+///
+/// See the module-level [shared safety contract](self#shared-safety-contract).
+/// `doc` must be live or NULL; `path` must point to `path_len` bytes or be
+/// NULL with `path_len == 0`; `out` must be non-NULL and writable.
 #[no_mangle]
 pub unsafe extern "C" fn qjd_get_i64(
     doc: *mut qjd_doc, path: *const c_char, path_len: usize, out: *mut i64,
@@ -195,6 +287,13 @@ pub unsafe extern "C" fn qjd_get_i64(
     })
 }
 
+/// Parse the JSON number at `path` as `f64` and write into `*out`.
+///
+/// # Safety
+///
+/// See the module-level [shared safety contract](self#shared-safety-contract).
+/// `doc` must be live or NULL; `path` must point to `path_len` bytes or be
+/// NULL with `path_len == 0`; `out` must be non-NULL and writable.
 #[no_mangle]
 pub unsafe extern "C" fn qjd_get_f64(
     doc: *mut qjd_doc, path: *const c_char, path_len: usize, out: *mut f64,
@@ -214,6 +313,14 @@ pub unsafe extern "C" fn qjd_get_f64(
     })
 }
 
+/// Write `1` / `0` into `*out` for JSON `true` / `false` at `path`.
+/// Returns `QJD_TYPE_MISMATCH` for any other value.
+///
+/// # Safety
+///
+/// See the module-level [shared safety contract](self#shared-safety-contract).
+/// `doc` must be live or NULL; `path` must point to `path_len` bytes or be
+/// NULL with `path_len == 0`; `out` must be non-NULL and writable.
 #[no_mangle]
 pub unsafe extern "C" fn qjd_get_bool(
     doc: *mut qjd_doc, path: *const c_char, path_len: usize, out: *mut c_int,
@@ -267,7 +374,10 @@ unsafe fn cursor_to_internal(c: *const qjd_cursor) -> Result<(&'static Document<
     let cc = &*c;
     if cc.doc.is_null() { return Err(qjd_err::QJD_INVALID_ARG); }
     let d: &Document = &(*(cc.doc as *mut qjd_doc)).0;
-    Ok((std::mem::transmute(d), Cursor { idx_start: cc.idx_start, idx_end: cc.idx_end }))
+    Ok((
+        std::mem::transmute::<&Document<'_>, &'static Document<'static>>(d),
+        Cursor { idx_start: cc.idx_start, idx_end: cc.idx_end },
+    ))
 }
 
 fn internal_to_cursor(doc: *const qjd_doc, cur: Cursor) -> qjd_cursor {
@@ -280,6 +390,14 @@ fn internal_to_cursor(doc: *const qjd_doc, cur: Cursor) -> qjd_cursor {
     }
 }
 
+/// Resolve `path` against the root of `doc` and write the resulting cursor
+/// into `*out`. The cursor borrows the document — do not use after free.
+///
+/// # Safety
+///
+/// See the module-level [shared safety contract](self#shared-safety-contract).
+/// `doc` must be live or NULL; `path` must point to `path_len` bytes or be
+/// NULL with `path_len == 0`; `out` must be non-NULL and writable.
 #[no_mangle]
 pub unsafe extern "C" fn qjd_open(
     doc: *mut qjd_doc, path: *const c_char, path_len: usize, out: *mut qjd_cursor,
@@ -296,6 +414,15 @@ pub unsafe extern "C" fn qjd_open(
     })
 }
 
+/// Resolve `path` from the position `*c` and write the resulting cursor
+/// into `*out`.
+///
+/// # Safety
+///
+/// See the module-level [shared safety contract](self#shared-safety-contract).
+/// `c` must point to a cursor produced by an earlier `qjd_*` call whose
+/// document is still alive; `path` must point to `path_len` bytes or be NULL
+/// with `path_len == 0`; `out` must be non-NULL and writable.
 #[no_mangle]
 pub unsafe extern "C" fn qjd_cursor_open(
     c: *const qjd_cursor, path: *const c_char, path_len: usize, out: *mut qjd_cursor,
@@ -313,6 +440,15 @@ pub unsafe extern "C" fn qjd_cursor_open(
     })
 }
 
+/// Step into the object field named `key` and write the child cursor.
+/// Lets the caller bypass path-string parsing for keys that contain `.` or `[`.
+///
+/// # Safety
+///
+/// See the module-level [shared safety contract](self#shared-safety-contract).
+/// `c` must point to a cursor produced by an earlier `qjd_*` call whose
+/// document is still alive; `key` must point to `key_len` bytes or be NULL
+/// with `key_len == 0`; `out` must be non-NULL and writable.
 #[no_mangle]
 pub unsafe extern "C" fn qjd_cursor_field(
     c: *const qjd_cursor, key: *const c_char, key_len: usize, out: *mut qjd_cursor,
@@ -331,6 +467,13 @@ pub unsafe extern "C" fn qjd_cursor_field(
     })
 }
 
+/// Step into array index `i` and write the child cursor.
+///
+/// # Safety
+///
+/// See the module-level [shared safety contract](self#shared-safety-contract).
+/// `c` must point to a cursor produced by an earlier `qjd_*` call whose
+/// document is still alive; `out` must be non-NULL and writable.
 #[no_mangle]
 pub unsafe extern "C" fn qjd_cursor_index(
     c: *const qjd_cursor, i: usize, out: *mut qjd_cursor,
@@ -347,6 +490,19 @@ pub unsafe extern "C" fn qjd_cursor_index(
     })
 }
 
+/// Decode the JSON string at `path` (relative to `*c`) and write `(ptr, len)`.
+///
+/// # Safety
+///
+/// See the module-level [shared safety contract](self#shared-safety-contract).
+/// `c` must point to a cursor produced by an earlier `qjd_*` call whose
+/// document is still alive; `path` must point to `path_len` bytes or be NULL
+/// with `path_len == 0`; `out_ptr` and `out_len` must be non-NULL and
+/// writable.
+///
+/// **The returned `(*out_ptr, *out_len)` pair is invalidated by the next
+/// `qjd_get_str` / `qjd_cursor_get_str` call on the same document** (scratch
+/// buffer reuse). See [`qjd_get_str`].
 #[no_mangle]
 pub unsafe extern "C" fn qjd_cursor_get_str(
     c: *const qjd_cursor, path: *const c_char, path_len: usize,
@@ -375,6 +531,15 @@ pub unsafe extern "C" fn qjd_cursor_get_str(
     })
 }
 
+/// Parse the JSON number at `path` (relative to `*c`) as `i64`.
+/// Returns `QJD_OUT_OF_RANGE` if the value does not fit in `i64`.
+///
+/// # Safety
+///
+/// See the module-level [shared safety contract](self#shared-safety-contract).
+/// `c` must point to a cursor produced by an earlier `qjd_*` call whose
+/// document is still alive; `path` must point to `path_len` bytes or be NULL
+/// with `path_len == 0`; `out` must be non-NULL and writable.
 #[no_mangle]
 pub unsafe extern "C" fn qjd_cursor_get_i64(
     c: *const qjd_cursor, path: *const c_char, path_len: usize, out: *mut i64,
@@ -394,6 +559,14 @@ pub unsafe extern "C" fn qjd_cursor_get_i64(
     })
 }
 
+/// Parse the JSON number at `path` (relative to `*c`) as `f64`.
+///
+/// # Safety
+///
+/// See the module-level [shared safety contract](self#shared-safety-contract).
+/// `c` must point to a cursor produced by an earlier `qjd_*` call whose
+/// document is still alive; `path` must point to `path_len` bytes or be NULL
+/// with `path_len == 0`; `out` must be non-NULL and writable.
 #[no_mangle]
 pub unsafe extern "C" fn qjd_cursor_get_f64(
     c: *const qjd_cursor, path: *const c_char, path_len: usize, out: *mut f64,
@@ -413,6 +586,15 @@ pub unsafe extern "C" fn qjd_cursor_get_f64(
     })
 }
 
+/// Write `1` / `0` into `*out` for JSON `true` / `false` at `path`
+/// (relative to `*c`). Returns `QJD_TYPE_MISMATCH` for any other value.
+///
+/// # Safety
+///
+/// See the module-level [shared safety contract](self#shared-safety-contract).
+/// `c` must point to a cursor produced by an earlier `qjd_*` call whose
+/// document is still alive; `path` must point to `path_len` bytes or be NULL
+/// with `path_len == 0`; `out` must be non-NULL and writable.
 #[no_mangle]
 pub unsafe extern "C" fn qjd_cursor_get_bool(
     c: *const qjd_cursor, path: *const c_char, path_len: usize, out: *mut c_int,
@@ -433,6 +615,14 @@ pub unsafe extern "C" fn qjd_cursor_get_bool(
     })
 }
 
+/// Write the JSON value type at `path` (relative to `*c`) into `*type_out`.
+///
+/// # Safety
+///
+/// See the module-level [shared safety contract](self#shared-safety-contract).
+/// `c` must point to a cursor produced by an earlier `qjd_*` call whose
+/// document is still alive; `path` must point to `path_len` bytes or be NULL
+/// with `path_len == 0`; `type_out` must be non-NULL and writable.
 #[no_mangle]
 pub unsafe extern "C" fn qjd_cursor_typeof(
     c: *const qjd_cursor, path: *const c_char, path_len: usize, type_out: *mut c_int,
@@ -451,6 +641,15 @@ pub unsafe extern "C" fn qjd_cursor_typeof(
     })
 }
 
+/// Write the number of direct children of the container at `path`
+/// (relative to `*c`) into `*out`. Returns `QJD_TYPE_MISMATCH` for non-containers.
+///
+/// # Safety
+///
+/// See the module-level [shared safety contract](self#shared-safety-contract).
+/// `c` must point to a cursor produced by an earlier `qjd_*` call whose
+/// document is still alive; `path` must point to `path_len` bytes or be NULL
+/// with `path_len == 0`; `out` must be non-NULL and writable.
 #[no_mangle]
 pub unsafe extern "C" fn qjd_cursor_len(
     c: *const qjd_cursor, path: *const c_char, path_len: usize, out: *mut usize,
@@ -469,6 +668,12 @@ pub unsafe extern "C" fn qjd_cursor_len(
     })
 }
 
+/// Test-only export that forces a Rust panic to verify the FFI panic barrier
+/// converts it to `QJD_OOM` instead of unwinding across the boundary.
+///
+/// # Safety
+///
+/// Has no preconditions. Marked `unsafe extern "C"` for ABI consistency.
 #[cfg(feature = "test-panic")]
 #[no_mangle]
 pub unsafe extern "C" fn qjd_test_panic() -> c_int {

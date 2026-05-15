@@ -41,11 +41,11 @@ fn get_i64_overflow() {
 
 #[test]
 fn get_f64_basic() {
-    let d = parse(b"{\"a\":3.14}");
+    let d = parse(b"{\"a\":1.7}");
     let mut v: f64 = 0.0;
     let p = b"a";
     unsafe { qjd_get_f64(d, p.as_ptr() as *const i8, p.len(), &mut v) };
-    assert!((v - 3.14).abs() < 1e-12);
+    assert!((v - 1.7).abs() < 1e-12);
     unsafe { qjd_free(d) };
 }
 

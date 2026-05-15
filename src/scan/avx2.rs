@@ -244,9 +244,8 @@ mod tests {
         // Use longer key padding.
         let mut buf = Vec::with_capacity(64);
         buf.extend_from_slice(b"{\"k\":\"");          // 6
-        for _ in 0..56 { buf.push(b'a'); }            // +56 = 62
-        buf.push(b'"');                                // +1 = 63
-        buf.push(b'}');                                // +1 = 64
+        buf.resize(62, b'a');                          // +56 = 62
+        buf.extend_from_slice(b"\"}");                 // +2 = 64
         assert_eq!(buf.len(), 64);
         parity(&buf);
     }
@@ -277,9 +276,8 @@ mod tests {
         let mut buf = Vec::new();
         buf.extend_from_slice(b"{\"k\":\"");
         // ~10 KB of string interior — many chunks fully inside the string.
-        for _ in 0..10_000 { buf.push(b'a'); }
-        buf.push(b'"');
-        buf.push(b'}');
+        buf.resize(buf.len() + 10_000, b'a');
+        buf.extend_from_slice(b"\"}");
         // Pad to 64-aligned to also exercise the no-tail branch.
         while buf.len() % 64 != 0 { buf.push(b' '); }
         parity(&buf);

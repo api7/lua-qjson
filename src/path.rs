@@ -73,7 +73,7 @@ impl<'a> Iterator for PathIter<'a> {
 mod tests {
     use super::*;
 
-    fn parse(p: &[u8]) -> Result<Vec<PathSeg>, qjd_err> {
+    fn parse(p: &[u8]) -> Result<Vec<PathSeg<'_>>, qjd_err> {
         PathIter::new(p).collect()
     }
 

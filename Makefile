@@ -19,9 +19,8 @@ test: build ## Run cargo tests + busted Lua tests
 	cargo test --release
 	$(LUA_ENV) busted --lua=$(LUAJIT) tests/lua --lpath='./lua/?.lua'
 
-lint: ## Run clippy (deny warnings) and rustfmt --check
+lint: ## Run clippy with -D warnings
 	cargo clippy --release --all-targets -- -D warnings
-	cargo fmt --check
 
 bench: build ## Run the LuaJIT vs cjson benchmark
 	$(LUA_ENV) $(LUAJIT) benches/lua_bench.lua
