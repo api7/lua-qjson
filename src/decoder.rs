@@ -103,9 +103,9 @@ impl Decoder {
         self.state = DecoderState::Destroyed;
     }
 
-    /// Convenience for tests and the legacy `qjd_parse` path: construct a
-    /// decoder and parse `input` in one call.
-    pub fn parse_oneshot(input: &[u8]) -> Result<Self, qjd_err> {
+    /// Convenience for tests: construct a decoder and parse `input` in one call.
+    #[cfg(test)]
+    pub(crate) fn parse_oneshot(input: &[u8]) -> Result<Self, qjd_err> {
         let mut d = Self::new();
         d.parse(input)?;
         Ok(d)

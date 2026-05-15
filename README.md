@@ -38,6 +38,26 @@ local model = body:get_str("model")
 local temp  = body:get_f64("temperature")
 ```
 
+### Reusable decoder (pooled API)
+
+For hot paths that parse many payloads (typical in OpenResty workers), use a
+reusable decoder to amortize the per-parse indices / scratch / skip-cache
+allocations:
+
+```lua
+local decoder = qd.new_decoder()         -- one per worker is enough
+for _, payload in ipairs(payloads) do
+    local doc = decoder:parse(payload)
+    -- ...access doc / open cursors...
+end
+decoder:reset()      -- optional: shrink internal buffers
+decoder:destroy()    -- optional: free buffers eagerly
+```
+
+A `doc` returned by `decoder:parse()` becomes stale as soon as the same
+decoder parses another payload (or is reset / destroyed). Accessor calls on a
+stale doc return `nil`, the same convention as a missing path.
+
 ## Testing — Lua
 
 Requires LuaJIT + busted + lua-cjson installed system-wide.
@@ -76,3 +96,6 @@ Items intentionally pushed out of the first implementation. Each will be picked 
 - **`cargo fmt --check` not enforced** — `make lint` runs clippy only. The codebase uses intentional manual column alignment in struct definitions and compact single-line literals that default rustfmt would reflow. Skip rather than reformat until a project-wide style decision is made.
 - **`validate_brackets` fusion into scan emit loop** — surfaced by profiling: on structurally-dense workloads `validate_brackets` is 65% of parse time (second linear pass over emitted indices). Folding bracket pairing into the scan emit loop via an inline depth stack eliminates that pass. No effect on the current string-heavy bench (0.3% there); a win for config / JSONL / table-shape JSON.
 - **`memchr2` cross-chunk jump for very long string interiors** — the AVX2 in-string fast probe (issue #5) drops per-chunk cost from ~25 to ~10 ops but still pays ALU work for every 64-byte chunk in a string. A `memchr2(b'"', b'\\')` jump can approach memory bandwidth on multi-MB single-string payloads. Deferred until a workload that benefits clearly emerges; needs careful `bs_carry` reasoning across the jump.
+- **Eliminate `validate_brackets` per-scan stack alloc on the pooled path** — the bracket-balance check builds a fresh `Vec::with_capacity(32)` every scan. On the pooled decoder API this and the per-parse `Box<qjd_doc>` are the only allocations the count-allocs test still sees (2 / parse). A pre-allocated stack on the `Decoder` would drop the count further; deferred because the absolute cost is tiny and the cleanest fix overlaps with the `validate_brackets` fusion item above.
+- **Decoder pool / shared-decoder shortcut for `qd.parse`** — `qd.parse(payload)` still constructs a private decoder per call (1 indices Vec + 1 scratch + 1 skip-cache alloc each). A module-level shared decoder could make the legacy API allocation-free too, but adds a global-state footgun (no concurrent parses from coroutines); decoder pooling is exposed via the explicit `qd.new_decoder()` API instead. Reconsider if profiling shows `qd.parse` callers refusing to migrate.
+- **Decoder generation counter wrap** — after `2^32` parses on the same decoder the gen wraps to a value an old (Lua-GC-still-alive) doc might match, masking staleness. With 1 ms/parse that is ~50 days of continuous reuse; in practice the doc is reclaimed long before. Could widen to `u64` or trip a hard error near the wrap point if a real-world workload comes close.

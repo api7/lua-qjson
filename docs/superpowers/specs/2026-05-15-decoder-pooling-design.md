@@ -84,7 +84,7 @@ void         qjd_decoder_destroy(qjd_decoder*);
 qjd_doc* qjd_decoder_parse(qjd_decoder*, const uint8_t* buf, size_t len, int* err_out);
 ```
 
-The returned `qjd_doc*` is the same opaque type as today. All existing `qjd_get_*`, `qjd_open`, and `qjd_cursor_*` functions accept it. The cursor struct gains a `gen` field by repurposing one of its `_reserved` slots — see §4.
+The returned `qjd_doc*` is the same opaque type as today. All existing `qjd_get_*`, `qjd_open`, and `qjd_cursor_*` functions accept it. The cursor struct is unchanged; its freshness check is derived through its `doc` pointer — see §4.4.
 
 A new error code is added to `src/error.rs` and the header:
 
@@ -207,21 +207,17 @@ pub struct qjd_doc {
 
 ### 4.4 Cursor
 
-The `qjd_cursor` C struct currently has two `_reserved` fields. One is repurposed:
+The `qjd_cursor` C struct is unchanged — both `_reserved0` and `_reserved1` stay reserved. A cursor's freshness is derived through its `doc` pointer:
 
-```c
-typedef struct {
-    const qjd_doc* doc;
-    uint32_t idx_start;
-    uint32_t idx_end;
-    uint32_t gen;          // was _reserved0
-    uint32_t _reserved1;
-} qjd_cursor;
+```rust
+// In cursor_to_internal:
+let doc: &qjd_doc = &*(c.doc as *mut qjd_doc);   // already pinned by Lua wrapper's _doc ref
+check_doc_alive(c.doc as *mut qjd_doc)?;          // doc.gen vs decoder.gen + state check
 ```
 
-`qjd_open` / `qjd_cursor_open` / `qjd_cursor_field` / `qjd_cursor_index` populate `gen` from the doc's current decoder gen. Every cursor accessor checks `cursor.gen == decoder.gen` before dereferencing.
+Since the Lua wrapper's `Cursor` table keeps a strong `_doc = self._doc` reference (preserving today's pattern), `cursor.doc` is always a valid pointer while the cursor is reachable. The gen check on the doc handles staleness for both the doc itself and any cursor opened from it: once the decoder reparses, both the doc and all its cursors fail the gen check.
 
-The Lua wrapper traffics `qjd_cursor` by value through `cur_box`; no Lua-side changes are required.
+No ABI change to `qjd_cursor`.
 
 ### 4.5 Refactor mechanics
 
