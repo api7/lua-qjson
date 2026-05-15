@@ -36,6 +36,26 @@ local model = body:get_str("model")
 local temp  = body:get_f64("temperature")
 ```
 
+## Testing — Lua
+
+Requires LuaJIT + busted + lua-cjson installed system-wide.
+
+```sh
+cargo build --release
+busted tests/lua --lpath='./lua/?.lua' --cpath='./target/release/lib?.so'
+```
+
+## Benchmarking vs lua-cjson
+
+Requires LuaJIT.
+
+```sh
+cargo build --release
+luajit benches/lua_bench.lua
+```
+
+The benchmark measures end-to-end "parse + extract 3 fields" cost on small (~5KB) and medium (~60KB) JSON fixtures.
+
 ## Roadmap / Deferred
 
 Items intentionally pushed out of the first implementation. Each will be picked up individually.
