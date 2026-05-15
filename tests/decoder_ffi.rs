@@ -112,6 +112,67 @@ fn decoder_path_matches_legacy_on_small_fixture() {
 }
 
 #[test]
+fn decoder_path_matches_legacy_on_escape_heavy_input() {
+    // Exercises lazy string decode into scratch — the second piece of state
+    // the pooled decoder reuses. Includes backslash, quote, unicode escape,
+    // and a surrogate-pair sequence so the scratch buffer is actually used.
+    // Raw byte strings must be ASCII, so use a raw text string and convert.
+    // The JSON itself uses \uXXXX escapes for non-ASCII so byte-level
+    // equivalence between legacy and pooled decode is what we're checking.
+    let payload: &[u8] = r#"{
+        "plain":     "no escapes here",
+        "escaped":   "tab\there\nnewline\rcr\\back\"quote",
+        "unicode":   "é中文",
+        "emoji":     "😀 smiley",
+        "nested":    {"deep": {"deeper": {"k": "valueé"}}},
+        "arr_of_strs": ["a\nb", "c\\d", "e\"f"]
+    }"#.as_bytes();
+    let probes = &[
+        "plain", "escaped", "unicode", "emoji",
+        "nested.deep.deeper.k",
+        "arr_of_strs", "arr_of_strs[0]", "arr_of_strs[1]", "arr_of_strs[2]",
+        "missing",
+    ];
+    unsafe {
+        let legacy = legacy_parse(payload);
+        let dec    = dec_new();
+        let pooled = dec_parse(dec, payload);
+        assert_doc_equivalence(legacy, pooled, probes);
+        qjd_free(legacy);
+        qjd_free(pooled);
+        qjd_decoder_free(dec);
+    }
+}
+
+#[test]
+fn decoder_path_matches_legacy_on_deeply_nested_input() {
+    // Exercises the skip cache via repeated traversal of the same container,
+    // plus a depth (>5 levels) deeper than anything in the shipped fixtures.
+    let payload: &[u8] = br#"{
+        "a": {"b": {"c": {"d": {"e": {"f": 42}}}}},
+        "siblings": {"x": 1, "y": 2, "z": 3, "x_again_after_skip": 100}
+    }"#;
+    let probes = &[
+        "a.b.c.d.e.f",
+        "a", "a.b", "a.b.c", "a.b.c.d", "a.b.c.d.e",
+        // Probe same path twice to hit the cached path in walk_children.
+        "a.b.c.d.e.f",
+        "siblings.x", "siblings.y", "siblings.z", "siblings.x_again_after_skip",
+        // And again — cached.
+        "siblings.x",
+    ];
+    unsafe {
+        let legacy = legacy_parse(payload);
+        let dec    = dec_new();
+        let pooled = dec_parse(dec, payload);
+        assert_doc_equivalence(legacy, pooled, probes);
+        qjd_free(legacy);
+        qjd_free(pooled);
+        qjd_decoder_free(dec);
+    }
+}
+
+#[test]
 fn decoder_path_matches_legacy_on_medium_fixture() {
     let probes = &[
         "id", "object", "created", "model",
@@ -165,13 +226,62 @@ fn cursor_opened_before_reparse_becomes_stale() {
         let mut cur = std::mem::MaybeUninit::<qjd_cursor>::uninit();
         let rc = qjd_open(doc1, b"b".as_ptr() as *const i8, 1, cur.as_mut_ptr());
         assert_eq!(rc, 0);
-        let cur = cur.assume_init();
+        let stale_cur = cur.assume_init();
 
-        // Reparse. Cursor opened against doc1 must now report stale.
-        let doc2 = dec_parse(dec, b"{\"a\":2}");
+        // Reparse with an array root so we can re-open a cursor on doc2.
+        let doc2 = dec_parse(dec, b"[100,200,300]");
+
+        // Old cursor must report stale.
         let mut n: usize = 0;
-        let rc = qjd_cursor_len(&cur, ptr::null(), 0, &mut n);
-        assert_eq!(rc, 9, "expected QJD_STALE_DOC, got {}", rc);
+        let rc = qjd_cursor_len(&stale_cur, ptr::null(), 0, &mut n);
+        assert_eq!(rc, 9, "old cursor must be stale, got {}", rc);
+
+        // Fresh cursor on doc2 must work — proves the stale check doesn't
+        // taint the post-reparse path.
+        let mut cur = std::mem::MaybeUninit::<qjd_cursor>::uninit();
+        let rc = qjd_open(doc2, ptr::null(), 0, cur.as_mut_ptr());
+        assert_eq!(rc, 0);
+        let fresh_cur = cur.assume_init();
+        let rc = qjd_cursor_len(&fresh_cur, ptr::null(), 0, &mut n);
+        assert_eq!(rc, 0);
+        assert_eq!(n, 3);
+
+        let mut v: i64 = 0;
+        let rc = qjd_cursor_get_i64(&fresh_cur, b"[1]".as_ptr() as *const i8, 3, &mut v);
+        assert_eq!(rc, 0);
+        assert_eq!(v, 200);
+
+        qjd_free(doc1);
+        qjd_free(doc2);
+        qjd_decoder_free(dec);
+    }
+}
+
+#[test]
+fn doc_held_across_failed_parse_is_stale() {
+    // The unit test in src/decoder.rs only verifies state/gen invariants
+    // after a failed parse. This proves the load-bearing behavior: an
+    // outstanding doc actually fails the gen check at the FFI boundary.
+    unsafe {
+        let dec  = dec_new();
+        let doc1 = dec_parse(dec, b"{\"a\":1}");
+
+        // Fail-parse on the same decoder. gen must bump even on failure.
+        let mut err: c_int = -1;
+        let bad = qjd_decoder_parse(dec, b"{".as_ptr(), 1, &mut err);
+        assert!(bad.is_null());
+        assert_eq!(err, 1, "expected QJD_PARSE_ERROR, got {}", err);
+
+        // doc1 must now report stale, not silently return stale indices.
+        let mut v: i64 = 0;
+        let rc = qjd_get_i64(doc1, b"a".as_ptr() as *const i8, 1, &mut v);
+        assert_eq!(rc, 9, "expected QJD_STALE_DOC after failed parse, got {}", rc);
+
+        // Decoder is still usable: a follow-up valid parse yields a fresh doc.
+        let doc2 = dec_parse(dec, b"{\"a\":99}");
+        let rc = qjd_get_i64(doc2, b"a".as_ptr() as *const i8, 1, &mut v);
+        assert_eq!(rc, 0);
+        assert_eq!(v, 99);
 
         qjd_free(doc1);
         qjd_free(doc2);
@@ -268,6 +378,18 @@ fn null_decoder_yields_invalid_arg() {
     let d = unsafe { qjd_decoder_parse(ptr::null_mut(), b"{}".as_ptr(), 2, &mut err) };
     assert!(d.is_null());
     assert_eq!(err, 7);
+}
+
+#[test]
+fn null_buf_rejected_even_with_zero_len() {
+    // Match legacy qjd_parse behavior. slice::from_raw_parts requires a
+    // non-null pointer even for zero-length slices.
+    let dec = dec_new();
+    let mut err: c_int = -1;
+    let d = unsafe { qjd_decoder_parse(dec, ptr::null(), 0, &mut err) };
+    assert!(d.is_null());
+    assert_eq!(err, 7);
+    unsafe { qjd_decoder_free(dec); }
 }
 
 #[test]

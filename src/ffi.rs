@@ -263,7 +263,8 @@ pub unsafe extern "C" fn qjd_decoder_destroy(dec: *mut qjd_decoder) {
 ///
 /// - `dec` must be a live decoder pointer returned by [`qjd_decoder_new`].
 ///   NULL or a destroyed decoder yields `QJD_INVALID_ARG`.
-/// - `buf` must point to `len` readable bytes, or be NULL when `len == 0`.
+/// - `buf` must point to `len` readable bytes. NULL is rejected with
+///   `QJD_INVALID_ARG` even when `len == 0`, matching [`qjd_parse`].
 /// - `err_out` must point to a writable `int`; NULL yields NULL with no
 ///   error code written.
 /// - The buffer must remain valid and unmodified until the next
@@ -279,7 +280,7 @@ pub unsafe extern "C" fn qjd_decoder_parse(
 ) -> *mut qjd_doc {
     let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         if err_out.is_null() { return ptr::null_mut(); }
-        if dec.is_null() || (buf.is_null() && len != 0) {
+        if dec.is_null() || buf.is_null() {
             *err_out = qjd_err::QJD_INVALID_ARG as c_int;
             return ptr::null_mut();
         }
@@ -287,9 +288,7 @@ pub unsafe extern "C" fn qjd_decoder_parse(
             *err_out = qjd_err::QJD_INVALID_ARG as c_int;
             return ptr::null_mut();
         }
-        let slice: &[u8] = if buf.is_null() { &[] } else {
-            std::slice::from_raw_parts(buf, len)
-        };
+        let slice: &[u8] = std::slice::from_raw_parts(buf, len);
         match (*dec).0.parse(slice) {
             Ok(()) => {
                 *err_out = qjd_err::QJD_OK as c_int;
