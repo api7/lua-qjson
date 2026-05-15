@@ -121,3 +121,102 @@ pub unsafe extern "C" fn qjd_len(
         Err(e) => e as c_int,
     }
 }
+
+use crate::decode::number;
+use crate::decode::string;
+
+#[no_mangle]
+pub unsafe extern "C" fn qjd_get_str(
+    doc: *mut qjd_doc, path: *const c_char, path_len: usize,
+    out_ptr: *mut *const u8, out_len: *mut usize,
+) -> c_int {
+    if out_ptr.is_null() || out_len.is_null() {
+        return qjd_err::QJD_INVALID_ARG as c_int;
+    }
+    let (d, cur) = match resolve_root_path(doc, path, path_len) {
+        Ok(x) => x, Err(e) => return e as c_int,
+    };
+    let pos = d.indices[cur.idx_start as usize] as usize;
+    if d.buf.get(pos).copied() != Some(b'"') {
+        return qjd_err::QJD_TYPE_MISMATCH as c_int;
+    }
+    // String ends at the close quote, whose indices position is idx_start + 1.
+    let close = d.indices[(cur.idx_start + 1) as usize] as usize;
+
+    // SAFETY: scratch is owned by the qjd_doc; we obtain a mutable reference
+    // to it through the raw *mut qjd_doc pointer (not through the shared &Document
+    // alias `d`). Lua-side callers consume the returned ptr before any further
+    // FFI calls. Single-threaded use enforced by C ABI contract.
+    let scratch = &mut (*doc).0.scratch;
+    match string::decode_string(d.buf, pos + 1, close, scratch) {
+        Ok((p, n)) => { *out_ptr = p; *out_len = n; qjd_err::QJD_OK as c_int }
+        Err(e) => e as c_int,
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn qjd_get_i64(
+    doc: *mut qjd_doc, path: *const c_char, path_len: usize, out: *mut i64,
+) -> c_int {
+    if out.is_null() { return qjd_err::QJD_INVALID_ARG as c_int; }
+    let (d, cur) = match resolve_root_path(doc, path, path_len) {
+        Ok(x) => x, Err(e) => return e as c_int,
+    };
+    let bytes = match scalar_bytes(d, cur) {
+        Ok(b) => b, Err(e) => return e as c_int,
+    };
+    match number::parse_i64(bytes) {
+        Ok(v) => { *out = v; qjd_err::QJD_OK as c_int }
+        Err(e) => e as c_int,
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn qjd_get_f64(
+    doc: *mut qjd_doc, path: *const c_char, path_len: usize, out: *mut f64,
+) -> c_int {
+    if out.is_null() { return qjd_err::QJD_INVALID_ARG as c_int; }
+    let (d, cur) = match resolve_root_path(doc, path, path_len) {
+        Ok(x) => x, Err(e) => return e as c_int,
+    };
+    let bytes = match scalar_bytes(d, cur) {
+        Ok(b) => b, Err(e) => return e as c_int,
+    };
+    match number::parse_f64(bytes) {
+        Ok(v) => { *out = v; qjd_err::QJD_OK as c_int }
+        Err(e) => e as c_int,
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn qjd_get_bool(
+    doc: *mut qjd_doc, path: *const c_char, path_len: usize, out: *mut c_int,
+) -> c_int {
+    if out.is_null() { return qjd_err::QJD_INVALID_ARG as c_int; }
+    let (d, cur) = match resolve_root_path(doc, path, path_len) {
+        Ok(x) => x, Err(e) => return e as c_int,
+    };
+    let bytes = match scalar_bytes(d, cur) {
+        Ok(b) => b, Err(e) => return e as c_int,
+    };
+    match bytes {
+        b"true"  => { *out = 1; qjd_err::QJD_OK as c_int }
+        b"false" => { *out = 0; qjd_err::QJD_OK as c_int }
+        _ => qjd_err::QJD_TYPE_MISMATCH as c_int,
+    }
+}
+
+/// Return the byte slice for a scalar value (number, true, false, null).
+/// Uses the cursor convention: cur.idx_start is the position in indices of
+/// the structural char AFTER the scalar (a separator or closer).
+unsafe fn scalar_bytes<'d>(d: &'d Document<'d>, cur: Cursor) -> Result<&'d [u8], qjd_err> {
+    // First byte: just after the previous structural char (skip whitespace).
+    let start = d.find_scalar_start(cur.idx_start)?;
+    // End byte: position of the structural char at cur.idx_start (exclusive).
+    let end = d.indices[cur.idx_start as usize] as usize;
+    if end < start { return Err(qjd_err::QJD_PARSE_ERROR); }
+    // Strip trailing whitespace.
+    let mut e = end;
+    while e > start && matches!(d.buf[e - 1], b' '|b'\t'|b'\n'|b'\r') { e -= 1; }
+    Ok(&d.buf[start..e])
+}
