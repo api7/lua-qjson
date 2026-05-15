@@ -1,12 +1,16 @@
+use std::cell::RefCell;
+
 use crate::error::qjd_err;
 use crate::scan::Scanner;
 use crate::scan::scalar::ScalarScanner;
+use crate::skip_cache::SkipCache;
 
 #[allow(dead_code)]
 pub struct Document<'a> {
     pub(crate) buf:     &'a [u8],
     pub(crate) indices: Vec<u32>,
     pub(crate) scratch: Vec<u8>,
+    pub(crate) skip:    RefCell<SkipCache>,
 }
 
 impl<'a> Document<'a> {
@@ -15,7 +19,12 @@ impl<'a> Document<'a> {
         ScalarScanner::scan(buf, &mut indices).map_err(|_| qjd_err::QJD_PARSE_ERROR)?;
         // Sentinel simplifies boundary checks during Phase 2.
         indices.push(u32::MAX);
-        Ok(Self { buf, indices, scratch: Vec::new() })
+        Ok(Self {
+            buf,
+            indices,
+            scratch: Vec::new(),
+            skip: RefCell::new(SkipCache::new()),
+        })
     }
 }
 

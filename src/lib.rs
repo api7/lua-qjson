@@ -3,6 +3,7 @@
 
 pub mod error;
 mod scan;
+mod skip_cache;
 mod doc;
 mod path;
 mod cursor;
