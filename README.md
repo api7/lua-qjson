@@ -8,6 +8,19 @@ Design document: `docs/superpowers/specs/2026-05-15-rust-quick-json-decode-desig
 
 Currently in design phase. No implementation yet.
 
+## Building
+
+```sh
+cargo build --release
+# Output: target/release/libquickdecode.so
+```
+
+## Testing
+
+```sh
+cargo test
+```
+
 ## Roadmap / Deferred
 
 Items intentionally pushed out of the first implementation. Each will be picked up individually.
