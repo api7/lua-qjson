@@ -12,6 +12,7 @@ pub enum qjd_err {
     QJD_INVALID_PATH    = 6,
     QJD_INVALID_ARG     = 7,
     QJD_OOM             = 8,
+    QJD_STALE_DOC       = 9,
 }
 
 #[repr(C)]
@@ -36,6 +37,7 @@ pub fn strerror(code: qjd_err) -> &'static str {
         qjd_err::QJD_INVALID_PATH  => "invalid path syntax",
         qjd_err::QJD_INVALID_ARG   => "invalid argument",
         qjd_err::QJD_OOM           => "out of memory",
+        qjd_err::QJD_STALE_DOC     => "stale document or cursor",
     }
 }
 
@@ -49,7 +51,7 @@ mod tests {
             qjd_err::QJD_OK, qjd_err::QJD_PARSE_ERROR, qjd_err::QJD_NOT_FOUND,
             qjd_err::QJD_TYPE_MISMATCH, qjd_err::QJD_OUT_OF_RANGE,
             qjd_err::QJD_DECODE_FAILED, qjd_err::QJD_INVALID_PATH,
-            qjd_err::QJD_INVALID_ARG, qjd_err::QJD_OOM,
+            qjd_err::QJD_INVALID_ARG, qjd_err::QJD_OOM, qjd_err::QJD_STALE_DOC,
         ] {
             assert!(!strerror(code).is_empty());
         }
