@@ -94,3 +94,47 @@ fn typeof_not_found() {
     assert_eq!(rc, 2); // NOT_FOUND
     unsafe { qjd_free(d) };
 }
+
+#[test]
+fn len_empty_object() {
+    let d = parse(b"{}");
+    let mut n: usize = 0;
+    let p = b"";
+    let rc = unsafe { qjd_len(d, p.as_ptr() as *const i8, p.len(), &mut n) };
+    assert_eq!(rc, 0);
+    assert_eq!(n, 0);
+    unsafe { qjd_free(d) };
+}
+
+#[test]
+fn len_empty_array() {
+    let d = parse(b"[]");
+    let mut n: usize = 0;
+    let p = b"";
+    let rc = unsafe { qjd_len(d, p.as_ptr() as *const i8, p.len(), &mut n) };
+    assert_eq!(rc, 0);
+    assert_eq!(n, 0);
+    unsafe { qjd_free(d) };
+}
+
+#[test]
+fn len_single_scalar_array() {
+    let d = parse(b"[5]");
+    let mut n: usize = 0;
+    let p = b"";
+    let rc = unsafe { qjd_len(d, p.as_ptr() as *const i8, p.len(), &mut n) };
+    assert_eq!(rc, 0);
+    assert_eq!(n, 1);
+    unsafe { qjd_free(d) };
+}
+
+#[test]
+fn len_single_scalar_object() {
+    let d = parse(b"{\"a\":1}");
+    let mut n: usize = 0;
+    let p = b"";
+    let rc = unsafe { qjd_len(d, p.as_ptr() as *const i8, p.len(), &mut n) };
+    assert_eq!(rc, 0);
+    assert_eq!(n, 1);
+    unsafe { qjd_free(d) };
+}
