@@ -17,13 +17,14 @@ proptest! {
         let mut a = Vec::new();
         let mut b = Vec::new();
         let ra = ScalarScanner::scan(input.as_bytes(), &mut a);
-        let _rb = Avx2Scanner::scan(input.as_bytes(), &mut b);
-        // Only compare positions when scalar says the input is valid.
-        // AVX2 does not validate bracket matching (only structural positions),
-        // so we cannot assert error agreement for structurally invalid inputs.
-        if ra.is_ok() {
-            prop_assert_eq!(a, b, "mismatch on {:?}", input);
-        }
+        let rb = Avx2Scanner::scan(input.as_bytes(), &mut b);
+        // Both paths run the same scan_emit_resume + validate_brackets
+        // pipeline, so Result equality is required: same Ok/Err verdict
+        // AND same error offset when Err.
+        prop_assert_eq!(&ra, &rb, "scan results differ for {:?}", input);
+        // Emit order is also expected to be identical; both phases push
+        // through end-of-buffer before any potential Err is returned.
+        prop_assert_eq!(&a, &b, "indices differ for {:?}", input);
     }
 }
 
