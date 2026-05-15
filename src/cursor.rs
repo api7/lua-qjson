@@ -150,7 +150,7 @@ fn resolve_in_known_children(
 ///   - container: index after the matching closer (= closer_idx + 1)
 ///   - string:    index after the close '"' (= start + 2)
 ///   - scalar:    start itself (indices[start] IS the separator/closer)
-fn find_value_span(doc: &Document, start: u32) -> Result<(u32, u32), qjd_err> {
+pub(crate) fn find_value_span(doc: &Document, start: u32) -> Result<(u32, u32), qjd_err> {
     let pos = doc.indices[start as usize] as usize;
     let b = *doc.buf.get(pos).ok_or(qjd_err::QJD_PARSE_ERROR)?;
     match b {
