@@ -62,17 +62,36 @@ local function make_payload(target_bytes)
         .. '[{"role":"user","content":[' .. table.concat(parts, ",") .. ']}]}'
 end
 
+local ROUNDS = 5
+
 local function bench(name, iters, fn)
+    -- Warmup pass: lets JIT compile hot traces and any one-time pools fill
+    -- before measurement starts. Excluded from timing and memory delta.
+    local warmup = math.max(3, math.floor(iters / 5))
+    for _ = 1, warmup do fn() end
+
     collectgarbage("collect")
     local mem_before = collectgarbage("count")
-    local t0 = os.clock()
-    for _ = 1, iters do fn() end
-    local t1 = os.clock()
+
+    local ops = {}
+    for r = 1, ROUNDS do
+        local t0 = os.clock()
+        for _ = 1, iters do fn() end
+        local t1 = os.clock()
+        ops[r] = iters / (t1 - t0)
+    end
     local mem_after = collectgarbage("count")
-    local elapsed = t1 - t0
-    print(string.format("%-44s  %7.2fms total   %10.0f ops/s   %+8.1fKB",
-        name, elapsed * 1000, iters / elapsed,
-        mem_after - mem_before))
+
+    table.sort(ops)
+    local median = ops[math.ceil(ROUNDS / 2)]
+    local lo, hi = ops[1], ops[ROUNDS]
+    local sum = 0
+    for i = 1, ROUNDS do sum = sum + ops[i] end
+    local mean = sum / ROUNDS
+
+    print(string.format(
+        "%-44s  median %9.0f ops/s   mean %9.0f   range %7.0f..%-9.0f   %+8.1fKB",
+        name, median, mean, lo, hi, mem_after - mem_before))
 end
 
 local scenarios = {
@@ -86,6 +105,11 @@ local scenarios = {
     {name = "5m",     iters = 20,   payload = make_payload(5 * 1024 * 1024)},
     {name = "10m",    iters = 20,   payload = make_payload(10 * 1024 * 1024)},
 }
+
+-- The pooled API (qd.new_decoder + :parse) only exists on commits that
+-- landed the Decoder refactor. Probe so the bench still runs on older builds.
+local has_pooled_api = type(qd.new_decoder) == "function"
+local pooled_decoder = has_pooled_api and qd.new_decoder() or nil
 
 for _, s in ipairs(scenarios) do
     print(string.format("=== %s (%d bytes) ===", s.name, #s.payload))
@@ -103,4 +127,84 @@ for _, s in ipairs(scenarios) do
         local _ = d:get_f64("temperature")
         local _ = d:get_str("messages[0].role")
     end)
+
+    if has_pooled_api then
+        bench("quickdecode pooled :parse + access 3 fields", s.iters, function()
+            local d = pooled_decoder:parse(s.payload)
+            local _ = d:get_str("model")
+            local _ = d:get_f64("temperature")
+            local _ = d:get_str("messages[0].role")
+        end)
+
+        -- One-shot-per-request pattern: each iter creates a fresh decoder,
+        -- parses once, and lets both decoder and doc fall to GC. No reuse.
+        -- This is the typical "user does not cache the decoder" path.
+        bench("quickdecode new_decoder()+parse (one-shot)", s.iters, function()
+            local dec = qd.new_decoder()
+            local d = dec:parse(s.payload)
+            local _ = d:get_str("model")
+            local _ = d:get_f64("temperature")
+            local _ = d:get_str("messages[0].role")
+        end)
+    end
+end
+
+-- Interleaved scenario: cycle through several payloads of different sizes
+-- back-to-back, mirroring a server processing variable-size requests. The
+-- single-payload loops above hand the allocator the same block over and over
+-- and have no allocation to amortize away — they cannot exercise the doc
+-- pool. This scenario can.
+local function scenario_by_name(n)
+    for _, s in ipairs(scenarios) do
+        if s.name == n then return s end
+    end
+    error("no scenario " .. n)
+end
+
+local interleaved_names = {"100k", "200k", "500k", "1m"}
+local interleaved = {}
+for _, n in ipairs(interleaved_names) do
+    interleaved[#interleaved + 1] = scenario_by_name(n).payload
+end
+
+local function make_cycler(items)
+    local i = 0
+    local n = #items
+    return function()
+        i = i + 1
+        return items[((i - 1) % n) + 1]
+    end
+end
+
+print(string.format("=== interleaved %s ===", table.concat(interleaved_names, ",")))
+
+do
+    local next_p = make_cycler(interleaved)
+    bench("cjson.decode + access 3 fields", 400, function()
+        local p = next_p()
+        local obj = cjson.decode(p)
+        local _ = obj.model
+        local _ = obj.temperature
+        local _ = obj.messages and obj.messages[1] and obj.messages[1].role
+    end)
+
+    next_p = make_cycler(interleaved)
+    bench("quickdecode.parse + access 3 fields", 400, function()
+        local p = next_p()
+        local d = qd.parse(p)
+        local _ = d:get_str("model")
+        local _ = d:get_f64("temperature")
+        local _ = d:get_str("messages[0].role")
+    end)
+
+    if has_pooled_api then
+        next_p = make_cycler(interleaved)
+        bench("quickdecode pooled :parse + access 3 fields", 400, function()
+            local p = next_p()
+            local d = pooled_decoder:parse(p)
+            local _ = d:get_str("model")
+            local _ = d:get_f64("temperature")
+            local _ = d:get_str("messages[0].role")
+        end)
+    end
 end
