@@ -73,13 +73,36 @@ pub struct qjd_doc {
     owns_decoder: bool,
 }
 
+/// Heap layout for the one-shot [`qjd_parse`] path: `qjd_doc` and its
+/// private `qjd_decoder` live in the same allocation. `#[repr(C)]` pins
+/// `doc` at offset 0 so the public `*mut qjd_doc` returned to callers can
+/// be cast back to `*mut OwnedDocBlock` on free.
+#[repr(C)]
+struct OwnedDocBlock {
+    doc:     qjd_doc,
+    decoder: qjd_decoder,
+}
+
 // ── Entry-point safety helpers ──────────────────────────────────────────────
 
 /// Validate `doc` and return the live decoder. Order matters: a destroyed
 /// decoder is reported as `QJD_INVALID_ARG`, not `QJD_STALE_DOC`.
+///
+/// Docs created by [`qjd_parse`] (`owns_decoder == true`) take a fast path:
+/// the private decoder is unreachable to any of the `qjd_decoder_*` mutating
+/// operations, so state and gen are pristine by construction.
 unsafe fn check_doc_alive(doc: *mut qjd_doc) -> Result<&'static Decoder, qjd_err> {
     if doc.is_null() { return Err(qjd_err::QJD_INVALID_ARG); }
     let d = &*doc;
+    if d.owns_decoder {
+        // Legacy: the decoder is the sibling field in the same OwnedDocBlock.
+        // Compute its address from the static struct offset — no pointer load,
+        // matching the pre-pool layout where the decoder sat directly inside
+        // the doc allocation.
+        let block_ptr = doc as *const OwnedDocBlock;
+        let dec: &Decoder = &(*block_ptr).decoder.0;
+        return Ok(std::mem::transmute::<&Decoder, &'static Decoder>(dec));
+    }
     let dec: &Decoder = &d.decoder.as_ref().0;
     if matches!(dec.state, DecoderState::Destroyed) {
         return Err(qjd_err::QJD_INVALID_ARG);
@@ -146,20 +169,27 @@ pub unsafe extern "C" fn qjd_parse(
             if !err_out.is_null() { *err_out = qjd_err::QJD_INVALID_ARG as c_int; }
             return ptr::null_mut();
         }
-        let dec_ptr = Box::into_raw(Box::new(qjd_decoder(Decoder::new())));
+        // Allocate the block first with a fresh Decoder, then parse in-place.
+        // This avoids the ~100-byte stack→heap memcpy a naive `let mut decoder
+        // = Decoder::new(); ... Box::new(...decoder)` path pays per parse.
+        let block_ptr = Box::into_raw(Box::new(OwnedDocBlock {
+            doc: qjd_doc {
+                decoder:      NonNull::dangling(),
+                gen:          0,
+                owns_decoder: true,
+            },
+            decoder: qjd_decoder(Decoder::new()),
+        }));
+        (*block_ptr).doc.decoder = NonNull::new_unchecked(&mut (*block_ptr).decoder);
         let slice: &[u8] = std::slice::from_raw_parts(buf, len);
-        match (*dec_ptr).0.parse(slice) {
+        match (*block_ptr).decoder.0.parse(slice) {
             Ok(()) => {
+                (*block_ptr).doc.gen = (*block_ptr).decoder.0.gen;
                 *err_out = qjd_err::QJD_OK as c_int;
-                let doc = qjd_doc {
-                    decoder:      NonNull::new_unchecked(dec_ptr),
-                    gen:          (*dec_ptr).0.gen,
-                    owns_decoder: true,
-                };
-                Box::into_raw(Box::new(doc))
+                &mut (*block_ptr).doc
             }
             Err(e) => {
-                let _ = Box::from_raw(dec_ptr);
+                let _ = Box::from_raw(block_ptr);
                 *err_out = e as c_int;
                 ptr::null_mut()
             }
@@ -187,9 +217,13 @@ pub unsafe extern "C" fn qjd_parse(
 #[no_mangle]
 pub unsafe extern "C" fn qjd_free(doc: *mut qjd_doc) {
     if doc.is_null() { return; }
-    let d = Box::from_raw(doc);
-    if d.owns_decoder {
-        let _ = Box::from_raw(d.decoder.as_ptr());
+    // Read owns_decoder before taking ownership: the legacy doc lives inside
+    // an OwnedDocBlock and must be freed through that layout, while a pool
+    // doc is a standalone Box.
+    if (*doc).owns_decoder {
+        let _ = Box::from_raw(doc as *mut OwnedDocBlock);
+    } else {
+        let _ = Box::from_raw(doc);
     }
 }
 
