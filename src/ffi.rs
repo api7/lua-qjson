@@ -59,3 +59,65 @@ pub unsafe extern "C" fn qjd_free(doc: *mut qjd_doc) {
     if doc.is_null() { return; }
     let _ = Box::from_raw(doc);
 }
+
+use crate::cursor::Cursor;
+use crate::error::qjd_type;
+
+unsafe fn resolve_root_path(
+    doc: *mut qjd_doc, path: *const c_char, path_len: usize,
+) -> Result<(&'static Document<'static>, Cursor), qjd_err> {
+    if doc.is_null() || (path.is_null() && path_len != 0) {
+        return Err(qjd_err::QJD_INVALID_ARG);
+    }
+    let d: &Document = &(*doc).0;
+    let p: &[u8] = if path.is_null() {
+        &[]
+    } else {
+        std::slice::from_raw_parts(path as *const u8, path_len)
+    };
+    let cur = Cursor::root(d).resolve(d, p)?;
+    Ok((std::mem::transmute(d), cur))
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn qjd_typeof(
+    doc: *mut qjd_doc, path: *const c_char, path_len: usize, type_out: *mut c_int,
+) -> c_int {
+    if type_out.is_null() { return qjd_err::QJD_INVALID_ARG as c_int; }
+    match resolve_root_path(doc, path, path_len) {
+        Ok((d, cur)) => match d.type_of(cur) {
+            Ok(t) => { *type_out = t as c_int; qjd_err::QJD_OK as c_int }
+            Err(e) => e as c_int,
+        },
+        Err(e) => e as c_int,
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn qjd_is_null(
+    doc: *mut qjd_doc, path: *const c_char, path_len: usize, out: *mut c_int,
+) -> c_int {
+    if out.is_null() { return qjd_err::QJD_INVALID_ARG as c_int; }
+    match resolve_root_path(doc, path, path_len) {
+        Ok((d, cur)) => match d.type_of(cur) {
+            Ok(qjd_type::QJD_T_NULL) => { *out = 1; qjd_err::QJD_OK as c_int }
+            Ok(_)                    => { *out = 0; qjd_err::QJD_OK as c_int }
+            Err(e) => e as c_int,
+        },
+        Err(e) => e as c_int,
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn qjd_len(
+    doc: *mut qjd_doc, path: *const c_char, path_len: usize, out: *mut usize,
+) -> c_int {
+    if out.is_null() { return qjd_err::QJD_INVALID_ARG as c_int; }
+    match resolve_root_path(doc, path, path_len) {
+        Ok((d, cur)) => match d.cursor_len(cur) {
+            Ok(n) => { *out = n; qjd_err::QJD_OK as c_int }
+            Err(e) => e as c_int,
+        },
+        Err(e) => e as c_int,
+    }
+}
