@@ -66,18 +66,17 @@ jobs:
       - name: Build cdylib
         run: cargo build --release
 
-      - name: Install LuaJIT
-        uses: leafo/gh-actions-lua@v10
-        with:
-          luaVersion: "luajit-2.1.0-beta3"
-
-      - name: Install LuaRocks
-        uses: leafo/gh-actions-luarocks@v4
-
-      - name: Install Lua dependencies
+      - name: Install LuaJIT, LuaRocks and dependencies
         run: |
-          luarocks install busted
-          luarocks install lua-cjson
+          sudo apt-get update
+          sudo apt-get install -y luajit lua5.1 liblua5.1-0-dev luarocks
+          # luarocks on Ubuntu targets lua5.1 by default; LuaJIT is ABI-compatible
+          # with 5.1 so rocks built for 5.1 load fine under luajit.
+          sudo luarocks install busted
+          sudo luarocks install lua-cjson
 
-      - name: Run busted tests
-        run: busted tests/lua --lpath='./lua/?.lua' --cpath='./target/release/lib?.so'
+      - name: Run busted tests (under LuaJIT)
+        run: |
+          busted --lua=$(which luajit) tests/lua \
+            --lpath='./lua/?.lua' \
+            --cpath='./target/release/lib?.so'
