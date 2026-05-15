@@ -29,24 +29,7 @@ unsafe fn scan_avx2_impl(buf: &[u8], out: &mut Vec<u32>) -> Result<(), usize> {
         let escaped   = find_escape_mask(backslash);
         let real_quote = quote & !escaped;
 
-        // Scalar bridge for inside-string mask (chunk-local; replaced by PCLMUL
-        // in Task 15). Convention: bit is 1 from the opening quote through the
-        // last byte before the closing quote; the closing quote bit is 0.
-        // This matches what simdjson's PCLMUL prefix-XOR produces, and the
-        // final OR with real_quote in `final_mask` restores both quote bits.
-        let mut inside: u64 = 0;
-        let mut in_str = false;
-        let mut bit: u64 = 1;
-        for _ in 0..64 {
-            if (real_quote & bit) != 0 {
-                in_str = !in_str;
-            }
-            if in_str {
-                inside |= bit;
-            }
-            if bit == 1u64 << 63 { break; }
-            bit <<= 1;
-        }
+        let (inside, _new_in_string) = inside_string_mask(real_quote, 0);
 
         let struct_mask = structural_mask_chunk(chunk_lo, chunk_hi);
         // Exclude structural chars inside strings; re-add real quotes.
@@ -121,6 +104,24 @@ unsafe fn find_escape_mask(backslash_mask: u64) -> u64 {
     (even_carry_ends & odd_bits) | (odd_carry_ends & even_bits)
 }
 
+/// Given the chunk's real-quote mask and the prior chunk's "ended-in-string"
+/// state, return (inside_string_mask, new_in_string_state).
+/// `prev_in_string` is 0 or 1.
+#[target_feature(enable = "avx2,pclmulqdq")]
+unsafe fn inside_string_mask(real_quote: u64, prev_in_string: u64) -> (u64, u64) {
+    // Prefix XOR via carry-less multiply by all-ones.
+    let ones = _mm_set1_epi64x(-1i64);
+    let q = _mm_set_epi64x(0, real_quote as i64);
+    let prefix = _mm_clmulepi64_si128::<0>(q, ones);
+    let mut mask = _mm_cvtsi128_si64(prefix) as u64;
+    // If the chunk began inside a string, flip polarity.
+    if prev_in_string != 0 {
+        mask = !mask;
+    }
+    let new_state = (mask >> 63) & 1;
+    (mask, new_state)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -185,5 +186,31 @@ mod tests {
         buf.push(b'}');
         assert_eq!(buf.len(), 64);
         parity(&buf);
+    }
+
+    /// Verifies PCLMUL prefix-XOR produces correct inside-string mask
+    /// for multiple strings in a single 64-byte chunk.
+    #[test]
+    fn pclmul_inside_string_correct() {
+        // {"a":"foo","b":"bar"}<padding to 64>
+        // Strings "foo" and "bar" both fully within the chunk.
+        let mut buf = Vec::with_capacity(64);
+        buf.extend_from_slice(b"{\"a\":\"foo\",\"b\":\"bar\"}");  // 21 bytes
+        // Pad with spaces (which are non-structural, non-escapes) to reach 64.
+        while buf.len() < 64 { buf.push(b' '); }
+        assert_eq!(buf.len(), 64);
+        parity(&buf);
+
+        // Array of strings, all <64 bytes total then padded to 64.
+        let mut buf2 = Vec::with_capacity(64);
+        buf2.extend_from_slice(b"[\"a\",\"b\",\"c\",\"d\",\"e\"]");
+        while buf2.len() < 64 { buf2.push(b' '); }
+        parity(&buf2);
+
+        // Adversarial: nested escapes inside a string, all in one chunk.
+        let mut buf3 = Vec::with_capacity(64);
+        buf3.extend_from_slice(b"{\"a\":\"\\\\\\\\\\\"\"}");  // {"a":"\\\\\"" with proper escapes
+        while buf3.len() < 64 { buf3.push(b' '); }
+        parity(&buf3);
     }
 }
