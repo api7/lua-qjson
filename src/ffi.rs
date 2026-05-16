@@ -341,19 +341,26 @@ pub unsafe extern "C" fn qjd_get_bool(
     })
 }
 
+/// Compute the byte range of a scalar value (number / true / false / null).
+/// Uses the cursor convention: `cur.idx_start` is the position in indices
+/// of the structural char AFTER the scalar (a separator or closer); the
+/// scalar's bytes sit between `find_scalar_start(cur.idx_start)` and that
+/// structural char, with trailing whitespace stripped.
+unsafe fn scalar_byte_range(d: &Document<'_>, cur: Cursor) -> Result<(usize, usize), qjd_err> {
+    let start = d.find_scalar_start(cur.idx_start)?;
+    let end = d.indices[cur.idx_start as usize] as usize;
+    if end < start { return Err(qjd_err::QJD_PARSE_ERROR); }
+    let mut e = end;
+    while e > start && matches!(d.buf[e - 1], b' '|b'\t'|b'\n'|b'\r') { e -= 1; }
+    Ok((start, e))
+}
+
 /// Return the byte slice for a scalar value (number, true, false, null).
 /// Uses the cursor convention: cur.idx_start is the position in indices of
 /// the structural char AFTER the scalar (a separator or closer).
 unsafe fn scalar_bytes<'d>(d: &'d Document<'d>, cur: Cursor) -> Result<&'d [u8], qjd_err> {
-    // First byte: just after the previous structural char (skip whitespace).
-    let start = d.find_scalar_start(cur.idx_start)?;
-    // End byte: position of the structural char at cur.idx_start (exclusive).
-    let end = d.indices[cur.idx_start as usize] as usize;
-    if end < start { return Err(qjd_err::QJD_PARSE_ERROR); }
-    // Strip trailing whitespace.
-    let mut e = end;
-    while e > start && matches!(d.buf[e - 1], b' '|b'\t'|b'\n'|b'\r') { e -= 1; }
-    Ok(&d.buf[start..e])
+    let (s, e) = scalar_byte_range(d, cur)?;
+    Ok(&d.buf[s..e])
 }
 
 // ── qjd_cursor type and cursor-based FFI ────────────────────────────────────
@@ -709,17 +716,11 @@ pub unsafe extern "C" fn qjd_cursor_bytes(
                 qjd_err::QJD_OK as c_int
             }
             _ => {
-                // Scalar: reuse scalar_bytes' start-and-end calculation.
-                let start = match d.find_scalar_start(cur.idx_start) {
-                    Ok(s) => s, Err(e) => return e as c_int,
+                // Scalar: delegate to scalar_byte_range.
+                let (s, e) = match scalar_byte_range(d, cur) {
+                    Ok(x) => x, Err(e) => return e as c_int,
                 };
-                let end = d.indices[cur.idx_start as usize] as usize;
-                if end < start {
-                    return qjd_err::QJD_PARSE_ERROR as c_int;
-                }
-                let mut e = end;
-                while e > start && matches!(d.buf[e - 1], b' '|b'\t'|b'\n'|b'\r') { e -= 1; }
-                *byte_start = start;
+                *byte_start = s;
                 *byte_end = e;
                 qjd_err::QJD_OK as c_int
             }

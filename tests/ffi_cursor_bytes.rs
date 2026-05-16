@@ -1,6 +1,7 @@
 use std::os::raw::c_int;
 use std::ptr;
 
+use quickdecode::error::qjd_err;
 use quickdecode::ffi::{
     qjd_cursor, qjd_cursor_bytes, qjd_cursor_field, qjd_doc, qjd_free, qjd_open, qjd_parse,
 };
@@ -69,7 +70,21 @@ fn bytes_with_null_out_pointer_returns_invalid_arg() {
     unsafe {
         let (doc, root) = open_root(json);
         let rc = qjd_cursor_bytes(&root, ptr::null_mut(), ptr::null_mut());
-        assert_eq!(rc, 7); // QJD_INVALID_ARG
+        assert_eq!(rc, qjd_err::QJD_INVALID_ARG as c_int);
+        qjd_free(doc);
+    }
+}
+
+#[test]
+fn bytes_of_root_array_covers_full_json() {
+    let json = br#"[1,"two",true]"#;
+    unsafe {
+        let (doc, cur) = open_root(json);
+        let mut bs: usize = 0;
+        let mut be: usize = 0;
+        let rc = qjd_cursor_bytes(&cur, &mut bs, &mut be);
+        assert_eq!(rc, 0);
+        assert_eq!(&json[bs..be], json.as_ref());
         qjd_free(doc);
     }
 }
