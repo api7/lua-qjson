@@ -145,6 +145,15 @@ end
 
 LazyArray.__index = read_array_index
 
+local function lazy_len(self)
+    local rc = C.qjd_cursor_len(self._cur, "", 0, size_box)
+    check(rc)
+    return tonumber(size_box[0])
+end
+
+LazyObject.__len = lazy_len
+LazyArray.__len  = lazy_len
+
 function _M.decode(json_str)
     -- Reuse the existing qd.parse path to get a Doc with stable buffer hold.
     local doc = qd.parse(json_str)
