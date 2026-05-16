@@ -80,16 +80,33 @@ cargo build --release
 busted tests/lua --lpath='./lua/?.lua' --cpath='./target/release/lib?.so'
 ```
 
-## Benchmarking vs lua-cjson
+## Benchmarks
 
-Requires LuaJIT.
+`quickdecode` vs. `lua-cjson` and `lua-resty-simdjson` on multimodal
+chat-completion payloads, "parse + access 3 fields" workload (median ops/s
+under LuaJIT 2.1, Skylake; 5 rounds, deterministic payload):
+
+| Size | cjson | simdjson | `qd.parse` | `qd.decode + t.f x3` | speedup vs. cjson |
+|---:|---:|---:|---:|---:|---:|
+|   2 KB | 39,414 | 54,395 | 117,233 | 126,807 |  3.0× / 3.2× |
+| 100 KB |  2,589 | 19,944 |  72,202 |  61,162 | 27.9× / 23.6× |
+|   1 MB |    355 |  2,048 |  12,723 |  12,448 | 35.8× / 35.1× |
+|  10 MB |     32 |    128 |     537 |     609 | 16.8× / 19.0× |
+
+`qd.parse` wins because it skips building a Lua table for the parts you
+never read; `qd.decode + t.field` adds a cjson-shaped table proxy on top
+with similar throughput. Memory retention for `quickdecode` is essentially
+flat in payload size (a few KB for the reusable buffers), where `cjson`
+and `simdjson` retain ~1× the input size as live Lua-table state.
+
+See [`docs/benchmarks.md`](docs/benchmarks.md) for the full size ladder,
+memory numbers, an "encode round-trip" row (passthrough emit via
+`memcpy`), the pure-decode (no-access) comparison, and the exact
+methodology + reproduction command.
 
 ```sh
-cargo build --release
-luajit benches/lua_bench.lua
+make bench       # quickdecode vs cjson
 ```
-
-The benchmark measures end-to-end "parse + extract 3 fields" cost on small (~5KB) and medium (~60KB) JSON fixtures.
 
 ## Roadmap / Deferred
 
