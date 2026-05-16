@@ -322,6 +322,27 @@ end
 
 _M.materialize = materialize
 
+local function encode_proxy(t)
+    -- Slice the original buffer; _hold pins the bytes alive.
+    return t._doc._hold:sub(t._bs + 1, t._be)
+end
+
+local function encode(v)
+    local mt = (type(v) == "table") and getmetatable(v) or nil
+    if mt == LazyObject or mt == LazyArray then
+        return encode_proxy(v)
+    end
+    -- Scalar and real-table branches added in subsequent tasks.
+    error("qd.encode: unsupported value type at this stage")
+end
+
+_M.encode = encode
+
+-- Debug convenience: tostring(lazy_view) returns the original JSON bytes.
+-- Not the canonical encoder — callers should still use qd.encode for output.
+LazyObject.__tostring = encode_proxy
+LazyArray.__tostring  = encode_proxy
+
 -- Test-only exports for metatable identity checks.
 _M._LazyObject = LazyObject
 _M._LazyArray  = LazyArray
