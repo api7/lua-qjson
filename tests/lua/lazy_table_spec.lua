@@ -1,5 +1,5 @@
 local qd = require("quickdecode")
-local qt = require("quickdecode.table")
+local qt = qd                 -- keep tests reading naturally
 
 describe("LazyObject __index — scalars", function()
     it("reads a string field", function()
