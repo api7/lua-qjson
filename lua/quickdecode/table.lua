@@ -239,27 +239,59 @@ local function materialize_array_contents(view)
     return out
 end
 
+-- The set of keys reserved by the lazy view bookkeeping; user-supplied JSON
+-- keys with these names would collide (minor, deferred). Centralized here so
+-- the dirty check and __newindex can share the list.
+local INTERNAL_KEYS = {
+    _doc = true, _cur_box = true, _cur = true, _bs = true, _be = true,
+}
+
 -- On first write, walk all existing key/value pairs into a plain table,
 -- strip the lazy metatable, then apply the new assignment. Any FFI error
 -- during the walk leaves `t` in its original lazy state.
+-- Existing rawget-cached entries (e.g. previously returned child proxies)
+-- are preserved so callers' references remain valid.
 LazyObject.__newindex = function(t, k, v)
     local contents = materialize_object_contents(t)
+    -- Snapshot user-key cache BEFORE nilling internals.
+    -- Use next() for raw iteration: pairs() invokes __pairs on lazy tables,
+    -- walking the full JSON via FFI instead of the Lua-side rawget cache.
+    local cache = {}
+    local ck, cv = next(t)
+    while ck ~= nil do
+        if not INTERNAL_KEYS[ck] then
+            cache[ck] = cv
+        end
+        ck, cv = next(t, ck)
+    end
     t._doc, t._cur_box, t._cur, t._bs, t._be = nil, nil, nil, nil, nil
     setmetatable(t, nil)
     for _, kv in ipairs(contents) do
-        rawset(t, kv[1], kv[2])
+        rawset(t, kv[1], cache[kv[1]] or kv[2])
     end
     rawset(t, k, v)
 end
 
 -- On first write, walk all existing elements into a plain sequence,
 -- switch to empty_array_mt (no lazy machinery), then apply the assignment.
+-- Existing rawget-cached entries are preserved so callers' references remain valid.
 LazyArray.__newindex = function(t, k, v)
     local contents = materialize_array_contents(t)
+    -- Snapshot integer-key cache BEFORE nilling internals.
+    -- Use next() for raw iteration: pairs() would invoke __pairs on lazy arrays,
+    -- walking the full JSON via FFI instead of the Lua-side rawget cache.
+    local cache = {}
+    local ck, cv = next(t)
+    while ck ~= nil do
+        if type(ck) == "number" then
+            cache[ck] = cv
+        end
+        ck, cv = next(t, ck)
+    end
     t._doc, t._cur_box, t._cur, t._bs, t._be = nil, nil, nil, nil, nil
     setmetatable(t, _M.empty_array_mt)
     for i, x in ipairs(contents) do
-        rawset(t, i, x)
+        rawset(t, i, cache[i] or x)
     end
     rawset(t, k, v)
 end
@@ -360,15 +392,86 @@ local function encode_number(n)
     return string_format("%.14g", n)
 end
 
-local function encode_proxy(t)
-    -- Slice the original buffer; _hold pins the bytes alive.
-    return t._doc._hold:sub(t._bs + 1, t._be)
+-- A lazy subtree is "dirty" if any cached descendant has been materialized
+-- (no longer carries Lazy* metatable). Non-cached descendants are guaranteed
+-- untouched, so we only need to walk the rawget-cached entries.
+local function is_dirty(v)
+    if type(v) ~= "table" then return false end
+    local mt = getmetatable(v)
+    if mt ~= LazyObject and mt ~= LazyArray then
+        return true  -- materialized
+    end
+    -- Use next() for raw table iteration: pairs() would invoke __pairs on
+    -- lazy tables, walking the full JSON via FFI instead of the Lua cache.
+    local k, child = next(v)
+    while k ~= nil do
+        if not INTERNAL_KEYS[k] then
+            if is_dirty(child) then return true end
+        end
+        k, child = next(v, k)
+    end
+    return false
 end
 
--- Forward declaration so encode_array and encode_object can reference encode
--- before its definition is complete (Lua resolves upvalues at call time, but
--- the upvalue slot must be declared first).
+-- Forward declaration so encode_lazy_object_walking, encode_lazy_array_walking,
+-- and encode_array/encode_object can reference encode before its definition is
+-- complete (Lua resolves upvalues at call time, but the slot must be declared first).
 local encode
+
+-- Walk a dirty LazyObject and emit JSON, preferring cached children (which
+-- may be materialized) over freshly resolved cursors. Non-cached children
+-- emit through a fresh proxy and naturally fast-path their unmodified subtree.
+local function encode_lazy_object_walking(t)
+    local parts = {}
+    local i = 0
+    while true do
+        local rc = C.qjd_cursor_object_entry_at(t._cur, i, strp_box, size_box, child_box)
+        if rc == QJD_NOT_FOUND then break end
+        check(rc)
+        local k = ffi.string(strp_box[0], size_box[0])
+        local v
+        local cached = rawget(t, k)
+        if cached ~= nil and not INTERNAL_KEYS[k] then
+            v = cached
+        else
+            v = decode_cursor(t, child_box)
+        end
+        parts[#parts + 1] = encode_string(k) .. ":" .. encode(v)
+        i = i + 1
+    end
+    return "{" .. table.concat(parts, ",") .. "}"
+end
+
+local function encode_lazy_array_walking(t)
+    local parts = {}
+    local rc = C.qjd_cursor_len(t._cur, "", 0, size_box)
+    check(rc)
+    local n = tonumber(size_box[0])
+    for i = 0, n - 1 do
+        local irc = C.qjd_cursor_index(t._cur, i, child_box)
+        check(irc)
+        local cached = rawget(t, i + 1)
+        local v
+        if cached ~= nil then
+            v = cached
+        else
+            v = decode_cursor(t, child_box)
+        end
+        parts[#parts + 1] = encode(v)
+    end
+    return "[" .. table.concat(parts, ",") .. "]"
+end
+
+local function encode_proxy(t)
+    if not is_dirty(t) then
+        -- Fast path: no mutations — slice the original buffer bytes.
+        return t._doc._hold:sub(t._bs + 1, t._be)
+    end
+    if getmetatable(t) == LazyObject then
+        return encode_lazy_object_walking(t)
+    end
+    return encode_lazy_array_walking(t)
+end
 
 local function is_array(t)
     local mt = getmetatable(t)

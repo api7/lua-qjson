@@ -330,3 +330,35 @@ describe("sentinel handling", function()
         assert.are.equal('{"xs":[]}', qd.encode(t))
     end)
 end)
+
+describe("qd.encode — nested mutations propagate", function()
+    it("emits nested object mutation, not original bytes", function()
+        local cjson = require("cjson")
+        local t = qd.decode('{"a":{"b":{"c":1}},"d":2}')
+        t.a.b.c = 999
+        local out = qd.encode(t)
+        local parsed = cjson.decode(out)
+        assert.are.equal(999, parsed.a.b.c)
+        assert.are.equal(2, parsed.d)
+    end)
+
+    it("emits nested array mutation", function()
+        local cjson = require("cjson")
+        local t = qd.decode('{"xs":[10,20,30]}')
+        t.xs[2] = 999
+        local out = qd.encode(t)
+        local parsed = cjson.decode(out)
+        assert.are.equal(10, parsed.xs[1])
+        assert.are.equal(999, parsed.xs[2])
+        assert.are.equal(30, parsed.xs[3])
+    end)
+
+    it("preserves cached proxy identity across parent materialization", function()
+        local t = qd.decode('{"a":{"x":1}}')
+        local inner = t.a
+        t.c = 3
+        assert.are.equal(inner, t.a)
+        inner.x = 99
+        assert.are.equal(99, t.a.x)
+    end)
+end)
