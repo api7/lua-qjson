@@ -360,7 +360,45 @@ local function encode_proxy(t)
     return t._doc._hold:sub(t._bs + 1, t._be)
 end
 
-local function encode(v)
+-- Forward declaration so encode_array and encode_object can reference encode
+-- before its definition is complete (Lua resolves upvalues at call time, but
+-- the upvalue slot must be declared first).
+local encode
+
+local function is_array(t)
+    local mt = getmetatable(t)
+    if mt == _M.empty_array_mt then return true end
+    local n = #t
+    local count = 0
+    for k in pairs(t) do
+        count = count + 1
+        if type(k) ~= "number" or k < 1 or k > n or k ~= math.floor(k) then
+            return false
+        end
+    end
+    return count == n and (n > 0 or mt == _M.empty_array_mt)
+end
+
+local function encode_array(t)
+    local parts = {}
+    for i = 1, #t do
+        parts[i] = encode(t[i])
+    end
+    return "[" .. table.concat(parts, ",") .. "]"
+end
+
+local function encode_object(t)
+    local parts = {}
+    for k, v in pairs(t) do
+        if type(k) ~= "string" then
+            error("qd.encode: object key must be a string, got " .. type(k))
+        end
+        parts[#parts+1] = encode_string(k) .. ":" .. encode(v)
+    end
+    return "{" .. table.concat(parts, ",") .. "}"
+end
+
+encode = function(v)
     if rawequal(v, _M.null) then
         return "null"
     end
@@ -376,7 +414,10 @@ local function encode(v)
         if mt == LazyObject or mt == LazyArray then
             return encode_proxy(v)
         end
-        error("qd.encode: real-table encoding not yet implemented")
+        if is_array(v) then
+            return encode_array(v)
+        end
+        return encode_object(v)
     end
     error("qd.encode: unsupported value type: " .. tv)
 end
