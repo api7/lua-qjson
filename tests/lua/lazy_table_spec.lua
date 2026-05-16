@@ -85,3 +85,31 @@ describe("__len", function()
         assert.are.equal(0, #qt.decode('[]'))
     end)
 end)
+
+describe("__pairs / qd.pairs over LazyObject", function()
+    it("iterates string keys in source order", function()
+        local t = qt.decode('{"a":1,"b":2,"c":3}')
+        local keys = {}
+        local values = {}
+        for k, v in qt.pairs(t) do
+            keys[#keys+1] = k
+            values[#values+1] = v
+        end
+        assert.are.same({"a","b","c"}, keys)
+        assert.are.same({1, 2, 3}, values)
+    end)
+
+    it("returns nested containers as lazy proxies, not materialized", function()
+        local t = qt.decode('{"a":{"x":1}}')
+        for _, v in qt.pairs(t) do
+            assert.is_table(v)
+            assert.are.equal(1, v.x)
+        end
+    end)
+
+    it("handles empty object", function()
+        local count = 0
+        for _ in qt.pairs(qt.decode('{}')) do count = count + 1 end
+        assert.are.equal(0, count)
+    end)
+end)
