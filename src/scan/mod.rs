@@ -1,6 +1,8 @@
 pub(crate) mod scalar;
 #[cfg(all(target_arch = "x86_64", feature = "avx2"))]
 pub(crate) mod avx2;
+#[cfg(target_arch = "aarch64")]
+pub(crate) mod neon;
 
 use once_cell::sync::OnceCell;
 
@@ -29,9 +31,62 @@ pub(crate) fn scan(buf: &[u8], out: &mut Vec<u32>) -> Result<(), usize> {
                 return <avx2::Avx2Scanner as Scanner>::scan;
             }
         }
+        #[cfg(target_arch = "aarch64")]
+        {
+            if std::arch::is_aarch64_feature_detected!("aes") {
+                return <neon::NeonScanner as Scanner>::scan;
+            }
+        }
         <ScalarScanner as Scanner>::scan
     });
     f(buf, out)
+}
+
+/// Compute escape mask + new carry. Pure bit-twiddling, no SIMD intrinsics.
+/// `prev_carry` is 1 iff the previous chunk ended such that the FIRST byte of
+/// the current chunk is "escaped" (preceded by an odd-length run of backslashes
+/// that ends at byte 0 of this chunk).
+#[inline(always)]
+pub(crate) fn find_escape_mask_with_carry(bs: u64, prev_carry: &mut u64) -> u64 {
+    let pc = *prev_carry;
+
+    // Identify run starts: positions where bs[i] is set AND bs[i-1] is not.
+    let starts = bs & !((bs << 1) | pc);
+
+    let even_bits: u64 = 0x5555_5555_5555_5555;
+    let odd_bits:  u64 = 0xAAAA_AAAA_AAAA_AAAA;
+    let even_starts = starts & even_bits;
+    let odd_starts  = starts & odd_bits;
+
+    let even_carries = bs.wrapping_add(even_starts);
+    let odd_carries  = bs.wrapping_add(odd_starts);
+
+    let even_carry_ends = even_carries & !bs;
+    let odd_carry_ends  = odd_carries  & !bs;
+
+    let escaped_from_runs = (even_carry_ends & odd_bits) | (odd_carry_ends & even_bits);
+    let escaped = escaped_from_runs | pc;
+
+    let trailing_bs = (!bs).leading_zeros();
+
+    let new_carry = if bs == u64::MAX {
+        pc
+    } else {
+        (trailing_bs as u64) & 1
+    };
+
+    *prev_carry = new_carry;
+    escaped
+}
+
+/// Emit all set-bit positions in `mask` (relative to `base`) into `out`.
+#[inline(always)]
+pub(crate) fn emit_bits(mut mask: u64, base: u32, out: &mut Vec<u32>) {
+    while mask != 0 {
+        let tz = mask.trailing_zeros();
+        out.push(base + tz);
+        mask &= mask - 1;
+    }
 }
 
 /// Walk a sequence of already-emitted structural offsets and verify that

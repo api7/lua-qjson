@@ -18,15 +18,15 @@ proptest! {
         let mut b = Vec::new();
         let ra = ScalarScanner::scan(input.as_bytes(), &mut a);
         let rb = Avx2Scanner::scan(input.as_bytes(), &mut b);
-        // Both paths run the same scan_emit_resume + validate_brackets
-        // pipeline, so Result equality is required: same Ok/Err verdict
-        // AND same error offset when Err.
+        // Both scanners must agree on Ok vs Err (and on the error offset).
         prop_assert_eq!(&ra, &rb, "scan results differ for {:?}", input);
-        // Indices are produced entirely by scan_emit_resume (which walks
-        // through end-of-buffer before any Err) and are not modified by
-        // validate_brackets, so both `a` and `b` reflect the full emit
-        // regardless of whether the final result was Ok or Err.
-        prop_assert_eq!(&a, &b, "indices differ for {:?}", input);
+        // On success, indices must be identical. On error, the partial
+        // emit may differ: the fused scalar (scan_and_validate) aborts at
+        // the first bracket mismatch, while AVX2 emits all structural
+        // chars before validate_brackets runs. Only compare on Ok.
+        if ra.is_ok() {
+            prop_assert_eq!(&a, &b, "indices differ for {:?}", input);
+        }
     }
 }
 
@@ -55,4 +55,63 @@ fn valid_jsonish() -> impl Strategy<Value = String> {
 }
 
 #[cfg(not(all(target_arch = "x86_64", feature = "avx2")))]
-#[test] fn skip() {}
+#[test] fn skip_avx2() {}
+
+// ── NEON cross-check ──────────────────────────────────────────────────────────
+
+#[cfg(target_arch = "aarch64")]
+use proptest::prelude::*;
+
+#[cfg(target_arch = "aarch64")]
+use quickdecode::__test_api::{Scanner, ScalarScanner, NeonScanner};
+
+#[cfg(target_arch = "aarch64")]
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(2000))]
+
+    #[test]
+    fn scalar_neon_bit_identical(input in neon_valid_jsonish()) {
+        if !std::arch::is_aarch64_feature_detected!("aes") {
+            return Ok(());
+        }
+        let mut a = Vec::new();
+        let mut b = Vec::new();
+        let ra = ScalarScanner::scan(input.as_bytes(), &mut a);
+        let rb = NeonScanner::scan(input.as_bytes(), &mut b);
+        // Both scanners must agree on Ok vs Err (and on the error offset).
+        prop_assert_eq!(&ra, &rb, "scan results differ for {:?}", input);
+        // On success, indices must be identical. On error, the partial
+        // emit may differ between fused-scalar and two-pass NEON because
+        // the fused path stops at the first bracket error while NEON emits
+        // all structural chars before validating; only check on Ok.
+        if ra.is_ok() {
+            prop_assert_eq!(&a, &b, "indices differ for {:?}", input);
+        }
+    }
+}
+
+#[cfg(target_arch = "aarch64")]
+fn neon_valid_jsonish() -> impl Strategy<Value = String> {
+    proptest::collection::vec(
+        prop_oneof![
+            Just("{".to_string()),
+            Just("}".to_string()),
+            Just("[".to_string()),
+            Just("]".to_string()),
+            Just(",".to_string()),
+            Just(":".to_string()),
+            Just("\"a\"".to_string()),
+            Just("\"\\\\\"".to_string()),
+            Just("\"\\\"\"".to_string()),
+            Just("\"\\u00e9\"".to_string()),
+            Just("\"中文\"".to_string()),
+            Just("123".to_string()),
+            Just("\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"".to_string()),
+            Just("\"\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"".to_string()),
+        ],
+        0..200,
+    ).prop_map(|v| v.concat())
+}
+
+#[cfg(not(target_arch = "aarch64"))]
+#[test] fn skip_neon() {}
