@@ -1,0 +1,3 @@
+[submodule "vendor/lua-cjson"]
+	path = vendor/lua-cjson
+	url = https://github.com/openresty/lua-cjson.git
