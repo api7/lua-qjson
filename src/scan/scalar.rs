@@ -4,10 +4,38 @@ pub struct ScalarScanner;
 
 impl Scanner for ScalarScanner {
     fn scan(buf: &[u8], out: &mut Vec<u32>) -> Result<(), usize> {
-        out.reserve(buf.len() / 6);
-        scan_emit_resume(buf, 0, false, out)?;
-        super::validate_brackets(buf, out)
+        scan_and_validate(buf, out)
     }
+}
+
+/// Single-pass: emit structural offsets AND validate bracket pairing inline.
+/// Replaces the two-pass `scan_emit_resume` + `validate_brackets` sequence.
+pub(crate) fn scan_and_validate(buf: &[u8], out: &mut Vec<u32>) -> Result<(), usize> {
+    out.reserve(buf.len() / 6);
+    let mut i = 0usize;
+    let mut in_str = false;
+    let mut stack: Vec<u8> = Vec::with_capacity(32);
+    while i < buf.len() {
+        let b = buf[i];
+        if in_str {
+            if b == b'\\' { i += 2; continue; }
+            if b == b'"' { in_str = false; out.push(i as u32); }
+            i += 1;
+            continue;
+        }
+        match b {
+            b'"'        => { in_str = true; out.push(i as u32); }
+            b'{' | b'[' => { stack.push(b); out.push(i as u32); }
+            b'}'        => { out.push(i as u32); if stack.pop() != Some(b'{') { return Err(i); } }
+            b']'        => { out.push(i as u32); if stack.pop() != Some(b'[') { return Err(i); } }
+            b':' | b',' => { out.push(i as u32); }
+            _ => {}
+        }
+        i += 1;
+    }
+    if in_str { return Err(buf.len()); }
+    if !stack.is_empty() { return Err(buf.len()); }
+    Ok(())
 }
 
 /// Emit structural-character offsets for `buf[start..]`, continuing from a
