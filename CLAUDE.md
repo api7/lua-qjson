@@ -6,8 +6,6 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Rust JSON decoder (`cdylib` + `rlib`) exposed to LuaJIT via FFI. Optimized for parse-once / extract-a-few-fields / discard. The competitive edge over `lua-cjson` comes from **never building a Lua table** — Phase 1 records only structural offsets, Phase 2 lazily decodes the fields the caller actually asks for. Crate name in `Cargo.toml` is `lua-quick-decode`; the compiled artifact is `libquickdecode.so`.
 
-Authoritative design doc: `docs/superpowers/specs/2026-05-15-rust-quick-json-decode-design.md`.
-
 ## Common commands
 
 The `Makefile` is the canonical entry point; `make help` lists targets.
