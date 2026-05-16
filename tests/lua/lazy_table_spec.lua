@@ -138,3 +138,37 @@ describe("__ipairs / qd.ipairs over LazyArray", function()
         assert.are.equal(0, count)
     end)
 end)
+
+describe("__newindex — first-write materialization", function()
+    it("converts LazyObject into a plain table preserving existing keys", function()
+        local t = qt.decode('{"a":1,"b":2}')
+        t.c = 3
+        assert.is_nil(getmetatable(t))
+        assert.are.equal(1, t.a)
+        assert.are.equal(2, t.b)
+        assert.are.equal(3, t.c)
+    end)
+
+    it("nested containers remain lazy after parent materialization", function()
+        local t = qt.decode('{"inner":{"x":1}}')
+        t.extra = "y"
+        assert.is_nil(getmetatable(t))
+        local inner = t.inner
+        assert.are.equal(qt._LazyObject, getmetatable(inner))
+        assert.are.equal(1, inner.x)
+    end)
+
+    it("LazyArray materializes preserving empty_array_mt", function()
+        local t = qt.decode('[]')
+        t[1] = "x"
+        assert.are.equal(qt.empty_array_mt, getmetatable(t))
+        assert.are.equal("x", t[1])
+    end)
+
+    it("simple write leaves other keys intact", function()
+        local t = qt.decode('{"a":1}')
+        t.b = 2
+        assert.are.equal(1, t.a)
+        assert.are.equal(2, t.b)
+    end)
+end)
