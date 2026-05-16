@@ -109,6 +109,42 @@ end
 
 LazyObject.__index = read_object_field
 
+-- Resolve a child cursor at integer index `key` (1-based) and decode it.
+-- Returns nil for missing/out-of-range indices and non-integer keys.
+local function read_array_index(self, key)
+    if type(key) ~= "number" then return nil end
+    -- 1-based external, 0-based internal
+    local i = key - 1
+    if i < 0 or i ~= math.floor(i) then return nil end
+    local rc = C.qjd_cursor_index(self._cur, i, child_box)
+    if not check(rc) then return nil end
+    local trc = C.qjd_cursor_typeof(child_box[0], "", 0, type_box)
+    if not check(trc) then return nil end
+    local t = type_box[0]
+    if t == T_STR then
+        local rrc = C.qjd_cursor_get_str(child_box[0], "", 0, strp_box, size_box)
+        if not check(rrc) then return nil end
+        return ffi.string(strp_box[0], size_box[0])
+    elseif t == T_NUM then
+        local rrc = C.qjd_cursor_get_f64(child_box[0], "", 0, f64_box)
+        if not check(rrc) then return nil end
+        return f64_box[0]
+    elseif t == T_BOOL then
+        local rrc = C.qjd_cursor_get_bool(child_box[0], "", 0, bool_box)
+        if not check(rrc) then return nil end
+        return bool_box[0] ~= 0
+    elseif t == T_NULL then
+        return _M.null
+    elseif t == T_OBJ then
+        return setmetatable(wrap_child(self, child_box[0]), LazyObject)
+    elseif t == T_ARR then
+        return setmetatable(wrap_child(self, child_box[0]), LazyArray)
+    end
+    return nil
+end
+
+LazyArray.__index = read_array_index
+
 function _M.decode(json_str)
     -- Reuse the existing qd.parse path to get a Doc with stable buffer hold.
     local doc = qd.parse(json_str)

@@ -77,7 +77,27 @@ fn walk_children(doc: &Document, cur: Cursor, seg: &PathSeg) -> Result<Cursor, q
     let mut arr_idx: u32 = 0;
     let mut result: Option<Cursor> = None;
 
-    while i < end {
+    // Empty-container guard: if the byte immediately after the opener (ignoring
+    // whitespace) is the closing bracket/brace, there are no children.
+    {
+        let opener_byte_pos = doc.indices[cur.idx_start as usize] as usize;
+        let closer_byte_pos = doc.indices[end as usize] as usize;
+        let mut p = opener_byte_pos + 1;
+        while p < closer_byte_pos && matches!(doc.buf[p], b' ' | b'\t' | b'\n' | b'\r') {
+            p += 1;
+        }
+        if p == closer_byte_pos {
+            let slot = cache.slot_mut(slot_n);
+            slot.child_starts = starts;
+            slot.child_ends   = ends;
+            return Err(qjd_err::QJD_NOT_FOUND);
+        }
+    }
+
+    // Use `<= end` so trailing scalar elements (which have no structural
+    // marker of their own — `indices[end]` is the parent closer) are visited.
+    // The `b'}' | b']' => break` arm below terminates the loop after them.
+    while i <= end {
         starts.push(i);
 
         let value_idx_start = if is_obj { i + 3 } else { i };
