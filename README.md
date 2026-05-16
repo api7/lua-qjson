@@ -38,6 +38,35 @@ local model = body:get_str("model")
 local temp  = body:get_f64("temperature")
 ```
 
+### Lazy table API (`qd.decode` / `qd.encode`)
+
+For callers migrating from `cjson`, an alternative API returns a table-shaped
+lazy view. Reads, iteration, and length all work like a `cjson.decode`'d
+table; writes materialize the affected level into a plain Lua table.
+
+```lua
+local qd    = require("quickdecode")
+local cjson = require("cjson")          -- optional; provides null / empty_array sentinels
+
+local t = qd.decode(json_str)
+
+print(t.model)
+for _, m in qd.ipairs(t.messages) do
+    print(m.role, m.content)
+end
+
+t.extra = "x"
+
+local s = qd.encode(t)                  -- drop-in replacement for cjson.encode
+```
+
+`qd.encode` works on lazy proxies (re-emitting unmodified subtrees as the
+original JSON bytes), real Lua tables (matching `cjson.encode` output), and
+mixed trees. Callers cannot pass a lazy proxy directly to `cjson.encode`
+(cjson bypasses metamethods in C); use `qd.encode` instead, or call
+`qd.materialize(t)` to get a plain Lua table that any third-party encoder
+can handle.
+
 ## Testing — Lua
 
 Requires LuaJIT + busted + lua-cjson installed system-wide.
@@ -76,3 +105,17 @@ Items intentionally pushed out of the first implementation. Each will be picked 
 - **`cargo fmt --check` not enforced** — `make lint` runs clippy only. The codebase uses intentional manual column alignment in struct definitions and compact single-line literals that default rustfmt would reflow. Skip rather than reformat until a project-wide style decision is made.
 - **`validate_brackets` fusion into scan emit loop** — surfaced by profiling: on structurally-dense workloads `validate_brackets` is 65% of parse time (second linear pass over emitted indices). Folding bracket pairing into the scan emit loop via an inline depth stack eliminates that pass. No effect on the current string-heavy bench (0.3% there); a win for config / JSONL / table-shape JSON.
 - **`memchr2` cross-chunk jump for very long string interiors** — the AVX2 in-string fast probe (issue #5) drops per-chunk cost from ~25 to ~10 ops but still pays ALU work for every 64-byte chunk in a string. A `memchr2(b'"', b'\\')` jump can approach memory bandwidth on multi-MB single-string payloads. Deferred until a workload that benefits clearly emerges; needs careful `bs_carry` reasoning across the jump.
+- **Stateful O(N) iterator FFI** — current `qd.pairs` and the `__newindex`
+  materialization path walk the object cursor from the start on every step,
+  giving O(N²) total cost for full enumeration. Acceptable for the "read a
+  few keys" use case the library is optimized for; full-iteration workloads
+  (e.g. encoding a deeply-keyed object that has been materialized) would
+  benefit from a `qjd_iter_init` / `qjd_iter_next` pair that holds position
+  state across calls.
+- **Lazy-table read overhead vs path API** — `qd.decode + t.field x3` lands
+  ~30–40% behind `qd.parse:get_str` on small-to-medium payloads, converging
+  to parity at multi-MB sizes. The gap is structural (per-access `__index`
+  metamethod dispatch + transient cdata allocation for nested wraps). Worth
+  attempting if a workload-driven need surfaces; current measured cost is
+  still 14× faster than `cjson.decode` at 100 KB, so the lazy API is the
+  right default for migrating callers.
