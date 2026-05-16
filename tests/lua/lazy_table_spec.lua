@@ -23,3 +23,20 @@ describe("LazyObject __index — scalars", function()
         assert.is_nil(t.missing)
     end)
 end)
+
+describe("LazyObject __index — nested containers", function()
+    it("returns a LazyObject for a nested object", function()
+        local t = qt.decode('{"a":{"b":"x"}}')
+        local inner = t.a
+        assert.is_table(inner)
+        assert.are.equal("x", inner.b)
+    end)
+
+    it("returns a LazyArray for a nested array", function()
+        local t = qt.decode('{"xs":[10,20]}')
+        local xs = t.xs
+        assert.is_table(xs)
+        -- LazyArray __index is added in a later task; just verify it's
+        -- a table-typed value at this stage.
+    end)
+end)

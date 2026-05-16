@@ -55,6 +55,24 @@ end
 local LazyObject = {}
 local LazyArray  = {}
 
+-- Build a new lazy view for a child container cursor.
+-- child_cursor is child_box[0] (a reference into child_box's backing memory).
+-- We get the byte span via child_cursor, then ffi.copy from child_box into a
+-- freshly-allocated per-view own_box so future child_box overwrites don't
+-- corrupt this view's cursor.
+local function wrap_child(parent_view, child_cursor)
+    C.qjd_cursor_bytes(child_cursor, sz_a, sz_b)
+    local own_box = ffi.new("qjd_cursor[1]")
+    ffi.copy(own_box, child_box, ffi.sizeof("qjd_cursor"))
+    return {
+        _doc     = parent_view._doc,
+        _cur_box = own_box,        -- keep cdata alive
+        _cur     = own_box[0],     -- stable reference into own_box
+        _bs      = tonumber(sz_a[0]),
+        _be      = tonumber(sz_b[0]),
+    }
+end
+
 -- Resolve a child cursor at `key` (object) and decode it into a Lua value.
 -- Returns nil for missing keys (cjson semantics).
 local function read_object_field(self, key)
@@ -81,8 +99,11 @@ local function read_object_field(self, key)
     elseif t == T_NULL then
         return _M.null
     end
-    -- Container types are wrapped in a later task; for now return nil so
-    -- this task's tests can pass on scalar-only fixtures.
+    if t == T_OBJ then
+        return setmetatable(wrap_child(self, child_box[0]), LazyObject)
+    elseif t == T_ARR then
+        return setmetatable(wrap_child(self, child_box[0]), LazyArray)
+    end
     return nil
 end
 
