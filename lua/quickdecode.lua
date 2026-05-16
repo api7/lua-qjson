@@ -2,7 +2,6 @@ local ffi = require("ffi")
 
 ffi.cdef[[
 typedef struct qjd_doc qjd_doc;
-typedef struct qjd_decoder qjd_decoder;
 typedef struct {
     const qjd_doc* doc;
     uint32_t idx_start, idx_end, _reserved0, _reserved1;
@@ -11,12 +10,6 @@ typedef struct {
 const char* qjd_strerror(int code);
 qjd_doc* qjd_parse(const uint8_t* buf, size_t len, int* err_out);
 void qjd_free(qjd_doc* doc);
-
-qjd_decoder* qjd_decoder_new(void);
-void         qjd_decoder_free(qjd_decoder*);
-void         qjd_decoder_reset(qjd_decoder*);
-void         qjd_decoder_destroy(qjd_decoder*);
-qjd_doc*     qjd_decoder_parse(qjd_decoder*, const uint8_t*, size_t, int*);
 
 int qjd_get_str (qjd_doc*, const char* path, size_t path_len, const uint8_t** p, size_t* n);
 int qjd_get_i64 (qjd_doc*, const char* path, size_t path_len, int64_t* out);
@@ -51,24 +44,18 @@ local strp_box = ffi.new("const uint8_t*[1]")
 local cur_box  = ffi.new("qjd_cursor[1]")
 
 local NOT_FOUND = 2
-local STALE_DOC = 9
 
 local _M = {
     T_NULL = 0, T_BOOL = 1, T_NUM = 2,
     T_STR  = 3, T_ARR  = 4, T_OBJ = 5,
 }
 
-local Doc     = {}; Doc.__index     = Doc
-local Cursor  = {}; Cursor.__index  = Cursor
-local Decoder = {}; Decoder.__index = Decoder
+local Doc    = {}; Doc.__index    = Doc
+local Cursor = {}; Cursor.__index = Cursor
 
--- check_err returns:
---   true  for QJD_OK
---   false for QJD_NOT_FOUND / QJD_STALE_DOC (callers translate to nil)
---   raises for every other code
 local function check_err(rc)
     if rc == 0 then return true end
-    if rc == NOT_FOUND or rc == STALE_DOC then return false end
+    if rc == NOT_FOUND then return false end
     error("quickdecode: " .. ffi.string(C.qjd_strerror(rc)))
 end
 
@@ -81,40 +68,6 @@ function _M.parse(json_str)
         _ptr  = ffi.gc(ptr, C.qjd_free),
         _hold = json_str,   -- strong ref keeps buffer alive
     }, Doc)
-end
-
-function _M.new_decoder()
-    local ptr = C.qjd_decoder_new()
-    if ptr == nil then
-        error("quickdecode: decoder allocation failed")
-    end
-    return setmetatable({
-        _ptr = ffi.gc(ptr, C.qjd_decoder_free),
-    }, Decoder)
-end
-
-function Decoder:parse(payload)
-    -- Pin the current payload against Lua GC while it's borrowed by the
-    -- decoder. Replacing _payload on each parse drops the previous payload,
-    -- which is safe because the previous doc is now stale (gen bumped) and
-    -- cannot be dereferenced.
-    self._payload = payload
-    local doc_ptr = C.qjd_decoder_parse(self._ptr, payload, #payload, err_box)
-    if doc_ptr == nil then
-        error("quickdecode: " .. ffi.string(C.qjd_strerror(err_box[0])))
-    end
-    return setmetatable({
-        _ptr     = ffi.gc(doc_ptr, C.qjd_free),
-        _decoder = self,    -- keep decoder (and thus _payload) alive
-    }, Doc)
-end
-
-function Decoder:reset()
-    C.qjd_decoder_reset(self._ptr)
-end
-
-function Decoder:destroy()
-    C.qjd_decoder_destroy(self._ptr)
 end
 
 function Doc:get_str(path)

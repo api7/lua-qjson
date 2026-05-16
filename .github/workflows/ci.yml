@@ -43,9 +43,6 @@ jobs:
       - name: Test with test-panic feature
         run: cargo test --features test-panic --release
 
-      - name: Test allocation accounting (count-allocs feature)
-        run: cargo test --release --features count-allocs --test alloc_count
-
   lua:
     name: Lua integration tests
     runs-on: ubuntu-latest

@@ -49,18 +49,4 @@ impl SkipCache {
 
     #[cfg(test)]
     pub(crate) fn len(&self) -> usize { self.by_opener.len() }
-
-    /// Drop every cached entry but keep allocated capacity.
-    pub(crate) fn clear(&mut self) {
-        self.slots.truncate(1);
-        self.slots[0].child_starts.clear();
-        self.slots[0].child_ends.clear();
-        self.by_opener.clear();
-    }
-
-    /// Drop every cached entry and release allocated capacity back to the allocator.
-    pub(crate) fn clear_and_shrink(&mut self) {
-        // Replacing entirely is the cheapest way to drop both Vecs and the FxHashMap.
-        *self = SkipCache::new();
-    }
 }
