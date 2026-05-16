@@ -4,7 +4,7 @@ Rust-implemented fast JSON decoder exposed to LuaJIT via FFI. Optimized for the 
 
 ## Status
 
-Initial implementation complete: scalar + AVX2/PCLMUL structural scanner, root-path and cursor APIs, escape-decoded strings, integer/float/bool/typeof/len, FFI panic barrier, and a LuaJIT wrapper. Rust unit/integration tests and Lua busted tests run in CI. The benchmark harness compares against lua-cjson but tuning is pending — see `Roadmap / Deferred` below.
+Initial implementation complete: scalar + AVX2/PCLMUL + ARM64 NEON/PMULL structural scanner (runtime-dispatched), root-path and cursor APIs, escape-decoded strings, integer/float/bool/typeof/len, FFI panic barrier, and a LuaJIT wrapper. Rust unit/integration tests and Lua busted tests run in CI. The benchmark harness compares against lua-cjson but tuning is pending — see `Roadmap / Deferred` below.
 
 ## Building
 
@@ -99,6 +99,15 @@ with similar throughput. Memory retention for `quickdecode` is essentially
 flat in payload size (a few KB for the reusable buffers), where `cjson`
 and `simdjson` retain ~1× the input size as live Lua-table state.
 
+ARM64 (Apple M4, NEON/PMULL scanner, same workload):
+
+| Size | cjson | `qd.parse` | `qd.decode + t.f x3` | speedup vs. cjson |
+|---:|---:|---:|---:|---:|
+|   2 KB | 254,738 | 654,108 | 392,711 | 2.6× / 1.5× |
+| 100 KB |  15,281 | 108,932 |  99,701 | 7.1× / 6.5× |
+|   1 MB |   1,523 |  11,905 |  11,876 | 7.8× / 7.8× |
+|  10 MB |     153 |   1,218 |   1,222 | 8.0× / 8.0× |
+
 See [`docs/benchmarks.md`](docs/benchmarks.md) for the full size ladder,
 memory numbers, an "encode round-trip" row (passthrough emit via
 `memcpy`), the pure-decode (no-access) comparison, and the exact
@@ -112,7 +121,6 @@ make bench       # quickdecode vs cjson
 
 Items intentionally pushed out of the first implementation. Each will be picked up individually.
 
-- **ARM64 NEON scanner backend** — first version ships with scalar + AVX2 backends only. NEON backend (for Apple Silicon / Graviton / 鲲鹏) is deferred.
 - **SmallVec fast path for small documents (< 4 KB)** — avoid heap allocation for `indices` on tiny inputs.
 - **SIMD-accelerated backslash search** in the `decode_string` fast path.
 - **`lexical` fast float parser** if `<f64>::from_str` benchmarks as a bottleneck.
@@ -124,7 +132,7 @@ Items intentionally pushed out of the first implementation. Each will be picked 
 - **Adaptive `out.reserve` in scanners** — `out.reserve(buf.len() / 6)` is calibrated for object-heavy JSON. On string-heavy multimodal payloads (one big content array, mostly base64) the actual emit rate is <1 structural per 1 KB, so we over-reserve by 100x+. Mainly a memory hygiene concern (mmap'd pages stay lazily faulted), <5% throughput effect.
 - **AVX-512 scanner backend** — 64-byte → 128-byte chunks. On the 1 MB string-heavy bench, profile shows scan throughput is L3-bandwidth-bound, so realistic win is ~1.5–1.8×, not a clean 2×; larger wins need fixtures that fit in L1/L2. Needs `avx512bw` + `vpclmulqdq` (Sapphire Rapids, Zen 4+).
 - **`cargo fmt --check` not enforced** — `make lint` runs clippy only. The codebase uses intentional manual column alignment in struct definitions and compact single-line literals that default rustfmt would reflow. Skip rather than reformat until a project-wide style decision is made.
-- **`validate_brackets` fusion into scan emit loop** — surfaced by profiling: on structurally-dense workloads `validate_brackets` is 65% of parse time (second linear pass over emitted indices). Folding bracket pairing into the scan emit loop via an inline depth stack eliminates that pass. No effect on the current string-heavy bench (0.3% there); a win for config / JSONL / table-shape JSON.
+- **`validate_brackets` fusion in SIMD scanners** — fused into `ScalarScanner` via `scan_and_validate`; AVX2 and NEON scanners still run the two-pass emit + `validate_brackets` design. Folding bracket pairing into the SIMD emit loops would require carrying a depth stack across chunks (the inline `emit_bits` loop currently has no such state). <1% effect on string-heavy workloads; worth revisiting only if profiling on structurally-dense input flags it.
 - **`memchr2` cross-chunk jump for very long string interiors** — the AVX2 in-string fast probe (issue #5) drops per-chunk cost from ~25 to ~10 ops but still pays ALU work for every 64-byte chunk in a string. A `memchr2(b'"', b'\\')` jump can approach memory bandwidth on multi-MB single-string payloads. Deferred until a workload that benefits clearly emerges; needs careful `bs_carry` reasoning across the jump.
 - **Stateful O(N) iterator FFI** — current `qd.pairs` and the `__newindex`
   materialization path walk the object cursor from the start on every step,
