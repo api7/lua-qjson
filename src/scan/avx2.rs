@@ -21,6 +21,7 @@ unsafe fn scan_avx2_impl(buf: &[u8], out: &mut Vec<u32>) -> Result<(), usize> {
     let mut i: usize = 0;
     let mut bs_carry: u64 = 0;
     let mut in_string: u64 = 0;
+    let mut stack: Vec<u8> = Vec::with_capacity(32);
 
     while i + 64 <= buf.len() {
         let chunk_lo = _mm256_loadu_si256(buf.as_ptr().add(i)        as *const __m256i);
@@ -33,6 +34,8 @@ unsafe fn scan_avx2_impl(buf: &[u8], out: &mut Vec<u32>) -> Result<(), usize> {
         // ~10-op scalar `find_escape_mask_with_carry`. bs_carry must be
         // 0 leaving this chunk (no backslashes in chunk → no trailing
         // run); in_string stays 1 (no real quote → no polarity flip).
+        // The depth stack is correctly left untouched: no bracket chars
+        // can appear in a pure string-interior chunk.
         if in_string != 0 {
             let interesting = quote_or_backslash_mask(chunk_lo, chunk_hi);
             if interesting == 0 {
@@ -54,19 +57,20 @@ unsafe fn scan_avx2_impl(buf: &[u8], out: &mut Vec<u32>) -> Result<(), usize> {
         // Exclude structural chars inside strings; re-add real quotes.
         let final_mask = (struct_mask & !inside) | real_quote;
 
-        super::emit_bits(final_mask, i as u32, out);
+        super::emit_bits_validate(buf, final_mask, i as u32, &mut stack, out)?;
 
         i += 64;
     }
 
     // Tail (<64 bytes): continue emit-only via scalar, carrying the
     // in_string / bs_carry state from the last AVX2 chunk. Bracket pairing
-    // is checked once at the end on the merged indices.
+    // for the tail-emitted indices is folded in after via validate_tail_indices.
     //
     // If bs_carry == 1 the byte at position `i` is escape-targeted by the
     // trailing backslash run of the prior chunk; inside a string we must
     // skip it (treat as an escaped data byte, not a structural). Outside
     // a string backslashes are plain characters and bs_carry has no effect.
+    let tail_start = out.len();
     if i < buf.len() {
         // Invariant: scalar_start ∈ {i, i+1} and i < buf.len(), so
         // scalar_start <= buf.len(). The boundary case scalar_start ==
@@ -86,7 +90,11 @@ unsafe fn scan_avx2_impl(buf: &[u8], out: &mut Vec<u32>) -> Result<(), usize> {
         return Err(buf.len());
     }
 
-    super::validate_brackets(buf, out)
+    super::validate_tail_indices(buf, &out[tail_start..], &mut stack)?;
+    if !stack.is_empty() {
+        return Err(buf.len());
+    }
+    Ok(())
 }
 
 #[inline(always)]

@@ -79,52 +79,59 @@ pub(crate) fn find_escape_mask_with_carry(bs: u64, prev_carry: &mut u64) -> u64 
     escaped
 }
 
-/// Emit all set-bit positions in `mask` (relative to `base`) into `out`.
+/// Emit all set-bit positions in `mask` (relative to `base`) into `out`, while
+/// fusing bracket-pair validation inline. The SIMD scanners guarantee that any
+/// emitted offset corresponds to a byte that is either a real (unescaped) quote
+/// or a top-level structural char outside of strings — so `"`, `:`, `,` are
+/// no-ops here and `{` `[` `}` `]` are validated against `stack`.
+///
+/// Returns `Err(pos)` on the first bracket mismatch. On success, `stack` is
+/// left in its final state for the caller (further tail emits and end-of-input
+/// `stack.is_empty()` check).
 #[inline(always)]
-pub(crate) fn emit_bits(mut mask: u64, base: u32, out: &mut Vec<u32>) {
+pub(crate) fn emit_bits_validate(
+    buf: &[u8],
+    mut mask: u64,
+    base: u32,
+    stack: &mut Vec<u8>,
+    out: &mut Vec<u32>,
+) -> Result<(), usize> {
     while mask != 0 {
-        let tz = mask.trailing_zeros();
-        out.push(base + tz);
+        let tz  = mask.trailing_zeros();
+        let pos = base + tz;
+        out.push(pos);
+        match buf[pos as usize] {
+            c @ (b'{' | b'[') => stack.push(c),
+            b'}' => if stack.pop() != Some(b'{') { return Err(pos as usize); },
+            b']' => if stack.pop() != Some(b'[') { return Err(pos as usize); },
+            _ => {} // `"` `:` `,` — no validation
+        }
         mask &= mask - 1;
     }
+    Ok(())
 }
 
-/// Walk a sequence of already-emitted structural offsets and verify that
-/// `{`/`}` and `[`/`]` are properly paired. String quotes toggle an
-/// `in_string` flag and are otherwise skipped. This pass trusts the emit
-/// phase: a forged quote in the index list would flip `in_string` and
-/// mask subsequent bracket mismatches, so the function is correctness-
-/// coupled with the scanner that produced `indices`, not defensive
-/// against arbitrary inputs.
+/// Walk already-emitted indices (from the scalar tail handler) and continue
+/// bracket-pair validation using the SIMD-loop's stack. Same per-index logic
+/// as `emit_bits_validate`; does not push to `out` (the tail handler already
+/// did). Used after `scan_emit_resume` to fold the tail into the same pass.
 ///
-/// On the first mismatch, returns `Err(offset_in_buf)`. On unmatched
-/// openers at end of input, returns `Err(buf.len())`.
-pub(crate) fn validate_brackets(buf: &[u8], indices: &[u32]) -> Result<(), usize> {
-    let mut stack: Vec<u8> = Vec::with_capacity(32);
-    let mut in_string = false;
-
+/// Like `emit_bits_validate`, this relies on the invariant that no in-string
+/// bracket / colon / comma is ever emitted: `"`, `:`, `,` are no-ops.
+#[inline]
+pub(crate) fn validate_tail_indices(
+    buf: &[u8],
+    indices: &[u32],
+    stack: &mut Vec<u8>,
+) -> Result<(), usize> {
     for &idx in indices {
         let pos = idx as usize;
-        let b = buf[pos];
-
-        if b == b'"' {
-            in_string = !in_string;
-            continue;
+        match buf[pos] {
+            c @ (b'{' | b'[') => stack.push(c),
+            b'}' => if stack.pop() != Some(b'{') { return Err(pos); },
+            b']' => if stack.pop() != Some(b'[') { return Err(pos); },
+            _ => {} // `"` `:` `,` — no validation
         }
-        if in_string {
-            continue;
-        }
-
-        match b {
-            b'{' | b'[' => stack.push(b),
-            b'}' if stack.pop() != Some(b'{') => return Err(pos),
-            b']' if stack.pop() != Some(b'[') => return Err(pos),
-            _ => {}
-        }
-    }
-
-    if !stack.is_empty() {
-        return Err(buf.len());
     }
     Ok(())
 }

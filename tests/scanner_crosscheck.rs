@@ -21,9 +21,9 @@ proptest! {
         // Both scanners must agree on Ok vs Err (and on the error offset).
         prop_assert_eq!(&ra, &rb, "scan results differ for {:?}", input);
         // On success, indices must be identical. On error, the partial
-        // emit may differ: the fused scalar (scan_and_validate) aborts at
-        // the first bracket mismatch, while AVX2 emits all structural
-        // chars before validate_brackets runs. Only compare on Ok.
+        // emit may differ: scalar aborts at the failing byte, while AVX2
+        // emits the rest of its current 64-byte chunk before its fused
+        // emit_bits_validate detects the mismatch. Only compare on Ok.
         if ra.is_ok() {
             prop_assert_eq!(&a, &b, "indices differ for {:?}", input);
         }
@@ -81,9 +81,9 @@ proptest! {
         // Both scanners must agree on Ok vs Err (and on the error offset).
         prop_assert_eq!(&ra, &rb, "scan results differ for {:?}", input);
         // On success, indices must be identical. On error, the partial
-        // emit may differ between fused-scalar and two-pass NEON because
-        // the fused path stops at the first bracket error while NEON emits
-        // all structural chars before validating; only check on Ok.
+        // emit may differ: scalar aborts at the failing byte, while NEON
+        // emits the rest of its current 64-byte chunk before its fused
+        // emit_bits_validate detects the mismatch. Only compare on Ok.
         if ra.is_ok() {
             prop_assert_eq!(&a, &b, "indices differ for {:?}", input);
         }

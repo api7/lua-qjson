@@ -88,6 +88,7 @@ unsafe fn scan_neon_impl(buf: &[u8], out: &mut Vec<u32>) -> Result<(), usize> {
     let mut i = 0usize;
     let mut bs_carry: u64 = 0;
     let mut in_string: u64 = 0;
+    let mut stack: Vec<u8> = Vec::with_capacity(32);
 
     while i + 64 <= buf.len() {
         let c0 = vld1q_u8(buf.as_ptr().add(i));
@@ -100,6 +101,8 @@ unsafe fn scan_neon_impl(buf: &[u8], out: &mut Vec<u32>) -> Result<(), usize> {
 
         // In-string fast probe: skip the escape/prefix-XOR path entirely when
         // we are already inside a string and there are no quotes or backslashes.
+        // No bracket chars can appear in a pure string-interior chunk, so the
+        // depth stack is correctly left untouched.
         if in_string != 0 && (backslash | quote) == 0 {
             bs_carry = 0;
             i += 64;
@@ -113,11 +116,12 @@ unsafe fn scan_neon_impl(buf: &[u8], out: &mut Vec<u32>) -> Result<(), usize> {
 
         let struct_mask = structural_mask64(c0, c1, c2, c3);
         let final_mask  = (struct_mask & !inside) | real_quote;
-        super::emit_bits(final_mask, i as u32, out);
+        super::emit_bits_validate(buf, final_mask, i as u32, &mut stack, out)?;
         i += 64;
     }
 
     // Tail (<64 bytes): hand off to scalar emit, carrying in_string / bs_carry state.
+    let tail_start = out.len();
     if i < buf.len() {
         let scalar_start = if in_string != 0 && bs_carry != 0 { i + 1 } else { i };
         super::scalar::scan_emit_resume(buf, scalar_start, in_string != 0, out)?;
@@ -125,7 +129,11 @@ unsafe fn scan_neon_impl(buf: &[u8], out: &mut Vec<u32>) -> Result<(), usize> {
         return Err(buf.len());
     }
 
-    super::validate_brackets(buf, out)
+    super::validate_tail_indices(buf, &out[tail_start..], &mut stack)?;
+    if !stack.is_empty() {
+        return Err(buf.len());
+    }
+    Ok(())
 }
 
 #[cfg(test)]

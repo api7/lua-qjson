@@ -9,7 +9,7 @@ impl Scanner for ScalarScanner {
 }
 
 /// Single-pass: emit structural offsets AND validate bracket pairing inline.
-/// Replaces the two-pass `scan_emit_resume` + `validate_brackets` sequence.
+/// Replaces the two-pass `scan_emit_resume` + bracket-walk sequence.
 pub(crate) fn scan_and_validate(buf: &[u8], out: &mut Vec<u32>) -> Result<(), usize> {
     out.reserve(buf.len() / 6);
     let mut i = 0usize;
@@ -40,11 +40,12 @@ pub(crate) fn scan_and_validate(buf: &[u8], out: &mut Vec<u32>) -> Result<(), us
 
 /// Emit structural-character offsets for `buf[start..]`, continuing from a
 /// given in-string state. Does NOT validate bracket pairing; the caller is
-/// responsible for running `validate_brackets` over the emitted offsets.
+/// responsible for running `validate_tail_indices` over the emitted offsets
+/// if validation is required.
 ///
-/// Used by `ScalarScanner::scan` (with start=0, in_str_init=false) and as
-/// the unaligned-tail handler by `Avx2Scanner::scan` (with the carried
-/// in-string state from the last AVX2 chunk).
+/// Used as the unaligned-tail handler by both `Avx2Scanner::scan` and
+/// `NeonScanner::scan` (with the carried in-string state from the last
+/// SIMD chunk).
 pub(crate) fn scan_emit_resume(
     buf: &[u8],
     start: usize,
