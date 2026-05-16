@@ -30,6 +30,10 @@ int qjd_cursor_get_f64 (const qjd_cursor*, const char*, size_t, double*);
 int qjd_cursor_get_bool(const qjd_cursor*, const char*, size_t, int*);
 int qjd_cursor_typeof  (const qjd_cursor*, const char*, size_t, int*);
 int qjd_cursor_len     (const qjd_cursor*, const char*, size_t, size_t*);
+int qjd_cursor_bytes(const qjd_cursor*, size_t* byte_start, size_t* byte_end);
+int qjd_cursor_object_entry_at(const qjd_cursor*, size_t i,
+                                const uint8_t** key_ptr, size_t* key_len,
+                                qjd_cursor* value_out);
 ]]
 
 local C = ffi.load("quickdecode")
