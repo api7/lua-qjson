@@ -322,18 +322,63 @@ end
 
 _M.materialize = materialize
 
+local string_byte = string.byte
+local string_format = string.format
+
+-- Minimal JSON string escaper covering the cjson default set.
+local function encode_string(s)
+    local out = {'"'}
+    for i = 1, #s do
+        local b = string_byte(s, i)
+        if b == 0x22 then out[#out+1] = '\\"'
+        elseif b == 0x5C then out[#out+1] = '\\\\'
+        elseif b == 0x0A then out[#out+1] = '\\n'
+        elseif b == 0x0D then out[#out+1] = '\\r'
+        elseif b == 0x09 then out[#out+1] = '\\t'
+        elseif b == 0x08 then out[#out+1] = '\\b'
+        elseif b == 0x0C then out[#out+1] = '\\f'
+        elseif b < 0x20 then out[#out+1] = string_format('\\u%04x', b)
+        else out[#out+1] = string.char(b)
+        end
+    end
+    out[#out+1] = '"'
+    return table.concat(out)
+end
+
+local function encode_number(n)
+    if n ~= n or n == math.huge or n == -math.huge then
+        error("qd.encode: cannot encode non-finite number")
+    end
+    if n == math.floor(n) and math.abs(n) < 1e15 then
+        return string_format("%d", n)
+    end
+    return string_format("%.14g", n)
+end
+
 local function encode_proxy(t)
     -- Slice the original buffer; _hold pins the bytes alive.
     return t._doc._hold:sub(t._bs + 1, t._be)
 end
 
 local function encode(v)
-    local mt = (type(v) == "table") and getmetatable(v) or nil
-    if mt == LazyObject or mt == LazyArray then
-        return encode_proxy(v)
+    if rawequal(v, _M.null) then
+        return "null"
     end
-    -- Scalar and real-table branches added in subsequent tasks.
-    error("qd.encode: unsupported value type at this stage")
+    local tv = type(v)
+    if tv == "string" then
+        return encode_string(v)
+    elseif tv == "number" then
+        return encode_number(v)
+    elseif tv == "boolean" then
+        return v and "true" or "false"
+    elseif tv == "table" then
+        local mt = getmetatable(v)
+        if mt == LazyObject or mt == LazyArray then
+            return encode_proxy(v)
+        end
+        error("qd.encode: real-table encoding not yet implemented")
+    end
+    error("qd.encode: unsupported value type: " .. tv)
 end
 
 _M.encode = encode
