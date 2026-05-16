@@ -38,6 +38,19 @@ unsafe fn scan_avx2_impl(buf: &[u8], out: &mut Vec<u32>) -> Result<(), usize> {
             if interesting == 0 {
                 bs_carry = 0;
                 i += 64;
+                // Cross-chunk jump: no quote/backslash means in_string polarity
+                // cannot flip and no escape can start, so jump straight to the
+                // 64B-aligned chunk containing the next interesting byte.
+                // The 256-byte threshold amortizes memchr2 call overhead: below
+                // that, the AVX2 probe loop is already faster than a libc search.
+                if i + 256 <= buf.len() {
+                    let scan_end = buf.len() - (buf.len() % 64);
+                    let jump = match memchr::memchr2(b'"', b'\\', &buf[i..scan_end]) {
+                        Some(rel) => rel & !63,
+                        None      => scan_end - i,
+                    };
+                    i += jump;
+                }
                 continue;
             }
         }
