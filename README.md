@@ -103,10 +103,10 @@ ARM64 (Apple M4, NEON/PMULL scanner, same workload):
 
 | Size | cjson | `qd.parse` | `qd.decode + t.f x3` | speedup vs. cjson |
 |---:|---:|---:|---:|---:|
-|   2 KB | 233,449 | 648,761 | 356,532 |  2.8× /  1.5× |
-| 100 KB |  14,259 | 245,700 | 215,983 | 17.2× / 15.1× |
-|   1 MB |   1,469 |  34,884 |  34,091 | 23.7× / 23.2× |
-|  10 MB |     150 |   3,406 |   3,464 | 22.7× / 23.1× |
+|   2 KB | 237,124 | 705,000 | 390,000 |  3.0× /  1.6× |
+| 100 KB |  14,667 | 232,000 | 208,000 | 15.8× / 14.2× |
+|   1 MB |   1,494 |  33,700 |  33,000 | 22.6× / 22.1× |
+|  10 MB |     150 |   3,376 |   3,454 | 22.5× / 23.0× |
 
 See [`docs/benchmarks.md`](docs/benchmarks.md) for the full size ladder,
 memory numbers, an "encode round-trip" row (passthrough emit via
