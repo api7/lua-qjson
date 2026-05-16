@@ -275,3 +275,58 @@ describe("qd.encode — real and mixed tables", function()
         assert.are.equal("now a string", parsed.changed)
     end)
 end)
+
+local cjson = require("cjson")
+
+-- Deep-equal aware of cjson.null and empty_array_mt (which qd aliases).
+local function deep_equal(a, b)
+    if a == b then return true end
+    if type(a) ~= "table" or type(b) ~= "table" then return false end
+    for k, v in pairs(a) do
+        if not deep_equal(v, b[k]) then return false end
+    end
+    for k in pairs(b) do
+        if a[k] == nil then return false end
+    end
+    return true
+end
+
+describe("cjson round-trip equivalence", function()
+    local fixtures = {
+        '{"a":1,"b":"x","c":null,"d":true,"e":false,"f":[1,2,3],"g":{"h":4.5}}',
+        '[1,"x",true,null,{},[]]',
+        '{"messages":[{"role":"user","content":"hi"},{"role":"assistant","content":"hello"}]}',
+        '{}',
+        '[]',
+        '{"escapes":"a\\nb\\tc\\\"d\\\\e"}',
+    }
+    for _, src in ipairs(fixtures) do
+        it("materialize matches cjson.decode for: " .. src:sub(1, 40), function()
+            local from_qd = qd.materialize(qd.decode(src))
+            local from_cj = cjson.decode(src)
+            assert.is_true(deep_equal(from_qd, from_cj))
+        end)
+
+        it("encode round-trips for: " .. src:sub(1, 40), function()
+            local out = qd.encode(qd.decode(src))
+            local back_qd = cjson.decode(out)
+            local back_cj = cjson.decode(src)
+            assert.is_true(deep_equal(back_qd, back_cj))
+        end)
+    end
+end)
+
+describe("sentinel handling", function()
+    it("JSON null reads as qd.null and encodes back", function()
+        local t = qd.decode('{"x":null}')
+        assert.are.equal(qd.null, t.x)
+        assert.are.equal('{"x":null}', qd.encode(t))
+    end)
+
+    it("empty array stays an array through materialize and encode", function()
+        local t = qd.decode('{"xs":[]}')
+        local m = qd.materialize(t)
+        assert.are.equal(qd.empty_array_mt, getmetatable(m.xs))
+        assert.are.equal('{"xs":[]}', qd.encode(t))
+    end)
+end)
