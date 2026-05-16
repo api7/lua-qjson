@@ -147,6 +147,18 @@ for _, s in ipairs(scenarios) do
             local _ = d:get_str("messages[0].role")
         end)
     end
+
+    bench("qd.decode + t.field x3", s.iters, function()
+        local t = qd.decode(s.payload)
+        local _ = t.model
+        local _ = t.temperature
+        local _ = t.messages and t.messages[1] and t.messages[1].role
+    end)
+
+    bench("qd.decode + qd.encode (unmodified)", s.iters, function()
+        local t = qd.decode(s.payload)
+        local _ = qd.encode(t)
+    end)
 end
 
 -- Interleaved scenario: cycle through several payloads of different sizes
@@ -207,4 +219,20 @@ do
             local _ = d:get_str("messages[0].role")
         end)
     end
+
+    next_p = make_cycler(interleaved)
+    bench("qd.decode + t.field x3", 400, function()
+        local p = next_p()
+        local t = qd.decode(p)
+        local _ = t.model
+        local _ = t.temperature
+        local _ = t.messages and t.messages[1] and t.messages[1].role
+    end)
+
+    next_p = make_cycler(interleaved)
+    bench("qd.decode + qd.encode (unmodified)", 400, function()
+        local p = next_p()
+        local t = qd.decode(p)
+        local _ = qd.encode(t)
+    end)
 end
