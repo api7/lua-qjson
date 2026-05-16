@@ -103,19 +103,29 @@ end
 
 -- Resolve a child cursor at `key` (object) and decode it into a Lua value.
 -- Returns nil for missing keys (cjson semantics).
+-- Container results (lazy proxies) are rawset-cached into `self` so that
+-- subsequent accesses return the same Lua table object. This is required for
+-- `t.a.x = v` to propagate back: __newindex materializes `t.a` in-place, and
+-- the next `t.a` lookup retrieves the already-materialized table from the
+-- raw table rather than creating a fresh proxy.
 local function read_object_field(self, key)
     if type(key) ~= "string" then return nil end
     -- Use child_box so the lookup result does not alias self._cur (which is
     -- itself stored in root_box's backing memory in the decode caller).
     local rc = C.qjd_cursor_field(self._cur, key, #key, child_box)
     if not check(rc) then return nil end
-    return decode_cursor(self, child_box)
+    local v = decode_cursor(self, child_box)
+    -- Cache containers so identity is stable and materialization sticks.
+    if type(v) == "table" then rawset(self, key, v) end
+    return v
 end
 
 LazyObject.__index = read_object_field
 
 -- Resolve a child cursor at integer index `key` (1-based) and decode it.
 -- Returns nil for missing/out-of-range indices and non-integer keys.
+-- Container results are rawset-cached for the same identity-stability reason
+-- as read_object_field.
 local function read_array_index(self, key)
     if type(key) ~= "number" then return nil end
     -- 1-based external, 0-based internal
@@ -123,7 +133,10 @@ local function read_array_index(self, key)
     if i < 0 or i ~= math.floor(i) then return nil end
     local rc = C.qjd_cursor_index(self._cur, i, child_box)
     if not check(rc) then return nil end
-    return decode_cursor(self, child_box)
+    local v = decode_cursor(self, child_box)
+    -- Cache containers so identity is stable and materialization sticks.
+    if type(v) == "table" then rawset(self, key, v) end
+    return v
 end
 
 LazyArray.__index = read_array_index
@@ -188,6 +201,64 @@ end
 LazyObject.__len = lazy_len
 LazyArray.__len  = lazy_len
 
+-- Materialize all key/value pairs from a LazyObject view into a plain list.
+-- Returns a sequence of {k, v} pairs. The view is not mutated here; mutation
+-- happens in __newindex after the walk completes successfully.
+local function materialize_object_contents(view)
+    local i = 0
+    local pairs_out = {}
+    while true do
+        local rc = C.qjd_cursor_object_entry_at(view._cur, i, strp_box, size_box, child_box)
+        if rc == QJD_NOT_FOUND then break end
+        check(rc)
+        local k = ffi.string(strp_box[0], size_box[0])
+        local v = decode_cursor(view, child_box)
+        pairs_out[#pairs_out+1] = {k, v}
+        i = i + 1
+    end
+    return pairs_out
+end
+
+-- Materialize all elements from a LazyArray view into a plain sequence.
+-- Returns a sequence indexed 1..n. The view is not mutated here.
+local function materialize_array_contents(view)
+    local i = 0
+    local out = {}
+    while true do
+        local rc = C.qjd_cursor_index(view._cur, i, child_box)
+        if rc == QJD_NOT_FOUND then break end
+        check(rc)
+        out[i + 1] = decode_cursor(view, child_box)
+        i = i + 1
+    end
+    return out
+end
+
+-- On first write, walk all existing key/value pairs into a plain table,
+-- strip the lazy metatable, then apply the new assignment. Any FFI error
+-- during the walk leaves `t` in its original lazy state.
+LazyObject.__newindex = function(t, k, v)
+    local contents = materialize_object_contents(t)
+    t._doc, t._cur_box, t._cur, t._bs, t._be = nil, nil, nil, nil, nil
+    setmetatable(t, nil)
+    for _, kv in ipairs(contents) do
+        rawset(t, kv[1], kv[2])
+    end
+    rawset(t, k, v)
+end
+
+-- On first write, walk all existing elements into a plain sequence,
+-- switch to empty_array_mt (no lazy machinery), then apply the assignment.
+LazyArray.__newindex = function(t, k, v)
+    local contents = materialize_array_contents(t)
+    t._doc, t._cur_box, t._cur, t._bs, t._be = nil, nil, nil, nil, nil
+    setmetatable(t, _M.empty_array_mt)
+    for i, x in ipairs(contents) do
+        rawset(t, i, x)
+    end
+    rawset(t, k, v)
+end
+
 function _M.decode(json_str)
     -- Reuse the existing qd.parse path to get a Doc with stable buffer hold.
     local doc = qd.parse(json_str)
@@ -226,5 +297,9 @@ function _M.decode(json_str)
         error("quickdecode: top-level JSON value is not an object or array")
     end
 end
+
+-- Test-only exports for metatable identity checks.
+_M._LazyObject = LazyObject
+_M._LazyArray  = LazyArray
 
 return _M
