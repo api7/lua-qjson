@@ -18,15 +18,15 @@ proptest! {
         let mut b = Vec::new();
         let ra = ScalarScanner::scan(input.as_bytes(), &mut a);
         let rb = Avx2Scanner::scan(input.as_bytes(), &mut b);
-        // Both paths run the same scan_emit_resume + validate_brackets
-        // pipeline, so Result equality is required: same Ok/Err verdict
-        // AND same error offset when Err.
+        // Both scanners must agree on Ok vs Err (and on the error offset).
         prop_assert_eq!(&ra, &rb, "scan results differ for {:?}", input);
-        // Indices are produced entirely by scan_emit_resume (which walks
-        // through end-of-buffer before any Err) and are not modified by
-        // validate_brackets, so both `a` and `b` reflect the full emit
-        // regardless of whether the final result was Ok or Err.
-        prop_assert_eq!(&a, &b, "indices differ for {:?}", input);
+        // On success, indices must be identical. On error, the partial
+        // emit may differ: the fused scalar (scan_and_validate) aborts at
+        // the first bracket mismatch, while AVX2 emits all structural
+        // chars before validate_brackets runs. Only compare on Ok.
+        if ra.is_ok() {
+            prop_assert_eq!(&a, &b, "indices differ for {:?}", input);
+        }
     }
 }
 
