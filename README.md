@@ -116,35 +116,3 @@ methodology + reproduction command.
 ```sh
 make bench       # quickdecode vs cjson
 ```
-
-## Roadmap / Deferred
-
-Items intentionally pushed out of the first implementation. Each will be picked up individually.
-
-- **SmallVec fast path for small documents (< 4 KB)** — avoid heap allocation for `indices` on tiny inputs.
-- **SIMD-accelerated backslash search** in the `decode_string` fast path.
-- **`lexical` fast float parser** if `<f64>::from_str` benchmarks as a bottleneck.
-- **Lossless 64-bit integer mode** — return cdata `int64_t` to LuaJIT to preserve precision > 2⁵³.
-- **Skip-cache LRU eviction** — only if memory pressure on huge documents proves problematic in practice.
-- **Path-position info on Phase 1 errors** — currently only an opaque `QJD_PARSE_ERROR`.
-- **Large bench fixtures** — spec §9.3 lists `large_dump.json` (~20 MB) and `deep_nest.json` (depth stress test); not yet committed. Only `small_api.json` and `medium_resp.json` ship today.
-- **`structural_mask_chunk` via shuffle-based set check** — the current AVX2 scanner does 7 `_mm256_cmpeq_epi8` + `_mm256_movemask_epi8` per chunk half (one per structural char in `{}[]:,"`). A single `_mm256_shuffle_epi8` against a 16-byte LUT plus one cmpeq can do the same set membership in 2-3 ops per half. Estimated 15-25% scanner speedup on dense-structural workloads. Not on the hot path for string-heavy payloads (those already short-circuit via the fast path).
-- **Adaptive `out.reserve` in scanners** — `out.reserve(buf.len() / 6)` is calibrated for object-heavy JSON. On string-heavy multimodal payloads (one big content array, mostly base64) the actual emit rate is <1 structural per 1 KB, so we over-reserve by 100x+. Mainly a memory hygiene concern (mmap'd pages stay lazily faulted), <5% throughput effect.
-- **AVX-512 scanner backend** — 64-byte → 128-byte chunks. On the 1 MB string-heavy bench, profile shows scan throughput is L3-bandwidth-bound, so realistic win is ~1.5–1.8×, not a clean 2×; larger wins need fixtures that fit in L1/L2. Needs `avx512bw` + `vpclmulqdq` (Sapphire Rapids, Zen 4+).
-- **`cargo fmt --check` not enforced** — `make lint` runs clippy only. The codebase uses intentional manual column alignment in struct definitions and compact single-line literals that default rustfmt would reflow. Skip rather than reformat until a project-wide style decision is made.
-- **`validate_brackets` fusion in SIMD scanners** — fused into `ScalarScanner` via `scan_and_validate`; AVX2 and NEON scanners still run the two-pass emit + `validate_brackets` design. A working implementation was prototyped in [#18](https://github.com/membphis/lua-quick-decode/pull/18) (closed): `emit_bits_validate` carries a depth stack inline and dispatches on `buf[pos]` per emitted bit, eliminating the second pass over `indices`. Measured ±2% (within noise) on the multimodal bench because the per-emit `buf[pos]` lookup adds back roughly what the eliminated pass saved, and the structural-char density is too low for the savings to dominate. Revisit only when a structurally-dense fixture (config / JSONL / object-shape JSON with hundreds of keys per chunk) is added to the bench harness and profiles flag `validate_brackets` as the bottleneck.
-- **`memchr2` cross-chunk jump for very long string interiors** — the AVX2 in-string fast probe (issue #5) drops per-chunk cost from ~25 to ~10 ops but still pays ALU work for every 64-byte chunk in a string. A `memchr2(b'"', b'\\')` jump can approach memory bandwidth on multi-MB single-string payloads. Deferred until a workload that benefits clearly emerges; needs careful `bs_carry` reasoning across the jump.
-- **Stateful O(N) iterator FFI** — current `qd.pairs` and the `__newindex`
-  materialization path walk the object cursor from the start on every step,
-  giving O(N²) total cost for full enumeration. Acceptable for the "read a
-  few keys" use case the library is optimized for; full-iteration workloads
-  (e.g. encoding a deeply-keyed object that has been materialized) would
-  benefit from a `qjd_iter_init` / `qjd_iter_next` pair that holds position
-  state across calls.
-- **Lazy-table read overhead vs path API** — `qd.decode + t.field x3` lands
-  ~30–40% behind `qd.parse:get_str` on small-to-medium payloads, converging
-  to parity at multi-MB sizes. The gap is structural (per-access `__index`
-  metamethod dispatch + transient cdata allocation for nested wraps). Worth
-  attempting if a workload-driven need surfaces; current measured cost is
-  still 14× faster than `cjson.decode` at 100 KB, so the lazy API is the
-  right default for migrating callers.
