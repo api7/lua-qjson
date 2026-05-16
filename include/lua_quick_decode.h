@@ -61,6 +61,7 @@ int qjd_cursor_get_f64  (const qjd_cursor*, const char* path, size_t path_len, d
 int qjd_cursor_get_bool (const qjd_cursor*, const char* path, size_t path_len, int*     out);
 int qjd_cursor_typeof   (const qjd_cursor*, const char* path, size_t path_len, int*     out);
 int qjd_cursor_len      (const qjd_cursor*, const char* path, size_t path_len, size_t*  out);
+int qjd_cursor_bytes    (const qjd_cursor*, size_t* byte_start, size_t* byte_end);
 
 #ifdef __cplusplus
 }
