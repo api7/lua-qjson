@@ -6,7 +6,12 @@
 
 local ffi = require("ffi")
 local C   = ffi.load("quickdecode")
-local qd  = require("quickdecode")
+-- Defer the require to avoid a circular dependency when quickdecode.lua
+-- re-exports this module.  By the time _M.decode is called, quickdecode
+-- is already registered in package.loaded.
+local function get_qd()
+    return require("quickdecode")
+end
 
 -- Optional cjson bridge: reuse its sentinels when available so callers'
 -- `v == cjson.null` comparisons keep working unchanged.
@@ -261,7 +266,7 @@ end
 
 function _M.decode(json_str)
     -- Reuse the existing qd.parse path to get a Doc with stable buffer hold.
-    local doc = qd.parse(json_str)
+    local doc = get_qd().parse(json_str)
     -- Open the root cursor into cur_box, then copy into a dedicated box owned
     -- by the view so that later child lookups (which reuse child_box) do not
     -- alias the root cursor's backing storage.
