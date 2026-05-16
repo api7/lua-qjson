@@ -200,3 +200,24 @@ describe("qt.materialize", function()
         assert.are.equal(raw, qt.materialize(raw))
     end)
 end)
+
+describe("qd.encode — lazy proxy substring fast path", function()
+    it("re-emits the original JSON for an unmodified LazyObject", function()
+        local src = '{"a":1,"b":[2,3],"c":"x"}'
+        local t = qt.decode(src)
+        assert.are.equal(src, qt.encode(t))
+    end)
+
+    it("re-emits the original JSON for an unmodified LazyArray", function()
+        local src = '[10,20,{"k":"v"}]'
+        local t = qt.decode(src)
+        assert.are.equal(src, qt.encode(t))
+    end)
+
+    it("trims leading/trailing whitespace at the boundary", function()
+        local src = '  {"a":1}  '
+        local t = qt.decode(src)
+        -- byte span is the value, not its outer whitespace.
+        assert.are.equal('{"a":1}', qt.encode(t))
+    end)
+end)
