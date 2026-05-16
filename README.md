@@ -67,6 +67,12 @@ mixed trees. Callers cannot pass a lazy proxy directly to `cjson.encode`
 `qd.materialize(t)` to get a plain Lua table that any third-party encoder
 can handle.
 
+**LuaJIT compat-52 caveat.** `for k, v in pairs/ipairs(t)` and `#t` on a lazy
+proxy rely on `__pairs` / `__ipairs` / `__len`, which LuaJIT only invokes when
+built with `LUAJIT_ENABLE_LUA52COMPAT` (OpenResty's default). On a stock LuaJIT
+5.1, use the explicit `qd.pairs(t)`, `qd.ipairs(t)`, and `qd.len(t)` helpers
+— they work on both builds.
+
 ## Testing — Lua
 
 Requires LuaJIT + busted + lua-cjson installed system-wide.

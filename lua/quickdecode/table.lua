@@ -206,6 +206,18 @@ end
 LazyObject.__len = lazy_len
 LazyArray.__len  = lazy_len
 
+-- Public fallback for `#t` on a lazy proxy. Vanilla LuaJIT 5.1 does not invoke
+-- __len on tables (only userdata) unless built with LUAJIT_ENABLE_LUA52COMPAT
+-- (OpenResty's default). Callers running on a non-compat LuaJIT must use
+-- qt.len(t) — same role qt.pairs / qt.ipairs play for __pairs / __ipairs.
+function _M.len(t)
+    local mt = getmetatable(t)
+    if mt == LazyObject or mt == LazyArray then
+        return lazy_len(t)
+    end
+    return #t
+end
+
 -- Materialize all key/value pairs from a LazyObject view into a plain list.
 -- Returns a sequence of {k, v} pairs. The view is not mutated here; mutation
 -- happens in __newindex after the walk completes successfully.

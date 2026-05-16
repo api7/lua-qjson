@@ -69,18 +69,48 @@ describe("LazyArray __index", function()
     end)
 end)
 
-describe("__len", function()
+-- LuaJIT 5.1 only invokes __len on userdata; it ignores the metamethod on
+-- tables unless built with LUAJIT_ENABLE_LUA52COMPAT (OpenResty's default).
+-- Probe once so the `#t` cases only run where they can pass; qt.len(t) is
+-- the supported path everywhere.
+local LJ52_LEN = (#setmetatable({}, {__len = function() return 99 end}) == 99)
+
+describe("qt.len", function()
     it("counts object keys", function()
         local t = qt.decode('{"a":1,"b":2,"c":3}')
-        assert.are.equal(3, #t)
+        assert.are.equal(3, qt.len(t))
     end)
 
     it("counts array elements", function()
         local t = qt.decode('[10,20,30,40]')
-        assert.are.equal(4, #t)
+        assert.are.equal(4, qt.len(t))
     end)
 
     it("returns 0 for empty containers", function()
+        assert.are.equal(0, qt.len(qt.decode('{}')))
+        assert.are.equal(0, qt.len(qt.decode('[]')))
+    end)
+
+    it("falls back to # on a plain table", function()
+        assert.are.equal(3, qt.len({10, 20, 30}))
+    end)
+end)
+
+describe("__len (LJ52 only)", function()
+    it("counts object keys via #t", function()
+        if not LJ52_LEN then return pending("LuaJIT built without LUAJIT_ENABLE_LUA52COMPAT") end
+        local t = qt.decode('{"a":1,"b":2,"c":3}')
+        assert.are.equal(3, #t)
+    end)
+
+    it("counts array elements via #t", function()
+        if not LJ52_LEN then return pending("LuaJIT built without LUAJIT_ENABLE_LUA52COMPAT") end
+        local t = qt.decode('[10,20,30,40]')
+        assert.are.equal(4, #t)
+    end)
+
+    it("returns 0 for empty containers via #t", function()
+        if not LJ52_LEN then return pending("LuaJIT built without LUAJIT_ENABLE_LUA52COMPAT") end
         assert.are.equal(0, #qt.decode('{}'))
         assert.are.equal(0, #qt.decode('[]'))
     end)

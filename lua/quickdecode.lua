@@ -189,6 +189,7 @@ _M.encode         = _lazy.encode
 _M.materialize    = _lazy.materialize
 _M.pairs          = _lazy.pairs
 _M.ipairs         = _lazy.ipairs
+_M.len            = _lazy.len
 _M.null           = _lazy.null
 _M.empty_array_mt = _lazy.empty_array_mt
 _M._LazyObject    = _lazy._LazyObject
