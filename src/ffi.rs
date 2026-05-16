@@ -728,6 +728,52 @@ pub unsafe extern "C" fn qjd_cursor_bytes(
     })
 }
 
+/// Write the i-th object entry's key (decoded into the doc's scratch
+/// buffer) and value cursor into the out parameters.
+///
+/// Returns `QJD_TYPE_MISMATCH` when the cursor is not an object, or
+/// `QJD_NOT_FOUND` when `i` is past the end.
+///
+/// # Safety
+///
+/// See the module-level [shared safety contract](self#shared-safety-contract).
+/// `c` must point to a live cursor; `key_ptr`, `key_len`, and `value_out`
+/// must be non-NULL and writable. The `(*key_ptr, *key_len)` pair is
+/// invalidated by the next `qjd_get_str` / `qjd_cursor_get_str` /
+/// `qjd_cursor_object_entry_at` call on the same document (scratch reuse).
+#[no_mangle]
+pub unsafe extern "C" fn qjd_cursor_object_entry_at(
+    c: *const qjd_cursor, i: usize,
+    key_ptr: *mut *const u8, key_len: *mut usize,
+    value_out: *mut qjd_cursor,
+) -> c_int {
+    ffi_catch!({
+        if key_ptr.is_null() || key_len.is_null() || value_out.is_null() {
+            return qjd_err::QJD_INVALID_ARG as c_int;
+        }
+        let (d, cur) = match cursor_to_internal(c) {
+            Ok(x) => x, Err(e) => return e as c_int,
+        };
+        let (key_idx_start, value_cur) = match d.nth_object_entry(cur, i) {
+            Ok(x) => x, Err(e) => return e as c_int,
+        };
+        // Decode the key: it sits at indices[key_idx_start..=key_idx_start+1]
+        // — open quote at key_idx_start, close quote at key_idx_start+1.
+        let open_pos = d.indices[key_idx_start as usize] as usize;
+        let close_pos = d.indices[(key_idx_start + 1) as usize] as usize;
+        let mut scratch = d.scratch.borrow_mut();
+        match string::decode_string(d.buf, open_pos + 1, close_pos, &mut scratch) {
+            Ok((p, n)) => {
+                *key_ptr = p;
+                *key_len = n;
+                *value_out = internal_to_cursor((*c).doc, value_cur);
+                qjd_err::QJD_OK as c_int
+            }
+            Err(e) => e as c_int,
+        }
+    })
+}
+
 /// Test-only export that forces a Rust panic to verify the FFI panic barrier
 /// converts it to `QJD_OOM` instead of unwinding across the boundary.
 ///
