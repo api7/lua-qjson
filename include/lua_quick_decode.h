@@ -62,6 +62,9 @@ int qjd_cursor_get_bool (const qjd_cursor*, const char* path, size_t path_len, i
 int qjd_cursor_typeof   (const qjd_cursor*, const char* path, size_t path_len, int*     out);
 int qjd_cursor_len      (const qjd_cursor*, const char* path, size_t path_len, size_t*  out);
 int qjd_cursor_bytes    (const qjd_cursor*, size_t* byte_start, size_t* byte_end);
+int qjd_cursor_object_entry_at(const qjd_cursor*, size_t i,
+                                const uint8_t** key_ptr, size_t* key_len,
+                                qjd_cursor* value_out);
 
 #ifdef __cplusplus
 }

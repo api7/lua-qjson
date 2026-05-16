@@ -66,6 +66,53 @@ impl<'a> Document<'a> {
         Ok(p)
     }
 
+    /// Find the i-th key/value entry of an object cursor. Returns the
+    /// indices position of the key (so the caller can decode it via the
+    /// existing string-decode path) and the value's `Cursor`.
+    ///
+    /// Returns `QJD_TYPE_MISMATCH` for non-object cursors, `QJD_NOT_FOUND`
+    /// when `i` is past the end.
+    pub(crate) fn nth_object_entry(&self, cur: Cursor, n: usize) -> Result<(u32, Cursor), qjd_err> {
+        let pos = self.indices[cur.idx_start as usize] as usize;
+        let b = *self.buf.get(pos).ok_or(qjd_err::QJD_PARSE_ERROR)?;
+        if b != b'{' {
+            return Err(qjd_err::QJD_TYPE_MISMATCH);
+        }
+        // Mirror cursor_len's walk, but stop at the n-th child rather than counting.
+        let closer_pos = self.indices[cur.idx_end as usize] as usize;
+        let mut p = pos + 1;
+        while p < closer_pos && matches!(self.buf[p], b' '|b'\t'|b'\n'|b'\r') {
+            p += 1;
+        }
+        if p == closer_pos {
+            return Err(qjd_err::QJD_NOT_FOUND);
+        }
+        let mut i = cur.idx_start + 1;
+        let end = cur.idx_end;
+        let mut count: usize = 0;
+        loop {
+            // For objects, the key occupies indices[i..=i+1] (open & close quote);
+            // the value cursor starts at i+3 (after the colon at i+2).
+            let key_idx_start = i;
+            let value_idx_start = i + 3;
+            let (cursor_end, skip_end) = crate::cursor::find_value_span(self, value_idx_start)?;
+            if count == n {
+                return Ok((key_idx_start, Cursor { idx_start: value_idx_start, idx_end: cursor_end }));
+            }
+            count += 1;
+            let after_pos = self.indices[skip_end as usize] as usize;
+            if after_pos >= self.buf.len() { return Err(qjd_err::QJD_PARSE_ERROR); }
+            match self.buf[after_pos] {
+                b',' => {
+                    i = skip_end + 1;
+                    if i > end { return Err(qjd_err::QJD_NOT_FOUND); }
+                }
+                b'}' => return Err(qjd_err::QJD_NOT_FOUND),
+                _ => return Err(qjd_err::QJD_PARSE_ERROR),
+            }
+        }
+    }
+
     /// Count direct children of the container at `cur`.
     /// Returns QJD_TYPE_MISMATCH for non-container cursors.
     pub(crate) fn cursor_len(&self, cur: Cursor) -> Result<usize, qjd_err> {
