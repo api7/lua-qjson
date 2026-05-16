@@ -668,6 +668,65 @@ pub unsafe extern "C" fn qjd_cursor_len(
     })
 }
 
+/// Write the original-buffer byte range `[byte_start, byte_end)` that the
+/// cursor's value occupies. For containers, the range spans the opening
+/// bracket through the closing bracket inclusive (so `byte_end` is one past
+/// the close char). For scalars, leading and trailing whitespace and
+/// surrounding separators are stripped (same convention as `scalar_bytes`).
+///
+/// # Safety
+///
+/// See the module-level [shared safety contract](self#shared-safety-contract).
+/// `c` must point to a cursor produced by an earlier `qjd_*` call whose
+/// document is still alive; `byte_start` and `byte_end` must be non-NULL
+/// and writable.
+#[no_mangle]
+pub unsafe extern "C" fn qjd_cursor_bytes(
+    c: *const qjd_cursor, byte_start: *mut usize, byte_end: *mut usize,
+) -> c_int {
+    ffi_catch!({
+        if byte_start.is_null() || byte_end.is_null() {
+            return qjd_err::QJD_INVALID_ARG as c_int;
+        }
+        let (d, cur) = match cursor_to_internal(c) {
+            Ok(x) => x, Err(e) => return e as c_int,
+        };
+        let pos = d.indices[cur.idx_start as usize] as usize;
+        let lead = match d.buf.get(pos) {
+            Some(b) => *b,
+            None => return qjd_err::QJD_PARSE_ERROR as c_int,
+        };
+        match lead {
+            b'{' | b'[' | b'"' => {
+                // Container or string: span runs from opener to the matching
+                // closer, inclusive.
+                let end = d.indices[cur.idx_end as usize] as usize;
+                if end >= d.buf.len() {
+                    return qjd_err::QJD_PARSE_ERROR as c_int;
+                }
+                *byte_start = pos;
+                *byte_end = end + 1;
+                qjd_err::QJD_OK as c_int
+            }
+            _ => {
+                // Scalar: reuse scalar_bytes' start-and-end calculation.
+                let start = match d.find_scalar_start(cur.idx_start) {
+                    Ok(s) => s, Err(e) => return e as c_int,
+                };
+                let end = d.indices[cur.idx_start as usize] as usize;
+                if end < start {
+                    return qjd_err::QJD_PARSE_ERROR as c_int;
+                }
+                let mut e = end;
+                while e > start && matches!(d.buf[e - 1], b' '|b'\t'|b'\n'|b'\r') { e -= 1; }
+                *byte_start = start;
+                *byte_end = e;
+                qjd_err::QJD_OK as c_int
+            }
+        }
+    })
+}
+
 /// Test-only export that forces a Rust panic to verify the FFI panic barrier
 /// converts it to `QJD_OOM` instead of unwinding across the boundary.
 ///
