@@ -56,14 +56,13 @@ local LazyObject = {}
 local LazyArray  = {}
 
 -- Build a new lazy view for a child container cursor.
--- child_cursor is child_box[0] (a reference into child_box's backing memory).
--- We get the byte span via child_cursor, then ffi.copy from child_box into a
--- freshly-allocated per-view own_box so future child_box overwrites don't
--- corrupt this view's cursor.
-local function wrap_child(parent_view, child_cursor)
-    C.qjd_cursor_bytes(child_cursor, sz_a, sz_b)
+-- src_box is an FFI cdata `qjd_cursor[1]`; src_box[0] is the cursor whose
+-- data we copy into a fresh per-view allocation so the new view's _cur
+-- survives later overwrites of src_box.
+local function wrap_child(parent_view, src_box)
+    C.qjd_cursor_bytes(src_box[0], sz_a, sz_b)
     local own_box = ffi.new("qjd_cursor[1]")
-    ffi.copy(own_box, child_box, ffi.sizeof("qjd_cursor"))
+    ffi.copy(own_box, src_box, ffi.sizeof("qjd_cursor"))
     return {
         _doc     = parent_view._doc,
         _cur_box = own_box,        -- keep cdata alive
@@ -71,6 +70,35 @@ local function wrap_child(parent_view, child_cursor)
         _bs      = tonumber(sz_a[0]),
         _be      = tonumber(sz_b[0]),
     }
+end
+
+-- Decode the value at src_box[0] into a Lua value.
+-- src_box is a `qjd_cursor[1]`; for container types, a new view is created
+-- via wrap_child so the caller's box can be freely reused afterwards.
+local function decode_cursor(parent_view, src_box)
+    local trc = C.qjd_cursor_typeof(src_box[0], "", 0, type_box)
+    if not check(trc) then return nil end
+    local t = type_box[0]
+    if t == T_STR then
+        local rrc = C.qjd_cursor_get_str(src_box[0], "", 0, strp_box, size_box)
+        if not check(rrc) then return nil end
+        return ffi.string(strp_box[0], size_box[0])
+    elseif t == T_NUM then
+        local rrc = C.qjd_cursor_get_f64(src_box[0], "", 0, f64_box)
+        if not check(rrc) then return nil end
+        return f64_box[0]
+    elseif t == T_BOOL then
+        local rrc = C.qjd_cursor_get_bool(src_box[0], "", 0, bool_box)
+        if not check(rrc) then return nil end
+        return bool_box[0] ~= 0
+    elseif t == T_NULL then
+        return _M.null
+    elseif t == T_OBJ then
+        return setmetatable(wrap_child(parent_view, src_box), LazyObject)
+    elseif t == T_ARR then
+        return setmetatable(wrap_child(parent_view, src_box), LazyArray)
+    end
+    return nil
 end
 
 -- Resolve a child cursor at `key` (object) and decode it into a Lua value.
@@ -81,30 +109,7 @@ local function read_object_field(self, key)
     -- itself stored in root_box's backing memory in the decode caller).
     local rc = C.qjd_cursor_field(self._cur, key, #key, child_box)
     if not check(rc) then return nil end
-    local trc = C.qjd_cursor_typeof(child_box[0], "", 0, type_box)
-    if not check(trc) then return nil end
-    local t = type_box[0]
-    if t == T_STR then
-        local rrc = C.qjd_cursor_get_str(child_box[0], "", 0, strp_box, size_box)
-        if not check(rrc) then return nil end
-        return ffi.string(strp_box[0], size_box[0])
-    elseif t == T_NUM then
-        local rrc = C.qjd_cursor_get_f64(child_box[0], "", 0, f64_box)
-        if not check(rrc) then return nil end
-        return f64_box[0]
-    elseif t == T_BOOL then
-        local rrc = C.qjd_cursor_get_bool(child_box[0], "", 0, bool_box)
-        if not check(rrc) then return nil end
-        return bool_box[0] ~= 0
-    elseif t == T_NULL then
-        return _M.null
-    end
-    if t == T_OBJ then
-        return setmetatable(wrap_child(self, child_box[0]), LazyObject)
-    elseif t == T_ARR then
-        return setmetatable(wrap_child(self, child_box[0]), LazyArray)
-    end
-    return nil
+    return decode_cursor(self, child_box)
 end
 
 LazyObject.__index = read_object_field
@@ -118,32 +123,39 @@ local function read_array_index(self, key)
     if i < 0 or i ~= math.floor(i) then return nil end
     local rc = C.qjd_cursor_index(self._cur, i, child_box)
     if not check(rc) then return nil end
-    local trc = C.qjd_cursor_typeof(child_box[0], "", 0, type_box)
-    if not check(trc) then return nil end
-    local t = type_box[0]
-    if t == T_STR then
-        local rrc = C.qjd_cursor_get_str(child_box[0], "", 0, strp_box, size_box)
-        if not check(rrc) then return nil end
-        return ffi.string(strp_box[0], size_box[0])
-    elseif t == T_NUM then
-        local rrc = C.qjd_cursor_get_f64(child_box[0], "", 0, f64_box)
-        if not check(rrc) then return nil end
-        return f64_box[0]
-    elseif t == T_BOOL then
-        local rrc = C.qjd_cursor_get_bool(child_box[0], "", 0, bool_box)
-        if not check(rrc) then return nil end
-        return bool_box[0] ~= 0
-    elseif t == T_NULL then
-        return _M.null
-    elseif t == T_OBJ then
-        return setmetatable(wrap_child(self, child_box[0]), LazyObject)
-    elseif t == T_ARR then
-        return setmetatable(wrap_child(self, child_box[0]), LazyArray)
-    end
-    return nil
+    return decode_cursor(self, child_box)
 end
 
 LazyArray.__index = read_array_index
+
+-- Iterator function for lazy_object_iter: advances through object entries by
+-- integer index, returning key/value pairs in source order.
+local function lazy_object_iter(state, _prev_key)
+    local i = state.i
+    state.i = i + 1
+    local rc = C.qjd_cursor_object_entry_at(
+        state.view._cur, i, strp_box, size_box, child_box
+    )
+    if rc == QJD_NOT_FOUND then return nil end
+    check(rc)
+    local k = ffi.string(strp_box[0], size_box[0])
+    local v = decode_cursor(state.view, child_box)
+    return k, v
+end
+
+function LazyObject.__pairs(t)
+    return lazy_object_iter, { view = t, i = 0 }, nil
+end
+
+function _M.pairs(t)
+    local mt = getmetatable(t)
+    if mt == LazyObject then
+        return LazyObject.__pairs(t)
+    elseif mt == LazyArray then
+        return _M.ipairs(t)
+    end
+    return pairs(t)
+end
 
 local function lazy_len(self)
     local rc = C.qjd_cursor_len(self._cur, "", 0, size_box)
