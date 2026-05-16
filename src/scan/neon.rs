@@ -176,6 +176,24 @@ unsafe fn scan_neon_impl(buf: &[u8], out: &mut Vec<u32>) -> Result<(), usize> {
             if (quote_probe | backslash_probe) == 0 {
                 bs_carry = 0;
                 i += 64;
+                // Cross-chunk jump: with no quote/backslash in the chunk we just
+                // skipped, in_string polarity cannot flip and no escape can start,
+                // so we can use memchr2 to skip ahead to the 64B-aligned chunk
+                // containing the next interesting byte. Bounded by the last full
+                // 64B chunk; the <64B tail is handled by the scalar resume path.
+                // The 4 KB remaining-buffer threshold suppresses the memchr2
+                // call entirely on small payloads (≤4 KB total), where the per-
+                // call libc overhead exceeds the in-string probe loop it would
+                // replace. On larger payloads only the last 4 KB foregoes the
+                // jump — negligible against MB-scale gains.
+                if i + 4096 <= buf.len() {
+                    let scan_end = buf.len() - (buf.len() % 64);
+                    let jump = match memchr::memchr2(b'"', b'\\', &buf[i..scan_end]) {
+                        Some(rel) => rel & !63,
+                        None      => scan_end - i,
+                    };
+                    i += jump;
+                }
                 continue;
             }
         }
