@@ -147,6 +147,28 @@ function LazyObject.__pairs(t)
     return lazy_object_iter, { view = t, i = 0 }, nil
 end
 
+local function lazy_array_iter(state, _prev_i)
+    local i = state.i
+    local rc = C.qjd_cursor_index(state.view._cur, i, child_box)
+    if rc == QJD_NOT_FOUND then return nil end
+    check(rc)
+    state.i = i + 1
+    local v = decode_cursor(state.view, child_box)
+    return i + 1, v
+end
+
+function LazyArray.__ipairs(t)
+    return lazy_array_iter, { view = t, i = 0 }, 0
+end
+
+function _M.ipairs(t)
+    local mt = getmetatable(t)
+    if mt == LazyArray then
+        return LazyArray.__ipairs(t)
+    end
+    return ipairs(t)
+end
+
 function _M.pairs(t)
     local mt = getmetatable(t)
     if mt == LazyObject then

@@ -113,3 +113,28 @@ describe("__pairs / qd.pairs over LazyObject", function()
         assert.are.equal(0, count)
     end)
 end)
+
+describe("__ipairs / qd.ipairs over LazyArray", function()
+    it("iterates elements 1..n in order", function()
+        local t = qt.decode('[10,20,30]')
+        local got = {}
+        for i, v in qt.ipairs(t) do got[i] = v end
+        assert.are.same({10,20,30}, got)
+    end)
+
+    it("yields lazy proxies for nested containers", function()
+        local t = qt.decode('[{"a":1},{"a":2}]')
+        local seen = {}
+        for _, v in qt.ipairs(t) do
+            assert.is_table(v)
+            seen[#seen+1] = v.a
+        end
+        assert.are.same({1, 2}, seen)
+    end)
+
+    it("handles empty array", function()
+        local count = 0
+        for _ in qt.ipairs(qt.decode('[]')) do count = count + 1 end
+        assert.are.equal(0, count)
+    end)
+end)
