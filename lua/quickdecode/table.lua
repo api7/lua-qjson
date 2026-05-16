@@ -60,7 +60,7 @@ local LazyArray  = {}
 local function read_object_field(self, key)
     if type(key) ~= "string" then return nil end
     -- Use child_box so the lookup result does not alias self._cur (which is
-    -- itself stored in cur_box's backing memory in the decode caller).
+    -- itself stored in root_box's backing memory in the decode caller).
     local rc = C.qjd_cursor_field(self._cur, key, #key, child_box)
     if not check(rc) then return nil end
     local trc = C.qjd_cursor_typeof(child_box[0], "", 0, type_box)
@@ -103,10 +103,14 @@ function _M.decode(json_str)
     -- Determine root container kind (object/array) and wrap accordingly.
     -- Both have meaningful byte spans for encode.
     local trc = C.qjd_cursor_typeof(root_box[0], "", 0, type_box)
-    check(trc)
+    if not check(trc) then
+        error("quickdecode: root typeof failed")
+    end
     local rt = type_box[0]
     local brc = C.qjd_cursor_bytes(root_box[0], sz_a, sz_b)
-    check(brc)
+    if not check(brc) then
+        error("quickdecode: root byte-span failed")
+    end
     local view = {
         _doc     = doc,
         _cur_box = root_box,   -- keep the box alive; _cur is a stable reference
