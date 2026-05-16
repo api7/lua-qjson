@@ -79,3 +79,53 @@ fn cursor_field_with_dotted_key() {
 
     unsafe { qjd_free(d) };
 }
+
+// Regression: walk_children must visit the trailing scalar (last element has no
+// structural marker of its own — `indices[end]` is the parent closer).
+// Before the fix, `while i < end` stopped one step early and index 2 returned
+// QJD_NOT_FOUND for a 3-element all-scalar array.
+#[test]
+fn walk_children_trailing_scalar_integer() {
+    let d = parse(b"[10,20,30]");
+    let mut c = std::mem::MaybeUninit::<qjd_cursor>::uninit();
+    let empty = b"";
+    unsafe { qjd_open(d, empty.as_ptr() as *const i8, 0, c.as_mut_ptr()) };
+    let c = unsafe { c.assume_init() };
+
+    // Index 2 is the trailing element `30`.
+    let mut sub = std::mem::MaybeUninit::<qjd_cursor>::uninit();
+    let rc = unsafe { qjd_cursor_index(&c, 2, sub.as_mut_ptr()) };
+    assert_eq!(rc, 0, "qjd_cursor_index([2]) must succeed");
+    let sub = unsafe { sub.assume_init() };
+
+    let mut v: i64 = 0;
+    let rc = unsafe { qjd_cursor_get_i64(&sub, empty.as_ptr() as *const i8, 0, &mut v) };
+    assert_eq!(rc, 0, "qjd_cursor_get_i64 on trailing element must succeed");
+    assert_eq!(v, 30);
+
+    unsafe { qjd_free(d) };
+}
+
+// Regression: trailing scalar with non-numeric type — ensures walk_children
+// visits it and type information is correct (not silently skipped).
+#[test]
+fn walk_children_trailing_scalar_bool() {
+    let d = parse(b"[1,\"x\",true]");
+    let mut c = std::mem::MaybeUninit::<qjd_cursor>::uninit();
+    let empty = b"";
+    unsafe { qjd_open(d, empty.as_ptr() as *const i8, 0, c.as_mut_ptr()) };
+    let c = unsafe { c.assume_init() };
+
+    // Index 2 is the trailing element `true`.
+    let mut sub = std::mem::MaybeUninit::<qjd_cursor>::uninit();
+    let rc = unsafe { qjd_cursor_index(&c, 2, sub.as_mut_ptr()) };
+    assert_eq!(rc, 0, "qjd_cursor_index([2]) must succeed");
+    let sub = unsafe { sub.assume_init() };
+
+    let mut b: c_int = -1;
+    let rc = unsafe { qjd_cursor_get_bool(&sub, empty.as_ptr() as *const i8, 0, &mut b) };
+    assert_eq!(rc, 0, "qjd_cursor_get_bool on trailing `true` must succeed");
+    assert_eq!(b, 1);
+
+    unsafe { qjd_free(d) };
+}
