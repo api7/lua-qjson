@@ -298,6 +298,30 @@ function _M.decode(json_str)
     end
 end
 
+local function materialize(v)
+    local mt = (type(v) == "table") and getmetatable(v) or nil
+    if mt == LazyObject then
+        local out = {}
+        for _, kv in ipairs(materialize_object_contents(v)) do
+            out[kv[1]] = materialize(kv[2])
+        end
+        return out
+    elseif mt == LazyArray then
+        local raw = materialize_array_contents(v)
+        local out = {}
+        for i, x in ipairs(raw) do
+            out[i] = materialize(x)
+        end
+        if #out == 0 then
+            setmetatable(out, _M.empty_array_mt)
+        end
+        return out
+    end
+    return v
+end
+
+_M.materialize = materialize
+
 -- Test-only exports for metatable identity checks.
 _M._LazyObject = LazyObject
 _M._LazyArray  = LazyArray
