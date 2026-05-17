@@ -1,6 +1,7 @@
 //! lua-quick-decode: Rust JSON decoder for LuaJIT FFI consumers.
 
 pub mod error;
+pub mod options;
 pub(crate) mod scan;
 mod skip_cache;
 mod doc;
