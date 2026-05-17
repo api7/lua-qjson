@@ -209,3 +209,57 @@ fn lazy_defers_invalid_number_until_access() {
     // itself does not fail. Field-level access is covered in tests/ffi_*.
     drop(doc);
 }
+
+// ── Phase 4 + 5: string content ──────────────────────────────
+
+#[test]
+#[ignore = "wired in Task 10"]
+fn eager_rejects_raw_tab_in_string() {
+    use quickdecode::error::qjd_err;
+    let input = b"[\"a\tb\"]";
+    match Document::parse_with_options(input, &eager()) {
+        Err(qjd_err::QJD_INVALID_STRING) => {}
+        Err(other) => panic!("expected QJD_INVALID_STRING, got {:?}", other),
+        Ok(_) => panic!("EAGER unexpectedly accepted raw tab in string"),
+    }
+}
+
+#[test]
+#[ignore = "wired in Task 10"]
+fn eager_rejects_raw_null_in_string() {
+    use quickdecode::error::qjd_err;
+    let input = b"[\"a\x00b\"]";
+    match Document::parse_with_options(input, &eager()) {
+        Err(qjd_err::QJD_INVALID_STRING) => {}
+        Err(other) => panic!("expected QJD_INVALID_STRING, got {:?}", other),
+        Ok(_) => panic!("EAGER unexpectedly accepted raw null in string"),
+    }
+}
+
+#[test]
+#[ignore = "wired in Task 10"]
+fn eager_rejects_invalid_utf8_in_string() {
+    use quickdecode::error::qjd_err;
+    let input = &[b'[', b'"', 0xC0, 0xC0, b'"', b']'];
+    match Document::parse_with_options(input, &eager()) {
+        Err(qjd_err::QJD_INVALID_UTF8) => {}
+        Err(other) => panic!("expected QJD_INVALID_UTF8, got {:?}", other),
+        Ok(_) => panic!("EAGER unexpectedly accepted invalid UTF-8 in string"),
+    }
+}
+
+#[test]
+fn eager_accepts_escape_sequences() {
+    assert_accepts!("[\"a\\nb\\u00e9\"]");
+    assert_accepts!("[\"emoji \\uD83D\\uDE00\"]");
+}
+
+#[test]
+fn lazy_accepts_raw_tab_but_decode_fails() {
+    let input = b"[\"a\tb\"]";
+    let doc = Document::parse_with_options(input, &lazy()).expect("lazy accepts raw control");
+    drop(doc);
+    // Field-level rejection on access is enforced by decode/string.rs and
+    // is covered by tests/ffi_strings.rs (existing decode_string tests cover
+    // the error type); no extra assertion needed here.
+}

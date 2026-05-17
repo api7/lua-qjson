@@ -7,6 +7,7 @@ pub(crate) fn decode_string(
     buf: &[u8], start: usize, end: usize, scratch: &mut Vec<u8>,
 ) -> Result<(*const u8, usize), qjd_err> {
     let slice = &buf[start..end];
+    crate::validate::validate_string_span(slice)?;
     if memchr::memchr(b'\\', slice).is_none() {
         return Ok((slice.as_ptr(), slice.len()));
     }

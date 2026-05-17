@@ -7,6 +7,9 @@
 pub(crate) mod number;
 pub(crate) use number::validate_number;
 
+pub(crate) mod strings;
+pub(crate) use strings::validate_string_span;
+
 use crate::error::qjd_err;
 
 /// Verify that the maximum bracket-stack depth implied by `indices`
