@@ -90,6 +90,101 @@ pub(crate) fn validate_trailing(
     Ok(())
 }
 
+/// Walk `indices` and validate every scalar value (numbers + strings).
+/// Called only in EAGER mode.
+pub(crate) fn validate_eager_values(
+    buf: &[u8],
+    indices: &[u32],
+) -> Result<(), qjd_err> {
+    let mut i = 0;
+    while i + 1 < indices.len() {
+        let idx = indices[i];
+        if idx == u32::MAX { break; }
+        let pos = idx as usize;
+        let b = buf[pos];
+
+        // Strings: opening quote here, closing quote at indices[i+1].
+        // (The scanner emits BOTH quotes of a string in order.)
+        if b == b'"' {
+            let close = indices[i + 1] as usize;
+            // Defensive: scanner pairs quotes correctly, but guard anyway.
+            if close <= pos || close >= buf.len() || buf[close] != b'"' {
+                return Err(qjd_err::QJD_PARSE_ERROR);
+            }
+            let span = &buf[pos + 1 .. close];
+            strings::validate_string_span(span)?;
+            i += 2;
+            continue;
+        }
+
+        // Container brackets and `:`/`,` are not values; skip.
+        if matches!(b, b'{' | b'}' | b'[' | b']' | b':' | b',') {
+            i += 1;
+            continue;
+        }
+
+        // Should not happen: scanner only emits the 7 structural chars.
+        return Err(qjd_err::QJD_PARSE_ERROR);
+    }
+
+    // Scalar values (numbers, true, false, null) live in the gaps between
+    // structural offsets. Walk those gaps and dispatch.
+    validate_scalars_in_gaps(buf, indices)
+}
+
+/// For each consecutive pair of structural offsets, examine the bytes
+/// between them. If the gap contains a scalar (anything other than
+/// whitespace), validate its grammar.
+fn validate_scalars_in_gaps(buf: &[u8], indices: &[u32]) -> Result<(), qjd_err> {
+    let mut prev_end: usize = 0;
+    let mut in_str = false;
+    for &idx in indices {
+        if idx == u32::MAX { break; }
+        let pos = idx as usize;
+        let b = buf[pos];
+
+        if b == b'"' {
+            // Toggle: the bytes between two quotes are the string interior
+            // (already validated above). Skip gap-scanning across them.
+            if in_str {
+                in_str = false;
+                prev_end = pos + 1;
+            } else {
+                // Validate any scalar in the gap leading up to this quote.
+                check_gap(buf, prev_end, pos)?;
+                in_str = true;
+            }
+            continue;
+        }
+        if in_str { continue; }
+
+        check_gap(buf, prev_end, pos)?;
+        prev_end = pos + 1;
+    }
+    // Tail gap (top-level scalar like "42")
+    check_gap(buf, prev_end, buf.len())
+}
+
+fn check_gap(buf: &[u8], start: usize, end: usize) -> Result<(), qjd_err> {
+    // Strip surrounding whitespace.
+    let mut s = start;
+    while s < end && is_ws(buf[s]) { s += 1; }
+    let mut e = end;
+    while e > s && is_ws(buf[e - 1]) { e -= 1; }
+    if s == e { return Ok(()); }
+    let scalar = &buf[s..e];
+
+    // Dispatch on first byte.
+    match scalar[0] {
+        b't' => if scalar == b"true"  { Ok(()) } else { Err(qjd_err::QJD_PARSE_ERROR) },
+        b'f' => if scalar == b"false" { Ok(()) } else { Err(qjd_err::QJD_PARSE_ERROR) },
+        b'n' => if scalar == b"null"  { Ok(()) } else { Err(qjd_err::QJD_PARSE_ERROR) },
+        // Everything else (including `+`, `.`, letters like `N`/`I`) is
+        // treated as a malformed number so the caller gets QJD_INVALID_NUMBER.
+        _ => number::validate_number(scalar),
+    }
+}
+
 #[inline(always)]
 fn is_ws(b: u8) -> bool {
     matches!(b, b' ' | b'\t' | b'\n' | b'\r')

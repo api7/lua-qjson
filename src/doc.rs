@@ -28,7 +28,7 @@ impl<'a> Document<'a> {
 
         if opts.is_eager() {
             crate::validate::validate_trailing(buf, &indices)?;
-            // TODO(Task 10): validate_eager_values
+            crate::validate::validate_eager_values(buf, &indices)?;
         }
 
         Ok(Self {

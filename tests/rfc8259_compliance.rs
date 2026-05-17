@@ -186,7 +186,6 @@ fn eager_accepts_canonical_numbers() {
 }
 
 #[test]
-#[ignore = "wired in Task 10"]
 fn eager_rejects_invalid_numbers() {
     use quickdecode::error::qjd_err;
     for s in ["+1", "01", "00", ".5", "1.", "1.e5", "0x1F",
@@ -213,7 +212,6 @@ fn lazy_defers_invalid_number_until_access() {
 // ── Phase 4 + 5: string content ──────────────────────────────
 
 #[test]
-#[ignore = "wired in Task 10"]
 fn eager_rejects_raw_tab_in_string() {
     use quickdecode::error::qjd_err;
     let input = b"[\"a\tb\"]";
@@ -225,7 +223,6 @@ fn eager_rejects_raw_tab_in_string() {
 }
 
 #[test]
-#[ignore = "wired in Task 10"]
 fn eager_rejects_raw_null_in_string() {
     use quickdecode::error::qjd_err;
     let input = b"[\"a\x00b\"]";
@@ -237,7 +234,6 @@ fn eager_rejects_raw_null_in_string() {
 }
 
 #[test]
-#[ignore = "wired in Task 10"]
 fn eager_rejects_invalid_utf8_in_string() {
     use quickdecode::error::qjd_err;
     let input = &[b'[', b'"', 0xC0, 0xC0, b'"', b']'];
