@@ -88,3 +88,47 @@ fn macro_rejects_wrong_error_code() {
     // — the macro would silently bind whatever Err came back).
     assert_rejects_eager!("{", QJD_INVALID_NUMBER);
 }
+
+// ── Phase 3: nesting depth ───────────────────────────────────
+
+#[test]
+fn rejects_deeply_nested_at_default_limit() {
+    use quickdecode::error::qjd_err;
+    let mut buf = String::new();
+    for _ in 0..1100 { buf.push('['); }
+    for _ in 0..1100 { buf.push(']'); }
+    match Document::parse_with_options(buf.as_bytes(), &eager()) {
+        Err(qjd_err::QJD_NESTING_TOO_DEEP) => {}
+        other => panic!("expected QJD_NESTING_TOO_DEEP, got {:?}", other.err()),
+    }
+}
+
+#[test]
+fn lazy_mode_also_enforces_max_depth() {
+    use quickdecode::error::qjd_err;
+    let mut buf = String::new();
+    for _ in 0..1100 { buf.push('['); }
+    for _ in 0..1100 { buf.push(']'); }
+    assert_eq!(
+        Document::parse_with_options(buf.as_bytes(), &lazy()).err().unwrap(),
+        qjd_err::QJD_NESTING_TOO_DEEP,
+    );
+}
+
+#[test]
+fn accepts_nested_at_configured_limit() {
+    let mut buf = String::new();
+    for _ in 0..256 { buf.push('['); }
+    for _ in 0..256 { buf.push(']'); }
+    let opts = Options { mode: QJD_MODE_EAGER, max_depth: 256 };
+    assert!(Document::parse_with_options(buf.as_bytes(), &opts).is_ok());
+}
+
+#[test]
+fn rejects_when_one_past_configured_limit() {
+    let mut buf = String::new();
+    for _ in 0..33 { buf.push('['); }
+    for _ in 0..33 { buf.push(']'); }
+    let opts = Options { mode: QJD_MODE_EAGER, max_depth: 32 };
+    assert!(Document::parse_with_options(buf.as_bytes(), &opts).is_err());
+}

@@ -17,14 +17,16 @@ impl<'a> Document<'a> {
 
     pub fn parse_with_options(
         buf: &'a [u8],
-        _opts: &crate::options::Options,
+        opts: &crate::options::Options,
     ) -> Result<Self, qjd_err> {
-        // TODO(Task 6+): plug in validate_depth / validate_trailing /
-        // validate_eager_values. For now this is a structural-only parse
-        // matching the historical `parse` behavior.
+        let max_depth = opts.effective_max_depth();
         let mut indices = Vec::new();
         crate::scan::scan(buf, &mut indices).map_err(|_| qjd_err::QJD_PARSE_ERROR)?;
         indices.push(u32::MAX);
+
+        crate::validate::validate_depth(buf, &indices, max_depth)?;
+        // TODO(Task 7+): trailing-content and eager value validators.
+
         Ok(Self {
             buf,
             indices,

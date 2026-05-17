@@ -8,6 +8,7 @@ pub mod doc;
 mod path;
 mod cursor;
 mod decode;
+mod validate;
 pub mod ffi;
 
 #[doc(hidden)]
