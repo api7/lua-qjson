@@ -48,6 +48,12 @@ until the target size is reached. The image size sequence comes from a
 Park–Miller LCG with `seed=42` rather than `math.random` so the payload is
 byte-identical across hosts.
 
+A separate `github-100k` scenario simulates a GitHub Issues API response
+(`/repos/{owner}/{repo}/issues`) with ~100 KB of realistic REST API
+structure: nested user objects, labels arrays, URLs, timestamps, and
+markdown body text. This provides a benchmark for typical REST API
+parsing workloads with ~3-5% structural density.
+
 ### Workload — what each row does
 
 | Row | What it does | Notes |
@@ -94,6 +100,7 @@ Each row is "parse + access 3 fields" on the named payload.
 |---|---:|---:|---:|---:|---:|---:|
 | small      |   2.1 KB | 39,414 | 54,395 | 117,233 | 126,807 | 268,240 |
 | medium     |  60.4 KB |  5,600 | 40,180 |  90,074 | 120,627 | 126,263 |
+| github-100k |   100 KB |  5,373 |      — |  27,020 |  27,367 |  36,430 |
 | 100k       |   100 KB |  2,589 | 19,944 |  72,202 |  61,162 |  80,257 |
 | 200k       |   200 KB |  1,414 | 14,397 |  57,670 |  48,031 |  58,548 |
 | 500k       |   500 KB |    722 |  5,882 |  34,602 |  33,167 |  36,900 |
@@ -109,6 +116,7 @@ Each row is "parse + access 3 fields" on the named payload.
 |---|---:|---:|---:|---:|
 | small  | 1.4× |  3.0× | 2.2× |  3.2× |
 | medium | 7.2× | 16.1× | 2.2× | 21.5× |
+| github-100k | — | 5.0× | — | 5.1× |
 | 100k   | 7.7× | 27.9× | 3.6× | 23.6× |
 | 200k   | 10.2× | 40.8× | 4.0× | 34.0× |
 | 500k   | 8.1× | 47.9× | 5.9× | 45.9× |
@@ -127,6 +135,7 @@ collected before the snapshot.
 |---|---:|---:|---:|---:|---:|
 | small      | +15,881 | +16,284 | +1,338 | +4,337 | +11,140 |
 | medium     |  +1,955 |  +2,661 |    +66 |   +500 |  +1,120 |
+| github-100k | +12,867 |       — |    +19 |   +592 |    +273 |
 | 100k       |    +601 |    +950 |    +18 |   +429 |    +229 |
 | 200k       |    +505 |    +722 |     +7 |   +206 |    +112 |
 | 500k       |    +648 |    +757 |     +3 |    +83 |     +45 |
@@ -188,6 +197,11 @@ later asks. Captures the upper bound of the lazy win.
    because the Lua table tree stays GC-rooted until the next collection.
    The 10 MB case retains ~11 MB for `cjson` / `simdjson`, ~3 KB for
    `qd.parse`.
+6. **REST API payloads (github-100k) show a 5× speedup** — lower than the
+   multimodal payloads because the structural density is higher (~3-5% vs
+   <0.1%). However, memory savings remain dramatic: 677× less retention
+   (12.8 MB → 19 KB) because `cjson` must materialize every nested object
+   and string into the Lua heap.
 
 ## When to pick which
 
