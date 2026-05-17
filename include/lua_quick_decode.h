@@ -31,6 +31,15 @@ typedef enum {
     QJD_T_STR  = 3, QJD_T_ARR  = 4, QJD_T_OBJ = 5
 } qjd_type;
 
+#define QJD_MODE_EAGER          0u
+#define QJD_MODE_LAZY           1u
+#define QJD_DEFAULT_MAX_DEPTH   1024u
+
+typedef struct {
+    uint32_t mode;       /* QJD_MODE_EAGER (0) or QJD_MODE_LAZY (1) */
+    uint32_t max_depth;  /* 0 = use QJD_DEFAULT_MAX_DEPTH */
+} qjd_options;
+
 typedef struct qjd_doc qjd_doc;
 
 typedef struct {
@@ -44,6 +53,8 @@ typedef struct {
 const char* qjd_strerror(int code);
 
 qjd_doc* qjd_parse(const uint8_t* buf, size_t len, int* err_out);
+qjd_doc* qjd_parse_ex(const uint8_t* buf, size_t len,
+                      const qjd_options* opts, int* err_out);
 void     qjd_free (qjd_doc* doc);
 
 int qjd_get_str  (qjd_doc*, const char* path, size_t path_len,

@@ -11,6 +11,7 @@ pub struct Document<'a> {
 }
 
 impl<'a> Document<'a> {
+    #[allow(dead_code)] // public convenience API; used in tests and external crates
     pub fn parse(buf: &'a [u8]) -> Result<Self, qjd_err> {
         Self::parse_with_options(buf, &crate::options::Options::default())
     }

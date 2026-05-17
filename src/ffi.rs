@@ -93,19 +93,43 @@ pub unsafe extern "C" fn qjd_parse(
     len:     usize,
     err_out: *mut c_int,
 ) -> *mut qjd_doc {
+    let default = crate::options::Options::default();
+    qjd_parse_ex(buf, len, &default as *const _, err_out)
+}
+
+/// Parse with caller-supplied options. `opts` may be NULL to mean defaults
+/// (eager mode, default max_depth).
+///
+/// # Safety
+///
+/// Same as `qjd_parse`, with the additional contract that `opts`, when
+/// non-NULL, points to a readable `qjd_options` for the duration of the call
+/// (the struct is copied internally).
+#[no_mangle]
+pub unsafe extern "C" fn qjd_parse_ex(
+    buf:     *const u8,
+    len:     usize,
+    opts:    *const crate::options::Options,
+    err_out: *mut c_int,
+) -> *mut qjd_doc {
     let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        if buf.is_null() || err_out.is_null() {
+        if buf.is_null() {
             if !err_out.is_null() { *err_out = qjd_err::QJD_INVALID_ARG as c_int; }
             return ptr::null_mut();
         }
+        let opts_owned = if opts.is_null() {
+            crate::options::Options::default()
+        } else {
+            *opts
+        };
         let slice: &'static [u8] = std::slice::from_raw_parts(buf, len);
-        match Document::parse(slice) {
+        match Document::parse_with_options(slice, &opts_owned) {
             Ok(d) => {
-                *err_out = qjd_err::QJD_OK as c_int;
+                if !err_out.is_null() { *err_out = qjd_err::QJD_OK as c_int; }
                 Box::into_raw(Box::new(qjd_doc(d)))
             }
             Err(e) => {
-                *err_out = e as c_int;
+                if !err_out.is_null() { *err_out = e as c_int; }
                 ptr::null_mut()
             }
         }
