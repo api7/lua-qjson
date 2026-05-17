@@ -2,12 +2,12 @@
 //!
 //! - `y_*` files: must parse in both EAGER and LAZY modes.
 //! - `n_*` files: must fail to parse in EAGER mode.
-//!                In LAZY mode the file MAY parse (structural-only) but a
-//!                value-level access of the malformed field would fail; we
-//!                do not assert against LAZY here.
+//!   In LAZY mode the file MAY parse (structural-only) but a value-level
+//!   access of the malformed field would fail; we do not assert against
+//!   LAZY here.
 //! - `i_*` files: implementation-defined; we record our behavior (no
-//!                assertions). The list of accepted/rejected i_* cases is
-//!                printed at the end of the test run for documentation.
+//!   assertions). The list of accepted/rejected i_* cases is printed at
+//!   the end of the test run for documentation.
 //!
 //! # Known failures
 //!
