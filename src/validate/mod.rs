@@ -179,9 +179,12 @@ fn check_gap(buf: &[u8], start: usize, end: usize) -> Result<(), qjd_err> {
         b't' => if scalar == b"true"  { Ok(()) } else { Err(qjd_err::QJD_PARSE_ERROR) },
         b'f' => if scalar == b"false" { Ok(()) } else { Err(qjd_err::QJD_PARSE_ERROR) },
         b'n' => if scalar == b"null"  { Ok(()) } else { Err(qjd_err::QJD_PARSE_ERROR) },
-        // Everything else (including `+`, `.`, letters like `N`/`I`) is
-        // treated as a malformed number so the caller gets QJD_INVALID_NUMBER.
-        _ => number::validate_number(scalar),
+        // RFC-valid and common malformed number starters (+, ., -, digit).
+        b'-' | b'0'..=b'9' | b'+' | b'.' => number::validate_number(scalar),
+        // NaN / Infinity are "meant as numbers" → QJD_INVALID_NUMBER, not parse error.
+        _ if scalar == b"NaN" || scalar == b"Infinity" => number::validate_number(scalar),
+        // Wrong-case literals (TRUE, NULL), identifiers (undefined), other garbage.
+        _ => Err(qjd_err::QJD_PARSE_ERROR),
     }
 }
 

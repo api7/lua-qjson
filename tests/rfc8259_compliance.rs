@@ -259,3 +259,65 @@ fn lazy_accepts_raw_tab_but_decode_fails() {
     // is covered by tests/ffi_strings.rs (existing decode_string tests cover
     // the error type); no extra assertion needed here.
 }
+
+// ── Task 10 fix: check_gap dispatch ──────────────────────────
+
+#[test]
+fn eager_rejects_uppercase_true_as_parse_error() {
+    use quickdecode::error::qjd_err;
+    let r = Document::parse_with_options(b"TRUE", &eager());
+    match r {
+        Err(qjd_err::QJD_PARSE_ERROR) => {}
+        other => panic!("expected QJD_PARSE_ERROR, got {:?}", other.err()),
+    }
+}
+
+#[test]
+fn eager_rejects_uppercase_false_as_parse_error() {
+    use quickdecode::error::qjd_err;
+    let r = Document::parse_with_options(b"False", &eager());
+    match r {
+        Err(qjd_err::QJD_PARSE_ERROR) => {}
+        other => panic!("expected QJD_PARSE_ERROR, got {:?}", other.err()),
+    }
+}
+
+#[test]
+fn eager_rejects_uppercase_null_as_parse_error() {
+    use quickdecode::error::qjd_err;
+    let r = Document::parse_with_options(b"NULL", &eager());
+    match r {
+        Err(qjd_err::QJD_PARSE_ERROR) => {}
+        other => panic!("expected QJD_PARSE_ERROR, got {:?}", other.err()),
+    }
+}
+
+#[test]
+fn eager_rejects_undefined_as_parse_error() {
+    use quickdecode::error::qjd_err;
+    let r = Document::parse_with_options(b"undefined", &eager());
+    match r {
+        Err(qjd_err::QJD_PARSE_ERROR) => {}
+        other => panic!("expected QJD_PARSE_ERROR, got {:?}", other.err()),
+    }
+}
+
+#[test]
+fn eager_rejects_nan_as_invalid_number() {
+    use quickdecode::error::qjd_err;
+    let r = Document::parse_with_options(b"NaN", &eager());
+    match r {
+        Err(qjd_err::QJD_INVALID_NUMBER) => {}
+        other => panic!("expected QJD_INVALID_NUMBER, got {:?}", other.err()),
+    }
+}
+
+#[test]
+fn eager_rejects_infinity_as_invalid_number() {
+    use quickdecode::error::qjd_err;
+    let r = Document::parse_with_options(b"Infinity", &eager());
+    match r {
+        Err(qjd_err::QJD_INVALID_NUMBER) => {}
+        other => panic!("expected QJD_INVALID_NUMBER, got {:?}", other.err()),
+    }
+}
