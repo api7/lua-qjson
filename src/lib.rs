@@ -4,7 +4,7 @@ pub mod error;
 pub mod options;
 pub(crate) mod scan;
 mod skip_cache;
-mod doc;
+pub mod doc;
 mod path;
 mod cursor;
 mod decode;

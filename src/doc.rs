@@ -11,7 +11,6 @@ pub struct Document<'a> {
 }
 
 impl<'a> Document<'a> {
-    #[allow(dead_code)] // suppressed until mod doc is re-exported (Task 5)
     pub fn parse(buf: &'a [u8]) -> Result<Self, qjd_err> {
         Self::parse_with_options(buf, &crate::options::Options::default())
     }
