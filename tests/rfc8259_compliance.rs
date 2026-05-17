@@ -38,14 +38,15 @@ macro_rules! assert_accepts {
 /// Usage: `assert_rejects_eager!("01", QJD_INVALID_NUMBER);`
 #[macro_export]
 macro_rules! assert_rejects_eager {
-    ($input:expr, $expected_err:path) => {{
+    ($input:expr, $expected_err:ident) => {{
         use quickdecode::error::qjd_err;
         let buf: &[u8] = $input.as_ref();
+        let expected = qjd_err::$expected_err;
         match Document::parse_with_options(buf, &eager()) {
-            Err($expected_err) => {}
+            Err(e) if e == expected => {}
             Err(other) => panic!(
                 "EAGER rejected {:?} with {:?}, expected {:?}",
-                $input, other, qjd_err::$expected_err),
+                $input, other, expected),
             Ok(_) => panic!("EAGER unexpectedly accepted {:?}", $input),
         }
     }};
@@ -76,4 +77,14 @@ fn smoke_accepts_empty_array() { assert_accepts!("[]"); }
 #[test]
 fn smoke_rejects_unmatched_brace_both_modes() {
     assert_rejects_both!("{");
+}
+
+#[test]
+#[should_panic(expected = "expected QJD_INVALID_NUMBER")]
+fn macro_rejects_wrong_error_code() {
+    // Sanity: passing the wrong expected variant must panic.
+    // `{` is rejected as QJD_PARSE_ERROR, NOT QJD_INVALID_NUMBER.
+    // With the buggy macro, this test would NOT panic (false positive
+    // — the macro would silently bind whatever Err came back).
+    assert_rejects_eager!("{", QJD_INVALID_NUMBER);
 }
