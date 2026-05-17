@@ -108,7 +108,7 @@ function _M.parse(json_str, opts)
             error("quickdecode.parse: opts.lazy must be a boolean")
         end
         local max_depth = opts.max_depth or 0
-        if type(max_depth) ~= "number" or max_depth < 0 then
+        if type(max_depth) ~= "number" or max_depth < 0 or max_depth ~= math.floor(max_depth) then
             error("quickdecode.parse: opts.max_depth must be a non-negative integer")
         end
         opts_box[0].mode      = lazy and MODE_LAZY or MODE_EAGER
