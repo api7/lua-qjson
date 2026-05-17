@@ -142,6 +142,7 @@ unsafe fn scan_neon_impl(buf: &[u8], out: &mut Vec<u32>) -> Result<(), usize> {
     let mut i = 0usize;
     let mut bs_carry: u64 = 0;
     let mut in_string: u64 = 0;
+    let mut stack: Vec<u8> = Vec::with_capacity(32);
 
     while i + 64 <= buf.len() {
         let c0 = vld1q_u8(buf.as_ptr().add(i));
@@ -199,23 +200,119 @@ unsafe fn scan_neon_impl(buf: &[u8], out: &mut Vec<u32>) -> Result<(), usize> {
 
         let struct_mask = tag_mask64(t0, t1, t2, t3, TAG_STRUCTURAL);
         let final_mask = (struct_mask & !inside) | real_quote;
-        super::emit_bits(final_mask, i as u32, out);
+        emit_bits_validate(final_mask, i as u32, buf, out, &mut stack)?;
         i += 64;
     }
 
-    // Tail (<64 bytes): hand off to scalar emit, carrying in_string / bs_carry state.
+    // Tail (<64 bytes): hand off to scalar, carrying in_string / bs_carry / stack state.
     if i < buf.len() {
         let scalar_start = if in_string != 0 && bs_carry != 0 {
             i + 1
         } else {
             i
         };
-        super::scalar::scan_emit_resume(buf, scalar_start, in_string != 0, out)?;
+        scan_tail_validate(buf, scalar_start, in_string != 0, out, &mut stack)?;
     } else if in_string != 0 {
         return Err(buf.len());
     }
 
-    super::validate_brackets(buf, out)
+    if !stack.is_empty() {
+        return Err(buf.len());
+    }
+    Ok(())
+}
+
+/// Emit structural offsets and validate brackets inline.
+#[inline(always)]
+fn emit_bits_validate(
+    mut mask: u64,
+    base: u32,
+    buf: &[u8],
+    out: &mut Vec<u32>,
+    stack: &mut Vec<u8>,
+) -> Result<(), usize> {
+    while mask != 0 {
+        let tz = mask.trailing_zeros();
+        let pos = base + tz;
+        out.push(pos);
+        let b = buf[pos as usize];
+        match b {
+            b'{' | b'[' => stack.push(b),
+            b'}' => {
+                if stack.pop() != Some(b'{') {
+                    return Err(pos as usize);
+                }
+            }
+            b']' => {
+                if stack.pop() != Some(b'[') {
+                    return Err(pos as usize);
+                }
+            }
+            _ => {}
+        }
+        mask &= mask - 1;
+    }
+    Ok(())
+}
+
+/// Scalar tail with inline bracket validation, continuing from NEON state.
+fn scan_tail_validate(
+    buf: &[u8],
+    start: usize,
+    in_str_init: bool,
+    out: &mut Vec<u32>,
+    stack: &mut Vec<u8>,
+) -> Result<(), usize> {
+    let mut i = start;
+    let mut in_str = in_str_init;
+
+    while i < buf.len() {
+        let b = buf[i];
+
+        if in_str {
+            if b == b'\\' {
+                i += 2;
+                continue;
+            }
+            if b == b'"' {
+                in_str = false;
+                out.push(i as u32);
+            }
+            i += 1;
+            continue;
+        }
+
+        match b {
+            b'"' => {
+                in_str = true;
+                out.push(i as u32);
+            }
+            b'{' | b'[' => {
+                out.push(i as u32);
+                stack.push(b);
+            }
+            b'}' => {
+                out.push(i as u32);
+                if stack.pop() != Some(b'{') {
+                    return Err(i);
+                }
+            }
+            b']' => {
+                out.push(i as u32);
+                if stack.pop() != Some(b'[') {
+                    return Err(i);
+                }
+            }
+            b':' | b',' => out.push(i as u32),
+            _ => {}
+        }
+        i += 1;
+    }
+
+    if in_str {
+        return Err(buf.len());
+    }
+    Ok(())
 }
 
 #[cfg(test)]

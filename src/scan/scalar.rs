@@ -45,6 +45,7 @@ pub(crate) fn scan_and_validate(buf: &[u8], out: &mut Vec<u32>) -> Result<(), us
 /// Used by `ScalarScanner::scan` (with start=0, in_str_init=false) and as
 /// the unaligned-tail handler by `Avx2Scanner::scan` (with the carried
 /// in-string state from the last AVX2 chunk).
+#[cfg(all(target_arch = "x86_64", feature = "avx2"))]
 pub(crate) fn scan_emit_resume(
     buf: &[u8],
     start: usize,

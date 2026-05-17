@@ -80,6 +80,7 @@ pub(crate) fn find_escape_mask_with_carry(bs: u64, prev_carry: &mut u64) -> u64 
 }
 
 /// Emit all set-bit positions in `mask` (relative to `base`) into `out`.
+#[cfg(all(target_arch = "x86_64", feature = "avx2"))]
 #[inline(always)]
 pub(crate) fn emit_bits(mut mask: u64, base: u32, out: &mut Vec<u32>) {
     while mask != 0 {
@@ -99,6 +100,7 @@ pub(crate) fn emit_bits(mut mask: u64, base: u32, out: &mut Vec<u32>) {
 ///
 /// On the first mismatch, returns `Err(offset_in_buf)`. On unmatched
 /// openers at end of input, returns `Err(buf.len())`.
+#[cfg(all(target_arch = "x86_64", feature = "avx2"))]
 pub(crate) fn validate_brackets(buf: &[u8], indices: &[u32]) -> Result<(), usize> {
     let mut stack: Vec<u8> = Vec::with_capacity(32);
     let mut in_string = false;
