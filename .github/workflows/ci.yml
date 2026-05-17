@@ -17,6 +17,8 @@ jobs:
         os: [ubuntu-latest, macos-14]
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       - name: Install Rust (stable)
         run: |
