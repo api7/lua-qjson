@@ -4,6 +4,9 @@
 //! decoupled from the SIMD/scalar scanner paths so the structural
 //! scanner code stays untouched.
 
+pub(crate) mod number;
+pub(crate) use number::validate_number;
+
 use crate::error::qjd_err;
 
 /// Verify that the maximum bracket-stack depth implied by `indices`

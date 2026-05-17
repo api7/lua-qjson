@@ -172,3 +172,40 @@ fn lazy_accepts_trailing_garbage() {
     // Lazy preserves historical behavior: trailing bytes are ignored.
     assert!(Document::parse_with_options(b"{}garbage", &lazy()).is_ok());
 }
+
+// ── Phase 2: number format ───────────────────────────────────
+
+#[test]
+fn eager_accepts_canonical_numbers() {
+    for s in ["0", "-0", "1", "-1", "3.14", "-2.718",
+              "1e10", "1E10", "1e+10", "1e-10", "1.5e2",
+              "9223372036854775807", "-9223372036854775808"] {
+        let input = format!("[{}]", s);
+        assert_accepts!(input);
+    }
+}
+
+#[test]
+#[ignore = "wired in Task 10"]
+fn eager_rejects_invalid_numbers() {
+    use quickdecode::error::qjd_err;
+    for s in ["+1", "01", "00", ".5", "1.", "1.e5", "0x1F",
+              "NaN", "Infinity", "-Infinity", "1e", "1e+"] {
+        let input = format!("[{}]", s);
+        match Document::parse_with_options(input.as_bytes(), &eager()) {
+            Err(qjd_err::QJD_INVALID_NUMBER) => {}
+            Err(other) => panic!(
+                "expected QJD_INVALID_NUMBER for {:?}, got {:?}", input, other),
+            Ok(_) => panic!("EAGER unexpectedly accepted {:?}", input),
+        }
+    }
+}
+
+#[test]
+fn lazy_defers_invalid_number_until_access() {
+    // In LAZY mode, "[01]" parses; the error surfaces when you ask for the value.
+    let doc = Document::parse_with_options(b"[01]", &lazy()).unwrap();
+    // Walking via FFI tests is verbose; we only check that the LAZY parse
+    // itself does not fail. Field-level access is covered in tests/ffi_*.
+    drop(doc);
+}
