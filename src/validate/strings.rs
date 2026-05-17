@@ -3,20 +3,47 @@
 use crate::error::qjd_err;
 
 /// Verify that the raw span (excluding surrounding quotes) contains no
-/// unescaped control characters (0x00..=0x1F) and is valid UTF-8.
+/// unescaped control characters (0x00..=0x1F), is valid UTF-8, and that
+/// every backslash escape sequence is RFC 8259 §7 compliant.
 pub(crate) fn validate_string_span(span: &[u8]) -> Result<(), qjd_err> {
-    // Control chars are forbidden inside a JSON string per RFC 8259 §7.
-    // Cheap pass first: bytewise check.
-    if span.iter().any(|&b| b < 0x20) {
-        return Err(qjd_err::QJD_INVALID_STRING);
-    }
-    // UTF-8 validation. Backslash escapes are not yet expanded; the byte
-    // immediately after `\` may legally be any escape introducer
-    // (`"`, `\`, `/`, `b`, `f`, `n`, `r`, `t`, `u`), all of which are ASCII.
-    // So validating the raw span (with backslashes still in place) gives
-    // the same answer as validating the escape-decoded result.
+    // UTF-8 validation first (includes multi-byte content validation).
+    // Backslash escapes are ASCII, so validating the unexpanded span gives
+    // the correct answer for the UTF-8 structure of non-escape bytes.
     if std::str::from_utf8(span).is_err() {
         return Err(qjd_err::QJD_INVALID_UTF8);
+    }
+
+    // Walk the span validating control chars and escape sequences.
+    let mut i = 0;
+    while i < span.len() {
+        let b = span[i];
+        // RFC 8259 §7: control characters must be escaped.
+        if b < 0x20 {
+            return Err(qjd_err::QJD_INVALID_STRING);
+        }
+        if b == b'\\' {
+            i += 1;
+            if i >= span.len() {
+                return Err(qjd_err::QJD_INVALID_STRING);
+            }
+            match span[i] {
+                b'"' | b'\\' | b'/' | b'b' | b'f' | b'n' | b'r' | b't' => {}
+                b'u' => {
+                    // Must be followed by exactly 4 hex digits.
+                    if i + 4 >= span.len() {
+                        return Err(qjd_err::QJD_INVALID_STRING);
+                    }
+                    for &h in &span[i + 1..=i + 4] {
+                        if !h.is_ascii_hexdigit() {
+                            return Err(qjd_err::QJD_INVALID_STRING);
+                        }
+                    }
+                    i += 4; // consumed 4 hex digits; loop adds 1 more
+                }
+                _ => return Err(qjd_err::QJD_INVALID_STRING),
+            }
+        }
+        i += 1;
     }
     Ok(())
 }

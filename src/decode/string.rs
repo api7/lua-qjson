@@ -164,16 +164,21 @@ mod tests {
 
     #[test]
     fn invalid_hex_in_unicode_fails() {
-        assert_eq!(d(b"\\uZZZZ").unwrap_err(), qjd_err::QJD_DECODE_FAILED);
+        // validate_string_span (called first) catches non-hex digits as
+        // QJD_INVALID_STRING; the decode loop would also catch it as
+        // QJD_DECODE_FAILED, but we never reach it.
+        assert_eq!(d(b"\\uZZZZ").unwrap_err(), qjd_err::QJD_INVALID_STRING);
     }
 
     #[test]
     fn unknown_escape_fails() {
-        assert_eq!(d(b"\\q").unwrap_err(), qjd_err::QJD_DECODE_FAILED);
+        // validate_string_span catches unknown escape introducers first.
+        assert_eq!(d(b"\\q").unwrap_err(), qjd_err::QJD_INVALID_STRING);
     }
 
     #[test]
     fn dangling_backslash_fails() {
-        assert_eq!(d(b"a\\").unwrap_err(), qjd_err::QJD_DECODE_FAILED);
+        // validate_string_span catches a trailing lone backslash first.
+        assert_eq!(d(b"a\\").unwrap_err(), qjd_err::QJD_INVALID_STRING);
     }
 }

@@ -44,43 +44,78 @@ pub(crate) fn validate_depth(
 
 /// Verify there is no non-whitespace content after the root value.
 ///
-/// The root value's closer is the last non-sentinel structural offset
-/// in `indices` for a container, or the start of the scalar's trailing
-/// whitespace for a top-level scalar value. We locate the position
-/// `end_of_root` past which only whitespace is allowed.
+/// For container roots (`{`/`[`), we walk `indices` to find the closing
+/// bracket where nesting depth returns to zero — that is the actual root
+/// end, regardless of how many additional structural chars the buffer has.
+/// For scalar roots (no opening bracket), we scan the raw bytes.
 pub(crate) fn validate_trailing(
     buf: &[u8],
     indices: &[u32],
 ) -> Result<(), qjd_err> {
-    // Find the last real offset (skip the u32::MAX sentinel).
-    let last = indices.iter().rev()
-        .find(|&&i| i != u32::MAX)
-        .copied();
+    // Find the first real structural character to determine root kind.
+    let first = indices.iter().find(|&&i| i != u32::MAX).copied();
 
-    let root_end = match last {
-        // No structural chars at all: input is whitespace or a bare scalar.
-        // Bare scalar: locate the end by scanning until whitespace or EOF.
+    let root_end = match first {
         None => {
-            // Strip leading whitespace, then find the scalar's terminator.
+            // No structural chars: bare scalar (number/true/false/null).
             let mut p = 0;
             while p < buf.len() && is_ws(buf[p]) { p += 1; }
             let start = p;
-            // Scan until next whitespace (end of scalar token).
             while p < buf.len() && !is_ws(buf[p]) { p += 1; }
-            if start == p { return Ok(()); } // input was only whitespace
-            // Advance past trailing whitespace so `42   ` is accepted.
+            if start == p { return Ok(()); } // whitespace-only (scan already rejected empty)
             while p < buf.len() && is_ws(buf[p]) { p += 1; }
             p
         }
-        // Structural close (`}` or `]`) of root container, OR root quote
-        // close, OR last structural (`,`/`:`/`{`/`[`) — in which case the
-        // parse should already have failed at scan(). The only "valid root
-        // ending in a structural" cases are a closing `}` / `]` / `"`.
-        Some(last_idx) => {
-            let mut p = last_idx as usize + 1;
-            // Advance past any trailing whitespace.
-            while p < buf.len() && is_ws(buf[p]) { p += 1; }
-            p
+        Some(first_idx) => {
+            match buf[first_idx as usize] {
+                b'{' | b'[' => {
+                    // Walk indices to find the closing bracket at depth 0.
+                    let mut depth: i32 = 0;
+                    let mut closer: usize = first_idx as usize;
+                    // Track whether we're inside a string (skip string interiors).
+                    let mut in_str = false;
+                    for &idx in indices {
+                        if idx == u32::MAX { break; }
+                        let pos = idx as usize;
+                        match buf[pos] {
+                            b'"' => { in_str = !in_str; }
+                            _ if in_str => {}
+                            b'{' | b'[' => { depth += 1; }
+                            b'}' | b']' => {
+                                depth -= 1;
+                                if depth == 0 { closer = pos; break; }
+                            }
+                            _ => {}
+                        }
+                    }
+                    let mut p = closer + 1;
+                    while p < buf.len() && is_ws(buf[p]) { p += 1; }
+                    p
+                }
+                b'"' => {
+                    // Root is a string: opening quote at first_idx.
+                    // The closing quote is the next structural char.
+                    let close = indices.iter()
+                        .skip(1) // skip the opening quote
+                        .find(|&&i| i != u32::MAX)
+                        .copied()
+                        .unwrap_or(first_idx); // unclosed: scan already rejected
+                    let mut p = close as usize + 1;
+                    while p < buf.len() && is_ws(buf[p]) { p += 1; }
+                    p
+                }
+                _ => {
+                    // Structural char that's not an opener: scan/eager already
+                    // would have caught a malformed root. Treat last structural as end.
+                    let last = indices.iter().rev()
+                        .find(|&&i| i != u32::MAX)
+                        .copied()
+                        .unwrap_or(first_idx);
+                    let mut p = last as usize + 1;
+                    while p < buf.len() && is_ws(buf[p]) { p += 1; }
+                    p
+                }
+            }
         }
     };
 
