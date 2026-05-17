@@ -132,3 +132,43 @@ fn rejects_when_one_past_configured_limit() {
     let opts = Options { mode: QJD_MODE_EAGER, max_depth: 32 };
     assert!(Document::parse_with_options(buf.as_bytes(), &opts).is_err());
 }
+
+// ── Phase 6: trailing content ────────────────────────────────
+
+#[test]
+fn eager_rejects_trailing_content() {
+    use quickdecode::error::qjd_err;
+    assert_eq!(
+        Document::parse_with_options(b"{}garbage", &eager()).err().unwrap(),
+        qjd_err::QJD_TRAILING_CONTENT,
+    );
+}
+
+#[test]
+fn eager_rejects_multiple_root_values() {
+    use quickdecode::error::qjd_err;
+    assert_eq!(
+        Document::parse_with_options(b"1 2", &eager()).err().unwrap(),
+        qjd_err::QJD_TRAILING_CONTENT,
+    );
+    assert_eq!(
+        Document::parse_with_options(b"true false", &eager()).err().unwrap(),
+        qjd_err::QJD_TRAILING_CONTENT,
+    );
+}
+
+#[test]
+fn eager_accepts_trailing_whitespace() {
+    assert_accepts!("{}   \n\t");
+}
+
+#[test]
+fn eager_accepts_top_level_scalar_with_trailing_whitespace() {
+    assert_accepts!("42 \n\t");
+}
+
+#[test]
+fn lazy_accepts_trailing_garbage() {
+    // Lazy preserves historical behavior: trailing bytes are ignored.
+    assert!(Document::parse_with_options(b"{}garbage", &lazy()).is_ok());
+}

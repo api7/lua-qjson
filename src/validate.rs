@@ -36,6 +36,59 @@ pub(crate) fn validate_depth(
     Ok(())
 }
 
+/// Verify there is no non-whitespace content after the root value.
+///
+/// The root value's closer is the last non-sentinel structural offset
+/// in `indices` for a container, or the start of the scalar's trailing
+/// whitespace for a top-level scalar value. We locate the position
+/// `end_of_root` past which only whitespace is allowed.
+pub(crate) fn validate_trailing(
+    buf: &[u8],
+    indices: &[u32],
+) -> Result<(), qjd_err> {
+    // Find the last real offset (skip the u32::MAX sentinel).
+    let last = indices.iter().rev()
+        .find(|&&i| i != u32::MAX)
+        .copied();
+
+    let root_end = match last {
+        // No structural chars at all: input is whitespace or a bare scalar.
+        // Bare scalar: locate the end by scanning until whitespace or EOF.
+        None => {
+            // Strip leading whitespace, then find the scalar's terminator.
+            let mut p = 0;
+            while p < buf.len() && is_ws(buf[p]) { p += 1; }
+            let start = p;
+            // Scan until next whitespace (end of scalar token).
+            while p < buf.len() && !is_ws(buf[p]) { p += 1; }
+            if start == p { return Ok(()); } // input was only whitespace
+            // Advance past trailing whitespace so `42   ` is accepted.
+            while p < buf.len() && is_ws(buf[p]) { p += 1; }
+            p
+        }
+        // Structural close (`}` or `]`) of root container, OR root quote
+        // close, OR last structural (`,`/`:`/`{`/`[`) — in which case the
+        // parse should already have failed at scan(). The only "valid root
+        // ending in a structural" cases are a closing `}` / `]` / `"`.
+        Some(last_idx) => {
+            let mut p = last_idx as usize + 1;
+            // Advance past any trailing whitespace.
+            while p < buf.len() && is_ws(buf[p]) { p += 1; }
+            p
+        }
+    };
+
+    if root_end < buf.len() {
+        return Err(qjd_err::QJD_TRAILING_CONTENT);
+    }
+    Ok(())
+}
+
+#[inline(always)]
+fn is_ws(b: u8) -> bool {
+    matches!(b, b' ' | b'\t' | b'\n' | b'\r')
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -59,6 +112,42 @@ mod tests {
         assert_eq!(
             validate_depth(buf, &ix(buf), 2),
             Err(qjd_err::QJD_NESTING_TOO_DEEP),
+        );
+    }
+
+    #[test]
+    fn trailing_clean_container() {
+        let buf = b"{}";
+        assert!(validate_trailing(buf, &ix(buf)).is_ok());
+    }
+
+    #[test]
+    fn trailing_whitespace_accepted() {
+        let buf = b"{}   \n\t";
+        assert!(validate_trailing(buf, &ix(buf)).is_ok());
+    }
+
+    #[test]
+    fn trailing_garbage_rejected() {
+        let buf = b"{}garbage";
+        assert_eq!(
+            validate_trailing(buf, &ix(buf)),
+            Err(qjd_err::QJD_TRAILING_CONTENT),
+        );
+    }
+
+    #[test]
+    fn bare_scalar_trailing_ws_accepted() {
+        let buf = b"42 \n\t";
+        assert!(validate_trailing(buf, &ix(buf)).is_ok());
+    }
+
+    #[test]
+    fn two_root_scalars_rejected() {
+        let buf = b"1 2";
+        assert_eq!(
+            validate_trailing(buf, &ix(buf)),
+            Err(qjd_err::QJD_TRAILING_CONTENT),
         );
     }
 }

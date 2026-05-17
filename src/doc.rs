@@ -25,7 +25,11 @@ impl<'a> Document<'a> {
         indices.push(u32::MAX);
 
         crate::validate::validate_depth(buf, &indices, max_depth)?;
-        // TODO(Task 7+): trailing-content and eager value validators.
+
+        if opts.is_eager() {
+            crate::validate::validate_trailing(buf, &indices)?;
+            // TODO(Task 10): validate_eager_values
+        }
 
         Ok(Self {
             buf,
