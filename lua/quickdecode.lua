@@ -7,9 +7,16 @@ typedef struct {
     uint32_t idx_start, idx_end, _reserved0, _reserved1;
 } qjd_cursor;
 
+typedef struct {
+    uint32_t mode;
+    uint32_t max_depth;
+} qjd_options;
+
 const char* qjd_strerror(int code);
-qjd_doc* qjd_parse(const uint8_t* buf, size_t len, int* err_out);
-void qjd_free(qjd_doc* doc);
+qjd_doc* qjd_parse   (const uint8_t* buf, size_t len, int* err_out);
+qjd_doc* qjd_parse_ex(const uint8_t* buf, size_t len,
+                       const qjd_options* opts, int* err_out);
+void     qjd_free    (qjd_doc* doc);
 
 int qjd_get_str (qjd_doc*, const char* path, size_t path_len, const uint8_t** p, size_t* n);
 int qjd_get_i64 (qjd_doc*, const char* path, size_t path_len, int64_t* out);
@@ -83,8 +90,31 @@ local function check_err(rc)
     error("quickdecode: " .. ffi.string(C.qjd_strerror(rc)))
 end
 
-function _M.parse(json_str)
-    local ptr = C.qjd_parse(json_str, #json_str, err_box)
+local opts_box = ffi.new("qjd_options[1]")
+
+local MODE_EAGER = 0
+local MODE_LAZY  = 1
+
+function _M.parse(json_str, opts)
+    local ptr
+    if opts == nil then
+        ptr = C.qjd_parse(json_str, #json_str, err_box)
+    else
+        if type(opts) ~= "table" then
+            error("quickdecode.parse: opts must be a table")
+        end
+        local lazy = opts.lazy
+        if lazy ~= nil and type(lazy) ~= "boolean" then
+            error("quickdecode.parse: opts.lazy must be a boolean")
+        end
+        local max_depth = opts.max_depth or 0
+        if type(max_depth) ~= "number" or max_depth < 0 then
+            error("quickdecode.parse: opts.max_depth must be a non-negative integer")
+        end
+        opts_box[0].mode      = lazy and MODE_LAZY or MODE_EAGER
+        opts_box[0].max_depth = max_depth
+        ptr = C.qjd_parse_ex(json_str, #json_str, opts_box, err_box)
+    end
     if ptr == nil then
         error("quickdecode: " .. ffi.string(C.qjd_strerror(err_box[0])))
     end
