@@ -24,6 +24,73 @@ end
 -- the final image falls through to `math.max(1024, remaining)` — undershoot
 -- is at most a few hundred bytes; worst-case overshoot is ~1 KB (only when
 -- `remaining < 1024`, which the seed=42 walk does not hit for our ladder).
+-- GitHub-style payload: simulates /repos/{owner}/{repo}/issues response.
+-- Each issue has ~20 fields including nested user object, labels array,
+-- and realistic string lengths (URLs, timestamps, markdown body).
+-- Structural density ~3-5%, matching real GitHub API responses.
+local function make_github_issues_payload(target_bytes)
+    local issues = {}
+    local current = 2  -- outer envelope: [...]
+
+    local issue_num = 1
+    while current < target_bytes do
+        local labels = {}
+        local label_count = (issue_num % 4)  -- 0-3 labels per issue
+        for i = 1, label_count do
+            labels[#labels + 1] = string.format(
+                '{"id":%d,"name":"label-%d","color":"%06x","description":"Label description for categorization"}',
+                10000 + issue_num * 10 + i, i, (issue_num * 12345 + i) % 0xFFFFFF)
+        end
+
+        local body_len = 200 + (issue_num % 5) * 100  -- 200-600 chars
+        local body = string.rep("Lorem ipsum dolor sit amet. ", math.ceil(body_len / 29)):sub(1, body_len)
+
+        local issue = string.format([[{
+"id":%d,
+"number":%d,
+"title":"Issue title describing the problem or feature request #%d",
+"body":"%s",
+"state":"%s",
+"locked":%s,
+"comments":%d,
+"user":{"login":"user%d","id":%d,"avatar_url":"https://avatars.githubusercontent.com/u/%d?v=4","type":"User","site_admin":false},
+"labels":[%s],
+"assignees":[],
+"milestone":null,
+"created_at":"2024-%02d-%02dT%02d:%02d:%02dZ",
+"updated_at":"2024-%02d-%02dT%02d:%02d:%02dZ",
+"closed_at":null,
+"author_association":"CONTRIBUTOR",
+"html_url":"https://github.com/example/repo/issues/%d",
+"url":"https://api.github.com/repos/example/repo/issues/%d",
+"repository_url":"https://api.github.com/repos/example/repo",
+"labels_url":"https://api.github.com/repos/example/repo/issues/%d/labels{/name}",
+"comments_url":"https://api.github.com/repos/example/repo/issues/%d/comments",
+"events_url":"https://api.github.com/repos/example/repo/issues/%d/events"
+}]],
+            1000000 + issue_num,
+            issue_num,
+            issue_num,
+            body,
+            issue_num % 3 == 0 and "closed" or "open",
+            issue_num % 7 == 0 and "true" or "false",
+            issue_num % 50,
+            issue_num % 100, 100000 + issue_num, 100000 + issue_num,
+            table.concat(labels, ","),
+            (issue_num % 12) + 1, (issue_num % 28) + 1, issue_num % 24, issue_num % 60, issue_num % 60,
+            (issue_num % 12) + 1, (issue_num % 28) + 1, (issue_num + 1) % 24, (issue_num + 5) % 60, (issue_num + 10) % 60,
+            issue_num, issue_num, issue_num, issue_num, issue_num)
+
+        -- Remove newlines for compact JSON
+        issue = issue:gsub("\n", "")
+        issues[#issues + 1] = issue
+        current = current + #issue + 1
+        issue_num = issue_num + 1
+    end
+
+    return "[" .. table.concat(issues, ",") .. "]"
+end
+
 local function make_payload(target_bytes)
     local rng_state = 42
     local function rng_range(lo, hi)
@@ -94,9 +161,49 @@ local function bench(name, iters, fn)
         name, median, mean, lo, hi, mem_after - mem_before))
 end
 
+-- Default accessors for multimodal payloads
+local function default_cjson_access(obj)
+    local _ = obj.model
+    local _ = obj.temperature
+    local _ = obj.messages and obj.messages[1] and obj.messages[1].role
+end
+
+local function default_qd_access(d)
+    local _ = d:get_str("model")
+    local _ = d:get_f64("temperature")
+    local _ = d:get_str("messages[0].role")
+end
+
+local function default_table_access(t)
+    local _ = t.model
+    local _ = t.temperature
+    local _ = t.messages and t.messages[1] and t.messages[1].role
+end
+
+-- GitHub issues accessors: array of issues, access first issue's fields
+local function github_cjson_access(obj)
+    local _ = obj[1] and obj[1].id
+    local _ = obj[1] and obj[1].title
+    local _ = obj[1] and obj[1].user and obj[1].user.login
+end
+
+local function github_qd_access(d)
+    local _ = d:get_i64("[0].id")
+    local _ = d:get_str("[0].title")
+    local _ = d:get_str("[0].user.login")
+end
+
+local function github_table_access(t)
+    local _ = t[1] and t[1].id
+    local _ = t[1] and t[1].title
+    local _ = t[1] and t[1].user and t[1].user.login
+end
+
 local scenarios = {
     {name = "small",  iters = 5000, payload = read_file("benches/fixtures/small_api.json")},
     {name = "medium", iters = 500,  payload = read_file("benches/fixtures/medium_resp.json")},
+    {name = "github-100k", iters = 100, payload = make_github_issues_payload(100 * 1024),
+     cjson_access = github_cjson_access, qd_access = github_qd_access, table_access = github_table_access},
     {name = "100k",   iters = 100,  payload = make_payload(100 * 1024)},
     {name = "200k",   iters = 50,   payload = make_payload(200 * 1024)},
     {name = "500k",   iters = 20,   payload = make_payload(500 * 1024)},
@@ -114,45 +221,36 @@ local pooled_decoder = has_pooled_api and qd.new_decoder() or nil
 for _, s in ipairs(scenarios) do
     print(string.format("=== %s (%d bytes) ===", s.name, #s.payload))
 
+    local cjson_access = s.cjson_access or default_cjson_access
+    local qd_access = s.qd_access or default_qd_access
+    local table_access = s.table_access or default_table_access
+
     bench("cjson.decode + access 3 fields", s.iters, function()
         local obj = cjson.decode(s.payload)
-        local _ = obj.model
-        local _ = obj.temperature
-        local _ = obj.messages and obj.messages[1] and obj.messages[1].role
+        cjson_access(obj)
     end)
 
     bench("quickdecode.parse + access 3 fields", s.iters, function()
         local d = qd.parse(s.payload)
-        local _ = d:get_str("model")
-        local _ = d:get_f64("temperature")
-        local _ = d:get_str("messages[0].role")
+        qd_access(d)
     end)
 
     if has_pooled_api then
         bench("quickdecode pooled :parse + access 3 fields", s.iters, function()
             local d = pooled_decoder:parse(s.payload)
-            local _ = d:get_str("model")
-            local _ = d:get_f64("temperature")
-            local _ = d:get_str("messages[0].role")
+            qd_access(d)
         end)
 
-        -- One-shot-per-request pattern: each iter creates a fresh decoder,
-        -- parses once, and lets both decoder and doc fall to GC. No reuse.
-        -- This is the typical "user does not cache the decoder" path.
         bench("quickdecode new_decoder()+parse (one-shot)", s.iters, function()
             local dec = qd.new_decoder()
             local d = dec:parse(s.payload)
-            local _ = d:get_str("model")
-            local _ = d:get_f64("temperature")
-            local _ = d:get_str("messages[0].role")
+            qd_access(d)
         end)
     end
 
     bench("qd.decode + t.field x3", s.iters, function()
         local t = qd.decode(s.payload)
-        local _ = t.model
-        local _ = t.temperature
-        local _ = t.messages and t.messages[1] and t.messages[1].role
+        table_access(t)
     end)
 
     bench("qd.decode + qd.encode (unmodified)", s.iters, function()
