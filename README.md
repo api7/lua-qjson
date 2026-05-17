@@ -116,3 +116,37 @@ methodology + reproduction command.
 ```sh
 make bench       # quickdecode vs cjson
 ```
+
+## RFC 8259 conformance
+
+This crate implements RFC 8259 with both strict and lenient modes; the strict
+(eager) mode is the default and is required by API-gateway use cases that must
+reject malformed payloads before forwarding them upstream.
+
+- Strict-mode acceptance corpus: `tests/rfc8259_compliance.rs`
+- Industry corpus: `tests/json_test_suite.rs` (against the
+  [JSONTestSuite](https://github.com/nst/JSONTestSuite) submodule at
+  `tests/vendor/JSONTestSuite`)
+- Behavior on implementation-defined (`i_*`) cases: `docs/rfc8259-conformance.md`
+
+### Switching modes
+
+From Lua:
+
+```lua
+local doc = qd.parse(json)                            -- eager (default)
+local doc = qd.parse(json, { lazy = true })           -- lazy mode
+local doc = qd.parse(json, { max_depth = 256 })       -- stricter depth limit
+local doc = qd.parse(json, { lazy = true, max_depth = 256 })
+```
+
+From C:
+
+```c
+qjd_options opts = { .mode = QJD_MODE_LAZY, .max_depth = 256 };
+qjd_doc* doc = qjd_parse_ex(buf, len, &opts, &err);
+```
+
+### Known gaps
+
+Three structural-grammar checks are deferred to a follow-up — they require a grammar-aware walk beyond the current heuristic. See `tests/rfc8259_compliance.rs` for the specific `#[ignore]`d cases, and `tests/json_test_suite.rs::KNOWN_N_FAILURES` for the corresponding JSONTestSuite files.

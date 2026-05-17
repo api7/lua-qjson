@@ -45,12 +45,12 @@ cargo test --features test-panic --release
 
 ### Two-phase parse
 
-**Phase 1** (`src/scan/`, called from `Document::parse`): a structural scanner walks the input once and writes the byte offset of every non-string-interior `{ } [ ] : , "` into `doc.indices: Vec<u32>`. A `u32::MAX` sentinel is appended. The scanner is selected at first use via `OnceCell` in `src/scan/mod.rs`:
+**Phase 1** (`src/scan/`, called from `Document::parse_with_options`): a structural scanner walks the input once and writes the byte offset of every non-string-interior `{ } [ ] : , "` into `doc.indices`. Then `validate_depth` is run unconditionally; in EAGER mode, `validate_trailing` and `validate_eager_values` (number ABNF + string content + UTF-8) follow. In LAZY mode, value-level checks are skipped and rely on the lazy decode path at field-access time. A `u32::MAX` sentinel is appended. The scanner is selected at first use via `OnceCell` in `src/scan/mod.rs`:
 
 - `Avx2Scanner` (gated by the `avx2` cargo feature, default-on) when both `avx2` and `pclmulqdq` are detected at runtime.
 - `ScalarScanner` otherwise.
 
-Validation is shallow — bracket/quote balance only. Value-level errors (bad escapes, malformed numbers, invalid UTF-8 in `\u`) are deferred to Phase 2 and surface only if that field is accessed.
+Validation level depends on `qjd_options.mode`. **EAGER** (default): a post-scan pass walks `indices` and validates RFC 8259 number ABNF, string content (no unescaped control chars), and UTF-8 — parse fails on any value-level violation. **LAZY** (opt-in): bracket/quote balance + max-depth only; value-level errors surface when the offending field is accessed (lua-cjson-equivalent behavior). Trailing-content rejection and value-level validation are eager-only; max-depth (default 1024, configurable up to 4096) is enforced in both modes.
 
 **Phase 2** (`src/cursor.rs`, `src/path.rs`, `src/decode/`): path strings are parsed by a zero-alloc `PathIter` into `PathSeg::Key | Idx`. A `Cursor` (a `(idx_start, idx_end)` pair into `doc.indices`) is walked to the target, optionally caching sibling spans in `doc.skip` (`SkipCache`) so repeated lookups on the same container skip brace-counting. Strings are decoded into `doc.scratch` only when they contain escapes; otherwise the original buffer slice is handed back.
 
