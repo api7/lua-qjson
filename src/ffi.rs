@@ -81,8 +81,8 @@ pub unsafe extern "C" fn qjd_strerror(code: c_int) -> *const c_char {
 ///
 /// - `buf` must point to `len` readable bytes, or be NULL (in which case the
 ///   function returns NULL with `*err_out = QJD_INVALID_ARG`).
-/// - `err_out` must point to a writable `int`, or be NULL (in which case the
-///   function returns NULL with no error code written).
+/// - `err_out` may be NULL. When non-NULL it receives `QJD_OK` on success or
+///   an error code on failure.
 /// - The buffer must remain valid and unmodified for the lifetime of the
 ///   returned `qjd_doc*`; the document borrows it.
 /// - On success, the returned pointer must be freed exactly once with
