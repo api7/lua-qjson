@@ -91,6 +91,31 @@ local function make_github_issues_payload(target_bytes)
     return "[" .. table.concat(issues, ",") .. "]"
 end
 
+-- Pre-generate a 64 KB block of pseudo-random base64 characters.
+-- Reused via repetition for larger image payloads to avoid O(n) generation.
+local function make_b64_block()
+    local b64_chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+    local rng = 12345
+    local t = {}
+    for i = 1, 64 * 1024 do
+        rng = (rng * 48271) % 2147483647
+        local idx = (rng % 64) + 1
+        t[i] = b64_chars:sub(idx, idx)
+    end
+    return table.concat(t)
+end
+
+local B64_BLOCK = make_b64_block()
+local B64_BLOCK_LEN = #B64_BLOCK
+
+local function make_b64(size)
+    if size <= B64_BLOCK_LEN then
+        return B64_BLOCK:sub(1, size)
+    end
+    local reps = math.ceil(size / B64_BLOCK_LEN)
+    return string.rep(B64_BLOCK, reps):sub(1, size)
+end
+
 local function make_payload(target_bytes)
     local rng_state = 42
     local function rng_range(lo, hi)
@@ -118,7 +143,7 @@ local function make_payload(target_bytes)
             local upper = math.min(500 * 1024, remaining)
             img_size = rng_range(50 * 1024, upper)
         end
-        local b64 = string.rep("A", img_size)
+        local b64 = make_b64(img_size)
         local img_part = '{"type":"image_url","image_url":{"url":"data:image/jpeg;base64,'
             .. b64 .. '"}}'
         parts[#parts + 1] = img_part
