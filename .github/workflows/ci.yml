@@ -10,8 +10,11 @@ env:
 
 jobs:
   rust:
-    name: Rust tests
-    runs-on: ubuntu-latest
+    name: Rust tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-14]
     steps:
       - uses: actions/checkout@v4
 
@@ -27,9 +30,9 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: cargo-${{ runner.os }}-${{ hashFiles('Cargo.toml') }}
+          key: cargo-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.toml') }}
           restore-keys: |
-            cargo-${{ runner.os }}-
+            cargo-${{ runner.os }}-${{ runner.arch }}-
 
       - name: Build (release)
         run: cargo build --release
@@ -37,7 +40,7 @@ jobs:
       - name: Test (release)
         run: cargo test --release
 
-      - name: Test scalar-only (no AVX2 feature)
+      - name: Test scalar-only (no AVX2/NEON feature)
         run: cargo test --release --no-default-features
 
       - name: Test with test-panic feature
