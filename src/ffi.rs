@@ -55,16 +55,22 @@ pub struct qjd_doc(pub(crate) Document<'static>);
 pub unsafe extern "C" fn qjd_strerror(code: c_int) -> *const c_char {
     // Hardcoded NUL-terminated map; avoids runtime allocation and lifetime issues.
     let s: &'static [u8] = match code {
-        0 => b"ok\0",
-        1 => b"JSON parse error\0",
-        2 => b"path not found\0",
-        3 => b"type mismatch at path\0",
-        4 => b"numeric out of range\0",
-        5 => b"decode failed\0",
-        6 => b"invalid path syntax\0",
-        7 => b"invalid argument\0",
-        8 => b"out of memory\0",
-        _ => b"unknown error code\0",
+         0 => b"ok\0",
+         1 => b"JSON parse error\0",
+         2 => b"path not found\0",
+         3 => b"type mismatch at path\0",
+         4 => b"numeric out of range\0",
+         5 => b"decode failed\0",
+         6 => b"invalid path syntax\0",
+         7 => b"invalid argument\0",
+         8 => b"out of memory\0",
+         9 => b"nesting depth exceeds limit\0",
+        10 => b"trailing content after root value\0",
+        11 => b"number out of representable range\0",
+        12 => b"invalid number format (RFC 8259)\0",
+        13 => b"invalid string content (unescaped control char)\0",
+        14 => b"invalid UTF-8 in string\0",
+         _ => b"unknown error code\0",
     };
     s.as_ptr() as *const c_char
 }

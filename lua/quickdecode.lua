@@ -48,11 +48,31 @@ local strp_box = ffi.new("const uint8_t*[1]")
 local cur_box  = ffi.new("qjd_cursor[1]")
 
 local NOT_FOUND = 2
+-- Error codes mirrored from include/lua_quick_decode.h. Kept in sync manually;
+-- src/error.rs has the authoritative numbering.
+local ERR = {
+    OK                  =  0,
+    PARSE_ERROR         =  1,
+    NOT_FOUND           =  2,
+    TYPE_MISMATCH       =  3,
+    OUT_OF_RANGE        =  4,
+    DECODE_FAILED       =  5,
+    INVALID_PATH        =  6,
+    INVALID_ARG         =  7,
+    OOM                 =  8,
+    NESTING_TOO_DEEP    =  9,
+    TRAILING_CONTENT    = 10,
+    NUMBER_OUT_OF_RANGE = 11,
+    INVALID_NUMBER      = 12,
+    INVALID_STRING      = 13,
+    INVALID_UTF8        = 14,
+}
 
 local _M = {
     T_NULL = 0, T_BOOL = 1, T_NUM = 2,
     T_STR  = 3, T_ARR  = 4, T_OBJ = 5,
 }
+_M.ERR = ERR
 
 local Doc    = {}; Doc.__index    = Doc
 local Cursor = {}; Cursor.__index = Cursor

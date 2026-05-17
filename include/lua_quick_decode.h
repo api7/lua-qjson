@@ -9,15 +9,21 @@ extern "C" {
 #endif
 
 typedef enum {
-    QJD_OK            = 0,
-    QJD_PARSE_ERROR   = 1,
-    QJD_NOT_FOUND     = 2,
-    QJD_TYPE_MISMATCH = 3,
-    QJD_OUT_OF_RANGE  = 4,
-    QJD_DECODE_FAILED = 5,
-    QJD_INVALID_PATH  = 6,
-    QJD_INVALID_ARG   = 7,
-    QJD_OOM           = 8
+    QJD_OK                  =  0,
+    QJD_PARSE_ERROR         =  1,
+    QJD_NOT_FOUND           =  2,
+    QJD_TYPE_MISMATCH       =  3,
+    QJD_OUT_OF_RANGE        =  4,
+    QJD_DECODE_FAILED       =  5,
+    QJD_INVALID_PATH        =  6,
+    QJD_INVALID_ARG         =  7,
+    QJD_OOM                 =  8,
+    QJD_NESTING_TOO_DEEP    =  9,
+    QJD_TRAILING_CONTENT    = 10,
+    QJD_NUMBER_OUT_OF_RANGE = 11,
+    QJD_INVALID_NUMBER      = 12,
+    QJD_INVALID_STRING      = 13,
+    QJD_INVALID_UTF8        = 14
 } qjd_err;
 
 typedef enum {
