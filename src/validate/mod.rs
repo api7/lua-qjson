@@ -138,6 +138,9 @@ pub(crate) fn validate_eager_values(
 fn validate_scalars_in_gaps(buf: &[u8], indices: &[u32]) -> Result<(), qjd_err> {
     let mut prev_end: usize = 0;
     let mut in_str = false;
+    // Track the last non-quote structural char so check_gap can reject empty
+    // gaps in positions where a value is required (after `:` or `,`).
+    let mut prev_structural: u8 = 0;
     for &idx in indices {
         if idx == u32::MAX { break; }
         let pos = idx as usize;
@@ -151,27 +154,45 @@ fn validate_scalars_in_gaps(buf: &[u8], indices: &[u32]) -> Result<(), qjd_err> 
                 prev_end = pos + 1;
             } else {
                 // Validate any scalar in the gap leading up to this quote.
-                check_gap(buf, prev_end, pos)?;
+                // An open-quote is itself a value, so pass it as the next char:
+                // an empty gap before a string is always fine (`:` `"` and `,` `"` are
+                // both valid — the string IS the value).
+                check_gap(buf, prev_end, pos, prev_structural, b'"')?;
                 in_str = true;
+                prev_structural = b'"';
             }
             continue;
         }
         if in_str { continue; }
 
-        check_gap(buf, prev_end, pos)?;
+        check_gap(buf, prev_end, pos, prev_structural, b)?;
         prev_end = pos + 1;
+        prev_structural = b;
     }
-    // Tail gap (top-level scalar like "42")
-    check_gap(buf, prev_end, buf.len())
+    // Tail gap (top-level scalar like "42"): next char is EOF (0 sentinel)
+    check_gap(buf, prev_end, buf.len(), prev_structural, 0)
 }
 
-fn check_gap(buf: &[u8], start: usize, end: usize) -> Result<(), qjd_err> {
+/// `prev_structural`: the last non-quote structural char before this gap.
+/// `next_structural`: the structural char immediately after this gap (opens or closes).
+fn check_gap(buf: &[u8], start: usize, end: usize, prev_structural: u8, next_structural: u8) -> Result<(), qjd_err> {
     // Strip surrounding whitespace.
     let mut s = start;
     while s < end && is_ws(buf[s]) { s += 1; }
     let mut e = end;
     while e > s && is_ws(buf[e - 1]) { e -= 1; }
-    if s == e { return Ok(()); }
+    if s == e {
+        // Empty gap: a value is required after `:` (object value) or `,` (next
+        // element), BUT only when the next token is not a structural value-starter
+        // (`"`, `{`, `[`) — those ARE the values. An empty gap before `}` / `]`
+        // / `,` when the preceding token demands a value is a structural error.
+        // This heuristic catches {"a":}, [,], [1,] without a full grammar walk.
+        let next_is_value_starter = matches!(next_structural, b'"' | b'{' | b'[');
+        if matches!(prev_structural, b':' | b',') && !next_is_value_starter {
+            return Err(qjd_err::QJD_PARSE_ERROR);
+        }
+        return Ok(());
+    }
     let scalar = &buf[s..e];
 
     // Dispatch on first byte.

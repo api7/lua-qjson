@@ -19,6 +19,12 @@ impl<'a> Document<'a> {
         buf: &'a [u8],
         opts: &crate::options::Options,
     ) -> Result<Self, qjd_err> {
+        // RFC 8259 §2: "A JSON text is a serialized value."
+        // Empty input and whitespace-only input contain no value.
+        if buf.iter().all(|&b| matches!(b, b' ' | b'\t' | b'\n' | b'\r')) {
+            return Err(qjd_err::QJD_PARSE_ERROR);
+        }
+
         let max_depth = opts.effective_max_depth();
         let mut indices = Vec::new();
         crate::scan::scan(buf, &mut indices).map_err(|_| qjd_err::QJD_PARSE_ERROR)?;
