@@ -24,6 +24,26 @@ end
 -- the final image falls through to `math.max(1024, remaining)` — undershoot
 -- is at most a few hundred bytes; worst-case overshoot is ~1 KB (only when
 -- `remaining < 1024`, which the seed=42 walk does not hit for our ladder).
+-- Structure-dense payload: many small key-value pairs with short string values.
+-- Targets ~10-12% structural density (vs <0.1% for multimodal payloads).
+-- Shape: {"items":[{"k0":"v0","k1":"v1",...}, {...}, ...]}
+local function make_dense_payload(target_bytes)
+    local items = {}
+    local current = 20  -- outer envelope: {"items":[...]}
+
+    while current < target_bytes do
+        local obj_parts = {}
+        for i = 0, 19 do
+            obj_parts[#obj_parts + 1] = string.format('"k%d":"val%d"', i, i)
+        end
+        local obj = "{" .. table.concat(obj_parts, ",") .. "}"
+        items[#items + 1] = obj
+        current = current + #obj + 1
+    end
+
+    return '{"items":[' .. table.concat(items, ",") .. ']}'
+end
+
 local function make_payload(target_bytes)
     local rng_state = 42
     local function rng_range(lo, hi)
@@ -97,6 +117,7 @@ end
 local scenarios = {
     {name = "small",  iters = 5000, payload = read_file("benches/fixtures/small_api.json")},
     {name = "medium", iters = 500,  payload = read_file("benches/fixtures/medium_resp.json")},
+    {name = "dense-100k", iters = 100, payload = make_dense_payload(100 * 1024)},
     {name = "100k",   iters = 100,  payload = make_payload(100 * 1024)},
     {name = "200k",   iters = 50,   payload = make_payload(200 * 1024)},
     {name = "500k",   iters = 20,   payload = make_payload(500 * 1024)},
