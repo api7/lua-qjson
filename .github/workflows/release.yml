@@ -39,16 +39,32 @@ jobs:
         env:
           HEAD_COMMIT_MESSAGE: ${{ github.event.head_commit.message }}
         run: |
-          title="$HEAD_COMMIT_MESSAGE"
+          title="${HEAD_COMMIT_MESSAGE%%$'\n'*}"
           re="^feat: release v?([0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?)$"
           if [[ $title =~ $re ]]; then
               v=v${BASH_REMATCH[1]}
               echo "version=${v}" >> $GITHUB_OUTPUT
               echo "version_without_v=${BASH_REMATCH[1]}" >> $GITHUB_OUTPUT
+              if [[ ${BASH_REMATCH[1]} == *-* ]]; then
+                  echo "is_prerelease=true" >> $GITHUB_OUTPUT
+              else
+                  echo "is_prerelease=false" >> $GITHUB_OUTPUT
+              fi
           else
               echo "commit format is not correct (expected: feat: release vX.Y.Z[-prerelease])"
               exit 1
           fi
+
+      - name: Verify rockspec exists
+        id: verify_rockspec
+        shell: bash
+        run: |
+          rockspec_file="rockspec/lua-qjson-${{ steps.release_env.outputs.version_without_v }}-1.rockspec"
+          if [ ! -f "$rockspec_file" ]; then
+              echo "rockspec file not found: $rockspec_file"
+              exit 1
+          fi
+          echo "rockspec_file=${rockspec_file}" >> $GITHUB_OUTPUT
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
@@ -56,10 +72,10 @@ jobs:
           tag_name: ${{ steps.release_env.outputs.version }}
           name: ${{ steps.release_env.outputs.version }}
           draft: false
-          prerelease: false
+          prerelease: ${{ steps.release_env.outputs.is_prerelease }}
 
       - name: Upload to LuaRocks
         env:
           LUAROCKS_TOKEN: ${{ secrets.LUAROCKS_TOKEN }}
         run: |
-          luarocks upload rockspec/lua-qjson-${{ steps.release_env.outputs.version_without_v }}-1.rockspec --api-key=${LUAROCKS_TOKEN}
+          luarocks upload "${{ steps.verify_rockspec.outputs.rockspec_file }}" --api-key="${LUAROCKS_TOKEN}"
