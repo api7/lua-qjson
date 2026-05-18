@@ -1,10 +1,8 @@
 use crate::error::qjd_err;
 
 pub(crate) fn parse_i64(bytes: &[u8]) -> Result<i64, qjd_err> {
-    if bytes.is_empty() {
-        return Err(qjd_err::QJD_DECODE_FAILED);
-    }
-    // Reject non-integer JSON numbers (with decimal point or exponent).
+    crate::validate::validate_number(bytes)?;
+    // After ABNF validation, integer-only inputs have no `.`/`e`/`E`.
     if bytes.iter().any(|&b| b == b'.' || b == b'e' || b == b'E') {
         return Err(qjd_err::QJD_TYPE_MISMATCH);
     }
@@ -12,9 +10,7 @@ pub(crate) fn parse_i64(bytes: &[u8]) -> Result<i64, qjd_err> {
         b'-' => (true, &bytes[1..]),
         _    => (false, bytes),
     };
-    if rest.is_empty() || !rest.iter().all(|c| c.is_ascii_digit()) {
-        return Err(qjd_err::QJD_DECODE_FAILED);
-    }
+    // ABNF guarantees `rest` is non-empty and digit-only here.
     let mut v: i64 = 0;
     for &c in rest {
         let d = (c - b'0') as i64;
@@ -29,11 +25,13 @@ pub(crate) fn parse_i64(bytes: &[u8]) -> Result<i64, qjd_err> {
 }
 
 pub(crate) fn parse_f64(bytes: &[u8]) -> Result<f64, qjd_err> {
-    if bytes.is_empty() {
-        return Err(qjd_err::QJD_DECODE_FAILED);
-    }
+    crate::validate::validate_number(bytes)?;
     let s = std::str::from_utf8(bytes).map_err(|_| qjd_err::QJD_DECODE_FAILED)?;
-    s.parse::<f64>().map_err(|_| qjd_err::QJD_DECODE_FAILED)
+    match s.parse::<f64>() {
+        Ok(v) if v.is_finite() => Ok(v),
+        Ok(_)                  => Err(qjd_err::QJD_NUMBER_OUT_OF_RANGE),
+        Err(_)                 => Err(qjd_err::QJD_DECODE_FAILED),
+    }
 }
 
 #[cfg(test)]
@@ -63,7 +61,7 @@ mod tests {
 
     #[test]
     fn i64_rejects_empty() {
-        assert_eq!(parse_i64(b""), Err(qjd_err::QJD_DECODE_FAILED));
+        assert_eq!(parse_i64(b""), Err(qjd_err::QJD_INVALID_NUMBER));
     }
 
     #[test] fn f64_zero()    { assert_eq!(parse_f64(b"0.0").unwrap(),  0.0); }
@@ -73,6 +71,6 @@ mod tests {
 
     #[test]
     fn f64_rejects_garbage() {
-        assert_eq!(parse_f64(b"hello"), Err(qjd_err::QJD_DECODE_FAILED));
+        assert_eq!(parse_f64(b"hello"), Err(qjd_err::QJD_INVALID_NUMBER));
     }
 }

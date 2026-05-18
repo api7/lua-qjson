@@ -55,16 +55,22 @@ pub struct qjd_doc(pub(crate) Document<'static>);
 pub unsafe extern "C" fn qjd_strerror(code: c_int) -> *const c_char {
     // Hardcoded NUL-terminated map; avoids runtime allocation and lifetime issues.
     let s: &'static [u8] = match code {
-        0 => b"ok\0",
-        1 => b"JSON parse error\0",
-        2 => b"path not found\0",
-        3 => b"type mismatch at path\0",
-        4 => b"numeric out of range\0",
-        5 => b"decode failed\0",
-        6 => b"invalid path syntax\0",
-        7 => b"invalid argument\0",
-        8 => b"out of memory\0",
-        _ => b"unknown error code\0",
+         0 => b"ok\0",
+         1 => b"JSON parse error\0",
+         2 => b"path not found\0",
+         3 => b"type mismatch at path\0",
+         4 => b"numeric out of range\0",
+         5 => b"decode failed\0",
+         6 => b"invalid path syntax\0",
+         7 => b"invalid argument\0",
+         8 => b"out of memory\0",
+         9 => b"nesting depth exceeds limit\0",
+        10 => b"trailing content after root value\0",
+        11 => b"number out of representable range\0",
+        12 => b"invalid number format (RFC 8259)\0",
+        13 => b"invalid string content (unescaped control char)\0",
+        14 => b"invalid UTF-8 in string\0",
+         _ => b"unknown error code\0",
     };
     s.as_ptr() as *const c_char
 }
@@ -75,8 +81,8 @@ pub unsafe extern "C" fn qjd_strerror(code: c_int) -> *const c_char {
 ///
 /// - `buf` must point to `len` readable bytes, or be NULL (in which case the
 ///   function returns NULL with `*err_out = QJD_INVALID_ARG`).
-/// - `err_out` must point to a writable `int`, or be NULL (in which case the
-///   function returns NULL with no error code written).
+/// - `err_out` may be NULL. When non-NULL it receives `QJD_OK` on success or
+///   an error code on failure.
 /// - The buffer must remain valid and unmodified for the lifetime of the
 ///   returned `qjd_doc*`; the document borrows it.
 /// - On success, the returned pointer must be freed exactly once with
@@ -87,19 +93,43 @@ pub unsafe extern "C" fn qjd_parse(
     len:     usize,
     err_out: *mut c_int,
 ) -> *mut qjd_doc {
+    let default = crate::options::Options::default();
+    qjd_parse_ex(buf, len, &default as *const _, err_out)
+}
+
+/// Parse with caller-supplied options. `opts` may be NULL to mean defaults
+/// (eager mode, default max_depth).
+///
+/// # Safety
+///
+/// Same as `qjd_parse`, with the additional contract that `opts`, when
+/// non-NULL, points to a readable `qjd_options` for the duration of the call
+/// (the struct is copied internally).
+#[no_mangle]
+pub unsafe extern "C" fn qjd_parse_ex(
+    buf:     *const u8,
+    len:     usize,
+    opts:    *const crate::options::Options,
+    err_out: *mut c_int,
+) -> *mut qjd_doc {
     let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        if buf.is_null() || err_out.is_null() {
+        if buf.is_null() {
             if !err_out.is_null() { *err_out = qjd_err::QJD_INVALID_ARG as c_int; }
             return ptr::null_mut();
         }
+        let opts_owned = if opts.is_null() {
+            crate::options::Options::default()
+        } else {
+            *opts
+        };
         let slice: &'static [u8] = std::slice::from_raw_parts(buf, len);
-        match Document::parse(slice) {
+        match Document::parse_with_options(slice, &opts_owned) {
             Ok(d) => {
-                *err_out = qjd_err::QJD_OK as c_int;
+                if !err_out.is_null() { *err_out = qjd_err::QJD_OK as c_int; }
                 Box::into_raw(Box::new(qjd_doc(d)))
             }
             Err(e) => {
-                *err_out = e as c_int;
+                if !err_out.is_null() { *err_out = e as c_int; }
                 ptr::null_mut()
             }
         }

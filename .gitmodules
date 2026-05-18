@@ -1,3 +1,6 @@
 [submodule "vendor/lua-cjson"]
 	path = vendor/lua-cjson
 	url = https://github.com/openresty/lua-cjson.git
+[submodule "tests/vendor/JSONTestSuite"]
+	path = tests/vendor/JSONTestSuite
+	url = https://github.com/nst/JSONTestSuite

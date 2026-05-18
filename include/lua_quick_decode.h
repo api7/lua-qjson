@@ -9,21 +9,36 @@ extern "C" {
 #endif
 
 typedef enum {
-    QJD_OK            = 0,
-    QJD_PARSE_ERROR   = 1,
-    QJD_NOT_FOUND     = 2,
-    QJD_TYPE_MISMATCH = 3,
-    QJD_OUT_OF_RANGE  = 4,
-    QJD_DECODE_FAILED = 5,
-    QJD_INVALID_PATH  = 6,
-    QJD_INVALID_ARG   = 7,
-    QJD_OOM           = 8
+    QJD_OK                  =  0,
+    QJD_PARSE_ERROR         =  1,
+    QJD_NOT_FOUND           =  2,
+    QJD_TYPE_MISMATCH       =  3,
+    QJD_OUT_OF_RANGE        =  4,
+    QJD_DECODE_FAILED       =  5,
+    QJD_INVALID_PATH        =  6,
+    QJD_INVALID_ARG         =  7,
+    QJD_OOM                 =  8,
+    QJD_NESTING_TOO_DEEP    =  9,
+    QJD_TRAILING_CONTENT    = 10,
+    QJD_NUMBER_OUT_OF_RANGE = 11,
+    QJD_INVALID_NUMBER      = 12,
+    QJD_INVALID_STRING      = 13,
+    QJD_INVALID_UTF8        = 14
 } qjd_err;
 
 typedef enum {
     QJD_T_NULL = 0, QJD_T_BOOL = 1, QJD_T_NUM = 2,
     QJD_T_STR  = 3, QJD_T_ARR  = 4, QJD_T_OBJ = 5
 } qjd_type;
+
+#define QJD_MODE_EAGER          0u
+#define QJD_MODE_LAZY           1u
+#define QJD_DEFAULT_MAX_DEPTH   1024u
+
+typedef struct {
+    uint32_t mode;       /* QJD_MODE_EAGER (0) or QJD_MODE_LAZY (1) */
+    uint32_t max_depth;  /* 0 = use QJD_DEFAULT_MAX_DEPTH */
+} qjd_options;
 
 typedef struct qjd_doc qjd_doc;
 
@@ -38,6 +53,8 @@ typedef struct {
 const char* qjd_strerror(int code);
 
 qjd_doc* qjd_parse(const uint8_t* buf, size_t len, int* err_out);
+qjd_doc* qjd_parse_ex(const uint8_t* buf, size_t len,
+                      const qjd_options* opts, int* err_out);
 void     qjd_free (qjd_doc* doc);
 
 int qjd_get_str  (qjd_doc*, const char* path, size_t path_len,

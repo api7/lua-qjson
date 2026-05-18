@@ -12,10 +12,31 @@ pub struct Document<'a> {
 
 impl<'a> Document<'a> {
     pub fn parse(buf: &'a [u8]) -> Result<Self, qjd_err> {
+        Self::parse_with_options(buf, &crate::options::Options::default())
+    }
+
+    pub fn parse_with_options(
+        buf: &'a [u8],
+        opts: &crate::options::Options,
+    ) -> Result<Self, qjd_err> {
+        // RFC 8259 §2: "A JSON text is a serialized value."
+        // Empty input and whitespace-only input contain no value.
+        if buf.iter().all(|&b| matches!(b, b' ' | b'\t' | b'\n' | b'\r')) {
+            return Err(qjd_err::QJD_PARSE_ERROR);
+        }
+
+        let max_depth = opts.effective_max_depth();
         let mut indices = Vec::new();
         crate::scan::scan(buf, &mut indices).map_err(|_| qjd_err::QJD_PARSE_ERROR)?;
-        // Sentinel simplifies boundary checks during Phase 2.
         indices.push(u32::MAX);
+
+        crate::validate::validate_depth(buf, &indices, max_depth)?;
+
+        if opts.is_eager() {
+            crate::validate::validate_trailing(buf, &indices)?;
+            crate::validate::validate_eager_values(buf, &indices)?;
+        }
+
         Ok(Self {
             buf,
             indices,
@@ -168,5 +189,20 @@ mod tests {
     #[test]
     fn parse_error_on_malformed() {
         assert!(Document::parse(b"{").is_err());
+    }
+
+    #[test]
+    fn parse_with_options_defaults_match_parse() {
+        let opts = crate::options::Options::default();
+        let a = Document::parse(b"{\"a\":1}").unwrap();
+        let b = Document::parse_with_options(b"{\"a\":1}", &opts).unwrap();
+        assert_eq!(a.indices, b.indices);
+    }
+
+    #[test]
+    fn parse_with_lazy_skips_eager_validation() {
+        // Trailing content is an eager-only check; lazy must accept it.
+        let opts = crate::options::Options { mode: crate::options::QJD_MODE_LAZY, max_depth: 0 };
+        assert!(Document::parse_with_options(b"{}garbage", &opts).is_ok());
     }
 }
