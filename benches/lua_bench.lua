@@ -190,19 +190,31 @@ end
 local function default_cjson_access(obj)
     local _ = obj.model
     local _ = obj.temperature
-    local _ = obj.messages and obj.messages[1] and obj.messages[1].role
+    if obj.messages then
+        for _, msg in ipairs(obj.messages) do
+            local _ = msg.content
+        end
+    end
 end
 
 local function default_qd_access(d)
     local _ = d:get_str("model")
     local _ = d:get_f64("temperature")
-    local _ = d:get_str("messages[0].role")
+    local n = d:len("messages") or 0
+    for i = 0, n - 1 do
+        local _ = d:typeof("messages[" .. i .. "].content")
+    end
 end
 
 local function default_table_access(t)
     local _ = t.model
     local _ = t.temperature
-    local _ = t.messages and t.messages[1] and t.messages[1].role
+    if t.messages then
+        for i = 1, qd.len(t.messages) do
+            local msg = t.messages[i]
+            local _ = msg.content
+        end
+    end
 end
 
 -- GitHub issues accessors: array of issues, access first issue's fields
@@ -250,18 +262,18 @@ for _, s in ipairs(scenarios) do
     local qd_access = s.qd_access or default_qd_access
     local table_access = s.table_access or default_table_access
 
-    bench("cjson.decode + access 3 fields", s.iters, function()
+    bench("cjson.decode + access fields", s.iters, function()
         local obj = cjson.decode(s.payload)
         cjson_access(obj)
     end)
 
-    bench("quickdecode.parse + access 3 fields", s.iters, function()
+    bench("quickdecode.parse + access fields", s.iters, function()
         local d = qd.parse(s.payload)
         qd_access(d)
     end)
 
     if has_pooled_api then
-        bench("quickdecode pooled :parse + access 3 fields", s.iters, function()
+        bench("quickdecode pooled :parse + access fields", s.iters, function()
             local d = pooled_decoder:parse(s.payload)
             qd_access(d)
         end)
@@ -273,7 +285,7 @@ for _, s in ipairs(scenarios) do
         end)
     end
 
-    bench("qd.decode + t.field x3", s.iters, function()
+    bench("qd.decode + access content", s.iters, function()
         local t = qd.decode(s.payload)
         table_access(t)
     end)
@@ -315,41 +327,56 @@ print(string.format("=== interleaved %s ===", table.concat(interleaved_names, ",
 
 do
     local next_p = make_cycler(interleaved)
-    bench("cjson.decode + access 3 fields", 400, function()
+    bench("cjson.decode + access fields", 400, function()
         local p = next_p()
         local obj = cjson.decode(p)
         local _ = obj.model
         local _ = obj.temperature
-        local _ = obj.messages and obj.messages[1] and obj.messages[1].role
+        if obj.messages then
+            for _, msg in ipairs(obj.messages) do
+                local _ = msg.content
+            end
+        end
     end)
 
     next_p = make_cycler(interleaved)
-    bench("quickdecode.parse + access 3 fields", 400, function()
+    bench("quickdecode.parse + access fields", 400, function()
         local p = next_p()
         local d = qd.parse(p)
         local _ = d:get_str("model")
         local _ = d:get_f64("temperature")
-        local _ = d:get_str("messages[0].role")
+        local n = d:len("messages") or 0
+        for i = 0, n - 1 do
+            local _ = d:typeof("messages[" .. i .. "].content")
+        end
     end)
 
     if has_pooled_api then
         next_p = make_cycler(interleaved)
-        bench("quickdecode pooled :parse + access 3 fields", 400, function()
+        bench("quickdecode pooled :parse + access fields", 400, function()
             local p = next_p()
             local d = pooled_decoder:parse(p)
             local _ = d:get_str("model")
             local _ = d:get_f64("temperature")
-            local _ = d:get_str("messages[0].role")
+            local n = d:len("messages") or 0
+            for i = 0, n - 1 do
+                local _ = d:typeof("messages[" .. i .. "].content")
+            end
         end)
     end
 
     next_p = make_cycler(interleaved)
-    bench("qd.decode + t.field x3", 400, function()
+    bench("qd.decode + access content", 400, function()
         local p = next_p()
         local t = qd.decode(p)
         local _ = t.model
         local _ = t.temperature
-        local _ = t.messages and t.messages[1] and t.messages[1].role
+        if t.messages then
+            for i = 1, qd.len(t.messages) do
+                local msg = t.messages[i]
+                local _ = msg.content
+            end
+        end
     end)
 
     next_p = make_cycler(interleaved)
