@@ -4,14 +4,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-Rust JSON decoder (`cdylib` + `rlib`) exposed to LuaJIT via FFI. Optimized for parse-once / extract-a-few-fields / discard. The competitive edge over `lua-cjson` comes from **never building a Lua table** — Phase 1 records only structural offsets, Phase 2 lazily decodes the fields the caller actually asks for. Crate name in `Cargo.toml` is `lua-quick-decode`; the compiled artifact is `libquickdecode.so`.
+Rust JSON decoder (`cdylib` + `rlib`) exposed to LuaJIT via FFI. Optimized for parse-once / extract-a-few-fields / discard. The competitive edge over `lua-cjson` comes from **never building a Lua table** — Phase 1 records only structural offsets, Phase 2 lazily decodes the fields the caller actually asks for. Crate name in `Cargo.toml` is `qjson`; the compiled artifact is `libqjson.so`.
 
 ## Common commands
 
 The `Makefile` is the canonical entry point; `make help` lists targets.
 
 ```sh
-make build              # cargo build --release  → target/release/libquickdecode.so
+make build              # cargo build --release  → target/release/libqjson.so
 make test               # cargo test --release + busted Lua tests
 make lint               # cargo clippy -D warnings + cargo fmt --check
 make bench              # OpenResty LuaJIT benchmark vs lua-cjson and simdjson
@@ -37,7 +37,7 @@ cargo test --release --no-default-features
 cargo test --features test-panic --release
 ```
 
-`ffi.load("quickdecode")` uses `dlopen`, which respects `LD_LIBRARY_PATH` — **not** LuaJIT's `package.cpath`. The Makefile sets `LD_LIBRARY_PATH=target/release` for `test`/`bench`; if you invoke `busted` or `luajit` directly, set it yourself.
+`ffi.load("qjson")` uses `dlopen`, which respects `LD_LIBRARY_PATH` — **not** LuaJIT's `package.cpath`. The Makefile sets `LD_LIBRARY_PATH=target/release` for `test`/`bench`; if you invoke `busted` or `luajit` directly, set it yourself.
 
 `make lint` runs clippy only (with `-D warnings`); `cargo fmt --check` is intentionally **not** part of the lint gate because the codebase uses manual column alignment in struct definitions and compact single-line literals that default rustfmt would reflow. See the README "Roadmap / Deferred" entry on fmt for context.
 
@@ -50,39 +50,39 @@ cargo test --features test-panic --release
 - `Avx2Scanner` (gated by the `avx2` cargo feature, default-on) when both `avx2` and `pclmulqdq` are detected at runtime.
 - `ScalarScanner` otherwise.
 
-Validation level depends on `qjd_options.mode`. **EAGER** (default): a post-scan pass walks `indices` and validates RFC 8259 number ABNF, string content (no unescaped control chars), and UTF-8 — parse fails on any value-level violation. **LAZY** (opt-in): bracket/quote balance + max-depth only; value-level errors surface when the offending field is accessed (lua-cjson-equivalent behavior). Trailing-content rejection and value-level validation are eager-only; max-depth (default 1024, configurable up to 4096) is enforced in both modes.
+Validation level depends on `qjson_options.mode`. **EAGER** (default): a post-scan pass walks `indices` and validates RFC 8259 number ABNF, string content (no unescaped control chars), and UTF-8 — parse fails on any value-level violation. **LAZY** (opt-in): bracket/quote balance + max-depth only; value-level errors surface when the offending field is accessed (lua-cjson-equivalent behavior). Trailing-content rejection and value-level validation are eager-only; max-depth (default 1024, configurable up to 4096) is enforced in both modes.
 
 **Phase 2** (`src/cursor.rs`, `src/path.rs`, `src/decode/`): path strings are parsed by a zero-alloc `PathIter` into `PathSeg::Key | Idx`. A `Cursor` (a `(idx_start, idx_end)` pair into `doc.indices`) is walked to the target, optionally caching sibling spans in `doc.skip` (`SkipCache`) so repeated lookups on the same container skip brace-counting. Strings are decoded into `doc.scratch` only when they contain escapes; otherwise the original buffer slice is handed back.
 
 ### Critical invariants (these will bite you if violated)
 
-- **`get_str` pointer lifetime.** The `(ptr, len)` returned by `qjd_get_str` / `qjd_cursor_get_str` points into either the original input buffer or `doc.scratch`. **Any subsequent `*_get_str` call on the same doc may invalidate prior pointers** (scratch buffer reuse). The LuaJIT wrapper preserves this contract by calling `ffi.string(ptr, len)` immediately to copy into a Lua string — do not change that.
-- **Buffer lifetime.** `Document<'a>` borrows the input slice. `qjd_parse` transmutes `'a` to `'static` and trusts the caller to keep the buffer alive for the document's lifetime. The LuaJIT wrapper enforces this by stashing the original string under `_hold` on the Doc table so Lua GC keeps it pinned.
+- **`get_str` pointer lifetime.** The `(ptr, len)` returned by `qjson_get_str` / `qjson_cursor_get_str` points into either the original input buffer or `doc.scratch`. **Any subsequent `*_get_str` call on the same doc may invalidate prior pointers** (scratch buffer reuse). The LuaJIT wrapper preserves this contract by calling `ffi.string(ptr, len)` immediately to copy into a Lua string — do not change that.
+- **Buffer lifetime.** `Document<'a>` borrows the input slice. `qjson_parse` transmutes `'a` to `'static` and trusts the caller to keep the buffer alive for the document's lifetime. The LuaJIT wrapper enforces this by stashing the original string under `_hold` on the Doc table so Lua GC keeps it pinned.
 - **`indices` stores offsets only, not types.** Token type is recovered from `buf[indices[i]]`. Do not add a type tag — the 25% memory win is intentional.
-- **Single-threaded.** `qjd_doc` is not Sync/Send across threads; `RefCell` is used for `scratch` and `skip`.
-- **FFI panic barrier.** Every `pub unsafe extern "C"` function in `src/ffi.rs` wraps its body in `catch_unwind` and converts a panic into `QJD_OOM`. Preserve this pattern on any new export — a panic crossing the FFI boundary is undefined behavior.
+- **Single-threaded.** `qjson_doc` is not Sync/Send across threads; `RefCell` is used for `scratch` and `skip`.
+- **FFI panic barrier.** Every `pub unsafe extern "C"` function in `src/ffi.rs` wraps its body in `catch_unwind` and converts a panic into `QJSON_OOM`. Preserve this pattern on any new export — a panic crossing the FFI boundary is undefined behavior.
 
 ### Layout
 
 ```
 src/
   lib.rs          crate root
-  ffi.rs          extern "C" surface, qjd_* symbols, panic barrier
+  ffi.rs          extern "C" surface, qjson_* symbols, panic barrier
   doc.rs          Document (indices + scratch + skip cache)
   cursor.rs       Cursor + path resolution + skip-cache walk
   path.rs         zero-alloc path-string iterator
   decode/         lazy string / number decode
   scan/           ScalarScanner, Avx2Scanner, runtime dispatch
   skip_cache.rs   Phase 2 sibling-skip cache
-  error.rs        qjd_err + qjd_type enums (must stay in sync with include/lua_quick_decode.h and lua/quickdecode.lua)
+  error.rs        qjson_err + qjson_type enums (must stay in sync with include/qjson.h and lua/qjson.lua)
 
-lua/quickdecode.lua    LuaJIT wrapper (ffi.cdef + Doc/Cursor metatables)
-include/lua_quick_decode.h  public C header
+lua/qjson.lua    LuaJIT wrapper (ffi.cdef + Doc/Cursor metatables)
+include/qjson.h  public C header
 tests/                Rust integration tests + tests/lua/ busted suite
 benches/              lua_bench.lua vs lua-cjson/simdjson; fixtures/ has small_api.json + medium_resp.json
 ```
 
-The enum values in `src/error.rs` are duplicated in `include/lua_quick_decode.h` and `lua/quickdecode.lua` (the latter only encodes the `T_*` type tags and `NOT_FOUND = 2`). Keep all three in sync when adding/renumbering codes.
+The enum values in `src/error.rs` are duplicated in `include/qjson.h` and `lua/qjson.lua` (the latter only encodes the `T_*` type tags and `NOT_FOUND = 2`). Keep all three in sync when adding/renumbering codes.
 
 ### CI gates worth knowing
 

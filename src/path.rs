@@ -1,4 +1,4 @@
-use crate::error::qjd_err;
+use crate::error::qjson_err;
 
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum PathSeg<'a> {
@@ -15,7 +15,7 @@ impl<'a> PathIter<'a> {
 }
 
 impl<'a> Iterator for PathIter<'a> {
-    type Item = Result<PathSeg<'a>, qjd_err>;
+    type Item = Result<PathSeg<'a>, qjson_err>;
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.rest.is_empty() {
@@ -28,11 +28,11 @@ impl<'a> Iterator for PathIter<'a> {
             // Index segment: [digits]
             let close = match self.rest.iter().position(|&c| c == b']') {
                 Some(p) => p,
-                None => return Some(Err(qjd_err::QJD_INVALID_PATH)),
+                None => return Some(Err(qjson_err::QJSON_INVALID_PATH)),
             };
             let digits = &self.rest[1..close];
             if digits.is_empty() || !digits.iter().all(|c| c.is_ascii_digit()) {
-                return Some(Err(qjd_err::QJD_INVALID_PATH));
+                return Some(Err(qjson_err::QJSON_INVALID_PATH));
             }
             let mut n: u32 = 0;
             for &c in digits {
@@ -40,7 +40,7 @@ impl<'a> Iterator for PathIter<'a> {
                     .and_then(|x| x.checked_add((c - b'0') as u32))
                 {
                     Some(v) => v,
-                    None => return Some(Err(qjd_err::QJD_INVALID_PATH)),
+                    None => return Some(Err(qjson_err::QJSON_INVALID_PATH)),
                 };
             }
             self.rest = &self.rest[close + 1..];
@@ -51,7 +51,7 @@ impl<'a> Iterator for PathIter<'a> {
             // Separator before a key. Skip it then require a key.
             self.rest = &self.rest[1..];
             if self.rest.is_empty() {
-                return Some(Err(qjd_err::QJD_INVALID_PATH));
+                return Some(Err(qjson_err::QJSON_INVALID_PATH));
             }
             return self.next();
         }
@@ -61,7 +61,7 @@ impl<'a> Iterator for PathIter<'a> {
             .position(|&c| c == b'.' || c == b'[')
             .unwrap_or(self.rest.len());
         if end == 0 {
-            return Some(Err(qjd_err::QJD_INVALID_PATH));
+            return Some(Err(qjson_err::QJSON_INVALID_PATH));
         }
         let key = &self.rest[..end];
         self.rest = &self.rest[end..];
@@ -73,7 +73,7 @@ impl<'a> Iterator for PathIter<'a> {
 mod tests {
     use super::*;
 
-    fn parse(p: &[u8]) -> Result<Vec<PathSeg<'_>>, qjd_err> {
+    fn parse(p: &[u8]) -> Result<Vec<PathSeg<'_>>, qjson_err> {
         PathIter::new(p).collect()
     }
 
@@ -131,16 +131,16 @@ mod tests {
 
     #[test]
     fn unterminated_index_is_error() {
-        assert_eq!(parse(b"a[3"), Err(qjd_err::QJD_INVALID_PATH));
+        assert_eq!(parse(b"a[3"), Err(qjson_err::QJSON_INVALID_PATH));
     }
 
     #[test]
     fn non_digit_in_index_is_error() {
-        assert_eq!(parse(b"a[abc]"), Err(qjd_err::QJD_INVALID_PATH));
+        assert_eq!(parse(b"a[abc]"), Err(qjson_err::QJSON_INVALID_PATH));
     }
 
     #[test]
     fn trailing_dot_is_error() {
-        assert_eq!(parse(b"a."), Err(qjd_err::QJD_INVALID_PATH));
+        assert_eq!(parse(b"a."), Err(qjson_err::QJSON_INVALID_PATH));
     }
 }

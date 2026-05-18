@@ -17,12 +17,12 @@
 //! pins down which wins on mixed input, so the position-ordered choice here
 //! is the natural single-pass behavior.
 
-use crate::error::qjd_err;
+use crate::error::qjson_err;
 
 /// Validate `span` byte-by-byte. The caller passes the unescaped string
 /// interior (between the JSON `"…"` quotes) — `\` therefore introduces an
 /// RFC 8259 escape sequence, not a literal backslash byte.
-pub(crate) fn validate_span_scalar(span: &[u8]) -> Result<(), qjd_err> {
+pub(crate) fn validate_span_scalar(span: &[u8]) -> Result<(), qjson_err> {
     let mut i: usize = 0;
     let n = span.len();
     while i < n {
@@ -31,7 +31,7 @@ pub(crate) fn validate_span_scalar(span: &[u8]) -> Result<(), qjd_err> {
         // Fast path: plain ASCII non-escape non-control.
         if b < 0x80 {
             if b < 0x20 {
-                return Err(qjd_err::QJD_INVALID_STRING);
+                return Err(qjson_err::QJSON_INVALID_STRING);
             }
             if b == b'\\' {
                 i = validate_escape(span, i + 1)?;
@@ -50,10 +50,10 @@ pub(crate) fn validate_span_scalar(span: &[u8]) -> Result<(), qjd_err> {
 /// At entry `i` points to the byte AFTER the `\`. Returns the index of the
 /// next byte to validate (i.e. one past the last consumed escape byte).
 #[inline]
-fn validate_escape(span: &[u8], i: usize) -> Result<usize, qjd_err> {
+fn validate_escape(span: &[u8], i: usize) -> Result<usize, qjson_err> {
     if i >= span.len() {
         // Dangling `\` at end of span.
-        return Err(qjd_err::QJD_INVALID_STRING);
+        return Err(qjson_err::QJSON_INVALID_STRING);
     }
     match span[i] {
         b'"' | b'\\' | b'/' | b'b' | b'f' | b'n' | b'r' | b't' => Ok(i + 1),
@@ -62,16 +62,16 @@ fn validate_escape(span: &[u8], i: usize) -> Result<usize, qjd_err> {
             let hex_start = i + 1;
             let hex_end = hex_start + 4;
             if hex_end > span.len() {
-                return Err(qjd_err::QJD_INVALID_STRING);
+                return Err(qjson_err::QJSON_INVALID_STRING);
             }
             for &h in &span[hex_start..hex_end] {
                 if !h.is_ascii_hexdigit() {
-                    return Err(qjd_err::QJD_INVALID_STRING);
+                    return Err(qjson_err::QJSON_INVALID_STRING);
                 }
             }
             Ok(hex_end)
         }
-        _ => Err(qjd_err::QJD_INVALID_STRING),
+        _ => Err(qjson_err::QJSON_INVALID_STRING),
     }
 }
 
@@ -80,18 +80,18 @@ fn validate_escape(span: &[u8], i: usize) -> Result<usize, qjd_err> {
 /// encodings and UTF-16 surrogates U+D800..=U+DFFF). Returns the index one
 /// past the last byte of the sequence.
 #[inline]
-fn validate_utf8_sequence(span: &[u8], i: usize) -> Result<usize, qjd_err> {
+fn validate_utf8_sequence(span: &[u8], i: usize) -> Result<usize, qjson_err> {
     let lead = span[i];
     let n = span.len();
 
     // 2-byte: 110xxxxx 10xxxxxx, lead in C2..=DF (C0/C1 are overlong).
     if (0xC2..=0xDF).contains(&lead) {
         if i + 1 >= n {
-            return Err(qjd_err::QJD_INVALID_UTF8);
+            return Err(qjson_err::QJSON_INVALID_UTF8);
         }
         let b1 = span[i + 1];
         if !(0x80..=0xBF).contains(&b1) {
-            return Err(qjd_err::QJD_INVALID_UTF8);
+            return Err(qjson_err::QJSON_INVALID_UTF8);
         }
         return Ok(i + 2);
     }
@@ -101,7 +101,7 @@ fn validate_utf8_sequence(span: &[u8], i: usize) -> Result<usize, qjd_err> {
     //                    ED second must be 80..9F (else surrogate U+D800..=DFFF).
     if (0xE0..=0xEF).contains(&lead) {
         if i + 2 >= n {
-            return Err(qjd_err::QJD_INVALID_UTF8);
+            return Err(qjson_err::QJSON_INVALID_UTF8);
         }
         let b1 = span[i + 1];
         let b2 = span[i + 2];
@@ -114,10 +114,10 @@ fn validate_utf8_sequence(span: &[u8], i: usize) -> Result<usize, qjd_err> {
             _    => 0xBF,
         };
         if b1 < b1_lo || b1 > b1_hi {
-            return Err(qjd_err::QJD_INVALID_UTF8);
+            return Err(qjson_err::QJSON_INVALID_UTF8);
         }
         if !(0x80..=0xBF).contains(&b2) {
-            return Err(qjd_err::QJD_INVALID_UTF8);
+            return Err(qjson_err::QJSON_INVALID_UTF8);
         }
         return Ok(i + 3);
     }
@@ -127,7 +127,7 @@ fn validate_utf8_sequence(span: &[u8], i: usize) -> Result<usize, qjd_err> {
     //                    F4 second must be 80..8F (else > U+10FFFF).
     if (0xF0..=0xF4).contains(&lead) {
         if i + 3 >= n {
-            return Err(qjd_err::QJD_INVALID_UTF8);
+            return Err(qjson_err::QJSON_INVALID_UTF8);
         }
         let b1 = span[i + 1];
         let b2 = span[i + 2];
@@ -141,18 +141,18 @@ fn validate_utf8_sequence(span: &[u8], i: usize) -> Result<usize, qjd_err> {
             _    => 0xBF,
         };
         if b1 < b1_lo || b1 > b1_hi {
-            return Err(qjd_err::QJD_INVALID_UTF8);
+            return Err(qjson_err::QJSON_INVALID_UTF8);
         }
         if !(0x80..=0xBF).contains(&b2) {
-            return Err(qjd_err::QJD_INVALID_UTF8);
+            return Err(qjson_err::QJSON_INVALID_UTF8);
         }
         if !(0x80..=0xBF).contains(&b3) {
-            return Err(qjd_err::QJD_INVALID_UTF8);
+            return Err(qjson_err::QJSON_INVALID_UTF8);
         }
         return Ok(i + 4);
     }
 
     // C0, C1 (overlong 2-byte lead), F5..FF (out of range), or a bare
     // continuation byte (80..BF with no lead) — all invalid.
-    Err(qjd_err::QJD_INVALID_UTF8)
+    Err(qjson_err::QJSON_INVALID_UTF8)
 }

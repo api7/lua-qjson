@@ -24,7 +24,7 @@ help: ## Show this help
 	@# Consequence: targets whose prerequisite list contains `#` won't render — none today.
 	@awk 'BEGIN {FS = ":[^#]*## "} /^[a-zA-Z_-]+:[^#]*## / {printf "  \033[36m%-10s\033[0m — %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
-build: ## Build the release cdylib (target/release/libquickdecode.so)
+build: ## Build the release cdylib (target/release/libqjson.so)
 	cargo build --release
 
 test: build ## Run cargo tests + busted Lua tests

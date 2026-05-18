@@ -1,11 +1,14 @@
 [package]
-name = "lua-quick-decode"
+name = "qjson"
 version = "0.1.0"
 edition = "2021"
-publish = false
+description = "Fast JSON decoder for LuaJIT FFI consumers"
+license = "Apache-2.0"
+repository = "https://github.com/api7/lua-qjson"
+homepage = "https://github.com/api7/lua-qjson"
 
 [lib]
-name = "quickdecode"
+name = "qjson"
 crate-type = ["cdylib", "rlib"]
 
 [features]

@@ -12,19 +12,19 @@
 //! The fast-path payoff comes from cleanly skipping long ASCII prefixes;
 //! the scalar tail handles correctness without needing SIMD escape logic.
 
-use crate::error::qjd_err;
+use crate::error::qjson_err;
 use core::arch::x86_64::*;
 
 use super::scalar::validate_span_scalar;
 
 /// Validate `span` using AVX2 to bulk-skip pure-ASCII 32-byte chunks.
-pub(crate) fn validate_span_avx2(span: &[u8]) -> Result<(), qjd_err> {
+pub(crate) fn validate_span_avx2(span: &[u8]) -> Result<(), qjson_err> {
     // SAFETY: dispatcher has verified the AVX2 feature is present.
     unsafe { validate_span_avx2_impl(span) }
 }
 
 #[target_feature(enable = "avx2")]
-unsafe fn validate_span_avx2_impl(span: &[u8]) -> Result<(), qjd_err> {
+unsafe fn validate_span_avx2_impl(span: &[u8]) -> Result<(), qjson_err> {
     let mut i: usize = 0;
     let n = span.len();
 

@@ -10,7 +10,7 @@ pub(crate) use number::validate_number;
 pub(crate) mod strings;
 pub(crate) use strings::validate_string_span;
 
-use crate::error::qjd_err;
+use crate::error::qjson_err;
 
 /// Verify that the maximum bracket-stack depth implied by `indices`
 /// does not exceed `max_depth`. Walks indices once; assumes scan() has
@@ -21,7 +21,7 @@ pub(crate) fn validate_depth(
     buf: &[u8],
     indices: &[u32],
     max_depth: u32,
-) -> Result<(), qjd_err> {
+) -> Result<(), qjson_err> {
     let mut depth: u32 = 0;
     for &idx in indices {
         if idx == u32::MAX { break; }
@@ -29,7 +29,7 @@ pub(crate) fn validate_depth(
             b'{' | b'[' => {
                 depth += 1;
                 if depth > max_depth {
-                    return Err(qjd_err::QJD_NESTING_TOO_DEEP);
+                    return Err(qjson_err::QJSON_NESTING_TOO_DEEP);
                 }
             }
             b'}' | b']' => {
@@ -51,7 +51,7 @@ pub(crate) fn validate_depth(
 pub(crate) fn validate_trailing(
     buf: &[u8],
     indices: &[u32],
-) -> Result<(), qjd_err> {
+) -> Result<(), qjson_err> {
     // Find the first real structural character to determine root kind.
     let first = indices.iter().find(|&&i| i != u32::MAX).copied();
 
@@ -120,7 +120,7 @@ pub(crate) fn validate_trailing(
     };
 
     if root_end < buf.len() {
-        return Err(qjd_err::QJD_TRAILING_CONTENT);
+        return Err(qjson_err::QJSON_TRAILING_CONTENT);
     }
     Ok(())
 }
@@ -133,7 +133,7 @@ pub(crate) fn validate_trailing(
 /// value is required (`[,]`, `{"a":}`), missing colons (`{"a"}`),
 /// missing commas (`{"a":1"b":2}`), non-string object keys (`{1:1}`),
 /// and stray structural tokens (`[1:2]`) all surface here as
-/// `QJD_PARSE_ERROR`.
+/// `QJSON_PARSE_ERROR`.
 ///
 /// Scalar tokens (numbers, `true`, `false`, `null`) live in the byte
 /// gap before the *next* structural offset. They are dispatched to
@@ -143,7 +143,7 @@ pub(crate) fn validate_trailing(
 pub(crate) fn validate_eager_values(
     buf: &[u8],
     indices: &[u32],
-) -> Result<(), qjd_err> {
+) -> Result<(), qjson_err> {
     // Stack of container contexts; the top is the current state.
     // We use a single seed entry `CtxKind::Top` for the root value.
     let mut stack: Vec<CtxKind> = Vec::with_capacity(16);
@@ -183,44 +183,44 @@ pub(crate) fn validate_eager_values(
                             CtxKind::ArrAfterOpen
                         });
                     }
-                    _ => return Err(qjd_err::QJD_PARSE_ERROR),
+                    _ => return Err(qjson_err::QJSON_PARSE_ERROR),
                 }
                 prev_end = pos + 1;
                 i += 1;
             }
             b'}' => {
-                let top = stack.pop().ok_or(qjd_err::QJD_PARSE_ERROR)?;
+                let top = stack.pop().ok_or(qjson_err::QJSON_PARSE_ERROR)?;
                 if !matches!(top, CtxKind::ObjAfterOpen | CtxKind::ObjAfterValue) {
-                    return Err(qjd_err::QJD_PARSE_ERROR);
+                    return Err(qjson_err::QJSON_PARSE_ERROR);
                 }
-                if stack.is_empty() { return Err(qjd_err::QJD_PARSE_ERROR); }
+                if stack.is_empty() { return Err(qjson_err::QJSON_PARSE_ERROR); }
                 prev_end = pos + 1;
                 i += 1;
             }
             b']' => {
-                let top = stack.pop().ok_or(qjd_err::QJD_PARSE_ERROR)?;
+                let top = stack.pop().ok_or(qjson_err::QJSON_PARSE_ERROR)?;
                 if !matches!(top, CtxKind::ArrAfterOpen | CtxKind::ArrAfterValue) {
-                    return Err(qjd_err::QJD_PARSE_ERROR);
+                    return Err(qjson_err::QJSON_PARSE_ERROR);
                 }
-                if stack.is_empty() { return Err(qjd_err::QJD_PARSE_ERROR); }
+                if stack.is_empty() { return Err(qjson_err::QJSON_PARSE_ERROR); }
                 prev_end = pos + 1;
                 i += 1;
             }
             b',' => {
-                let cur = stack.last_mut().ok_or(qjd_err::QJD_PARSE_ERROR)?;
+                let cur = stack.last_mut().ok_or(qjson_err::QJSON_PARSE_ERROR)?;
                 match *cur {
                     CtxKind::ArrAfterValue => *cur = CtxKind::ArrAfterComma,
                     CtxKind::ObjAfterValue => *cur = CtxKind::ObjAfterComma,
-                    _ => return Err(qjd_err::QJD_PARSE_ERROR),
+                    _ => return Err(qjson_err::QJSON_PARSE_ERROR),
                 }
                 prev_end = pos + 1;
                 i += 1;
             }
             b':' => {
-                let cur = stack.last_mut().ok_or(qjd_err::QJD_PARSE_ERROR)?;
+                let cur = stack.last_mut().ok_or(qjson_err::QJSON_PARSE_ERROR)?;
                 match *cur {
                     CtxKind::ObjAfterKey => *cur = CtxKind::ObjAfterColon,
-                    _ => return Err(qjd_err::QJD_PARSE_ERROR),
+                    _ => return Err(qjson_err::QJSON_PARSE_ERROR),
                 }
                 prev_end = pos + 1;
                 i += 1;
@@ -228,14 +228,14 @@ pub(crate) fn validate_eager_values(
             b'"' => {
                 // The scanner pairs the opening and closing quotes; the
                 // closing quote is at indices[i + 1].
-                if i + 1 >= indices.len() { return Err(qjd_err::QJD_PARSE_ERROR); }
+                if i + 1 >= indices.len() { return Err(qjson_err::QJSON_PARSE_ERROR); }
                 let close = indices[i + 1] as usize;
                 if close <= pos || close >= buf.len() || buf[close] != b'"' {
-                    return Err(qjd_err::QJD_PARSE_ERROR);
+                    return Err(qjson_err::QJSON_PARSE_ERROR);
                 }
                 strings::validate_string_span(&buf[pos + 1 .. close])?;
 
-                let cur = stack.last_mut().ok_or(qjd_err::QJD_PARSE_ERROR)?;
+                let cur = stack.last_mut().ok_or(qjson_err::QJSON_PARSE_ERROR)?;
                 match *cur {
                     // Key position in an object.
                     CtxKind::ObjAfterOpen | CtxKind::ObjAfterComma => {
@@ -248,12 +248,12 @@ pub(crate) fn validate_eager_values(
                     | CtxKind::ObjAfterColon => {
                         *cur = parent_after_value(*cur);
                     }
-                    _ => return Err(qjd_err::QJD_PARSE_ERROR),
+                    _ => return Err(qjson_err::QJSON_PARSE_ERROR),
                 }
                 prev_end = close + 1;
                 i += 2;
             }
-            _ => return Err(qjd_err::QJD_PARSE_ERROR),
+            _ => return Err(qjson_err::QJSON_PARSE_ERROR),
         }
     }
 
@@ -265,7 +265,7 @@ pub(crate) fn validate_eager_values(
     // After the walk, the stack must hold exactly one frame: the root
     // context, which must be `TopDone` (root value consumed).
     if stack.len() != 1 || stack[0] != CtxKind::TopDone {
-        return Err(qjd_err::QJD_PARSE_ERROR);
+        return Err(qjson_err::QJSON_PARSE_ERROR);
     }
     Ok(())
 }
@@ -309,7 +309,7 @@ fn consume_scalar_gap(
     start: usize,
     end: usize,
     state: &mut CtxKind,
-) -> Result<(), qjd_err> {
+) -> Result<(), qjson_err> {
     // Strip whitespace.
     let mut s = start;
     while s < end && is_ws(buf[s]) { s += 1; }
@@ -330,7 +330,7 @@ fn consume_scalar_gap(
             | CtxKind::ArrAfterComma
             | CtxKind::ObjAfterColon
     ) {
-        return Err(qjd_err::QJD_PARSE_ERROR);
+        return Err(qjson_err::QJSON_PARSE_ERROR);
     }
 
     validate_scalar(&buf[s..e])?;
@@ -341,17 +341,17 @@ fn consume_scalar_gap(
 /// Dispatch a non-empty whitespace-trimmed scalar token to its
 /// grammar validator. Mirrors the previous `check_gap` precedence:
 ///   - `true` / `false` / `null` exact → Ok
-///   - `NaN` / `Infinity` → `QJD_INVALID_NUMBER` (via validate_number)
+///   - `NaN` / `Infinity` → `QJSON_INVALID_NUMBER` (via validate_number)
 ///   - `-` / digit / `+` / `.` → `validate_number`
-///   - Else → `QJD_PARSE_ERROR`
-fn validate_scalar(scalar: &[u8]) -> Result<(), qjd_err> {
+///   - Else → `QJSON_PARSE_ERROR`
+fn validate_scalar(scalar: &[u8]) -> Result<(), qjson_err> {
     match scalar[0] {
-        b't' => if scalar == b"true"  { Ok(()) } else { Err(qjd_err::QJD_PARSE_ERROR) },
-        b'f' => if scalar == b"false" { Ok(()) } else { Err(qjd_err::QJD_PARSE_ERROR) },
-        b'n' => if scalar == b"null"  { Ok(()) } else { Err(qjd_err::QJD_PARSE_ERROR) },
+        b't' => if scalar == b"true"  { Ok(()) } else { Err(qjson_err::QJSON_PARSE_ERROR) },
+        b'f' => if scalar == b"false" { Ok(()) } else { Err(qjson_err::QJSON_PARSE_ERROR) },
+        b'n' => if scalar == b"null"  { Ok(()) } else { Err(qjson_err::QJSON_PARSE_ERROR) },
         b'-' | b'0'..=b'9' | b'+' | b'.' => number::validate_number(scalar),
         _ if scalar == b"NaN" || scalar == b"Infinity" => number::validate_number(scalar),
-        _ => Err(qjd_err::QJD_PARSE_ERROR),
+        _ => Err(qjson_err::QJSON_PARSE_ERROR),
     }
 }
 
@@ -382,7 +382,7 @@ mod tests {
         let buf = b"[[[1]]]";
         assert_eq!(
             validate_depth(buf, &ix(buf), 2),
-            Err(qjd_err::QJD_NESTING_TOO_DEEP),
+            Err(qjson_err::QJSON_NESTING_TOO_DEEP),
         );
     }
 
@@ -403,7 +403,7 @@ mod tests {
         let buf = b"{}garbage";
         assert_eq!(
             validate_trailing(buf, &ix(buf)),
-            Err(qjd_err::QJD_TRAILING_CONTENT),
+            Err(qjson_err::QJSON_TRAILING_CONTENT),
         );
     }
 
@@ -418,7 +418,7 @@ mod tests {
         let buf = b"1 2";
         assert_eq!(
             validate_trailing(buf, &ix(buf)),
-            Err(qjd_err::QJD_TRAILING_CONTENT),
+            Err(qjson_err::QJSON_TRAILING_CONTENT),
         );
     }
 
@@ -447,42 +447,42 @@ mod tests {
     #[test]
     fn grammar_rejects_missing_colon() {
         let buf = b"{\"a\"}";
-        assert_eq!(validate_eager_values(buf, &ix(buf)), Err(qjd_err::QJD_PARSE_ERROR));
+        assert_eq!(validate_eager_values(buf, &ix(buf)), Err(qjson_err::QJSON_PARSE_ERROR));
     }
 
     #[test]
     fn grammar_rejects_leading_comma_with_value() {
         let buf = b"[,1]";
-        assert_eq!(validate_eager_values(buf, &ix(buf)), Err(qjd_err::QJD_PARSE_ERROR));
+        assert_eq!(validate_eager_values(buf, &ix(buf)), Err(qjson_err::QJSON_PARSE_ERROR));
     }
 
     #[test]
     fn grammar_rejects_missing_comma_in_object() {
         let buf = b"{\"a\":1\"b\":2}";
-        assert_eq!(validate_eager_values(buf, &ix(buf)), Err(qjd_err::QJD_PARSE_ERROR));
+        assert_eq!(validate_eager_values(buf, &ix(buf)), Err(qjson_err::QJSON_PARSE_ERROR));
     }
 
     #[test]
     fn grammar_rejects_non_string_object_key() {
         let buf = b"{1:1}";
-        assert_eq!(validate_eager_values(buf, &ix(buf)), Err(qjd_err::QJD_PARSE_ERROR));
+        assert_eq!(validate_eager_values(buf, &ix(buf)), Err(qjson_err::QJSON_PARSE_ERROR));
     }
 
     #[test]
     fn grammar_rejects_colon_in_array() {
         let buf = b"[1:2]";
-        assert_eq!(validate_eager_values(buf, &ix(buf)), Err(qjd_err::QJD_PARSE_ERROR));
+        assert_eq!(validate_eager_values(buf, &ix(buf)), Err(qjson_err::QJSON_PARSE_ERROR));
     }
 
     #[test]
     fn grammar_rejects_missing_comma_between_arrays() {
         let buf = b"[3[4]]";
-        assert_eq!(validate_eager_values(buf, &ix(buf)), Err(qjd_err::QJD_PARSE_ERROR));
+        assert_eq!(validate_eager_values(buf, &ix(buf)), Err(qjson_err::QJSON_PARSE_ERROR));
     }
 
     #[test]
     fn grammar_rejects_trailing_garbage_inside_object() {
         let buf = b"{\"a\":\"a\" 123}";
-        assert_eq!(validate_eager_values(buf, &ix(buf)), Err(qjd_err::QJD_PARSE_ERROR));
+        assert_eq!(validate_eager_values(buf, &ix(buf)), Err(qjson_err::QJSON_PARSE_ERROR));
     }
 }

@@ -2,7 +2,7 @@
 use proptest::prelude::*;
 
 #[cfg(all(target_arch = "x86_64", feature = "avx2"))]
-use quickdecode::__test_api::{Scanner, ScalarScanner, Avx2Scanner};
+use qjson::__test_api::{Scanner, ScalarScanner, Avx2Scanner};
 
 #[cfg(all(target_arch = "x86_64", feature = "avx2"))]
 proptest! {
@@ -63,7 +63,7 @@ fn valid_jsonish() -> impl Strategy<Value = String> {
 use proptest::prelude::*;
 
 #[cfg(target_arch = "aarch64")]
-use quickdecode::__test_api::{Scanner, ScalarScanner, NeonScanner};
+use qjson::__test_api::{Scanner, ScalarScanner, NeonScanner};
 
 #[cfg(target_arch = "aarch64")]
 proptest! {

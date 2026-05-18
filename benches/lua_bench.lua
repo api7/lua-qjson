@@ -1,7 +1,7 @@
 package.path  = package.path  .. ";./lua/?.lua"
 package.cpath = package.cpath .. ";./target/release/lib?.so"
 
-local qd    = require("quickdecode")
+local qjson    = require("qjson")
 local cjson = require("cjson")
 local simdjson_ok, simdjson_or_err = pcall(function()
     return require("resty.simdjson").new()
@@ -199,7 +199,7 @@ local function content_paths(n)
     return paths
 end
 
-local function default_qd_access(d)
+local function default_qjson_access(d)
     local _ = d:get_str("model")
     local _ = d:get_f64("temperature")
     local n = d:len("messages") or 0
@@ -213,7 +213,7 @@ local function default_table_access(t)
     local _ = t.model
     local _ = t.temperature
     if t.messages then
-        for i = 1, qd.len(t.messages) do
+        for i = 1, qjson.len(t.messages) do
             local msg = t.messages[i]
             local _ = msg.content
         end
@@ -227,7 +227,7 @@ local function github_cjson_access(obj)
     local _ = obj[1] and obj[1].user and obj[1].user.login
 end
 
-local function github_qd_access(d)
+local function github_qjson_access(d)
     local _ = d:get_i64("[0].id")
     local _ = d:get_str("[0].title")
     local _ = d:get_str("[0].user.login")
@@ -243,7 +243,7 @@ local scenarios = {
     {name = "small",  iters = 5000, payload = read_file("benches/fixtures/small_api.json")},
     {name = "medium", iters = 500,  payload = read_file("benches/fixtures/medium_resp.json")},
     {name = "github-100k", iters = 100, payload = make_github_issues_payload(100 * 1024),
-     cjson_access = github_cjson_access, qd_access = github_qd_access, table_access = github_table_access},
+     cjson_access = github_cjson_access, qjson_access = github_qjson_access, table_access = github_table_access},
     {name = "100k",   iters = 100,  payload = make_payload(100 * 1024)},
     {name = "200k",   iters = 50,   payload = make_payload(200 * 1024)},
     {name = "500k",   iters = 20,   payload = make_payload(500 * 1024)},
@@ -253,10 +253,10 @@ local scenarios = {
     {name = "10m",    iters = 20,   payload = make_payload(10 * 1024 * 1024)},
 }
 
--- The pooled API (qd.new_decoder + :parse) only exists on commits that
+-- The pooled API (qjson.new_decoder + :parse) only exists on commits that
 -- landed the Decoder refactor. Probe so the bench still runs on older builds.
-local has_pooled_api = type(qd.new_decoder) == "function"
-local pooled_decoder = has_pooled_api and qd.new_decoder() or nil
+local has_pooled_api = type(qjson.new_decoder) == "function"
+local pooled_decoder = has_pooled_api and qjson.new_decoder() or nil
 
 if not simdjson then
     print("lua-resty-simdjson unavailable; skipping simdjson rows: "
@@ -267,7 +267,7 @@ for _, s in ipairs(scenarios) do
     print(string.format("=== %s (%d bytes) ===", s.name, #s.payload))
 
     local cjson_access = s.cjson_access or default_cjson_access
-    local qd_access = s.qd_access or default_qd_access
+    local qjson_access = s.qjson_access or default_qjson_access
     local table_access = s.table_access or default_table_access
 
     bench("cjson.decode + access fields", s.iters, function()
@@ -282,32 +282,32 @@ for _, s in ipairs(scenarios) do
         end)
     end
 
-    bench("quickdecode.parse + access fields", s.iters, function()
-        local d = qd.parse(s.payload)
-        qd_access(d)
+    bench("qjson.parse + access fields", s.iters, function()
+        local d = qjson.parse(s.payload)
+        qjson_access(d)
     end)
 
     if has_pooled_api then
-        bench("quickdecode pooled :parse + access fields", s.iters, function()
+        bench("qjson pooled :parse + access fields", s.iters, function()
             local d = pooled_decoder:parse(s.payload)
-            qd_access(d)
+            qjson_access(d)
         end)
 
-        bench("quickdecode new_decoder()+parse (one-shot)", s.iters, function()
-            local dec = qd.new_decoder()
+        bench("qjson new_decoder()+parse (one-shot)", s.iters, function()
+            local dec = qjson.new_decoder()
             local d = dec:parse(s.payload)
-            qd_access(d)
+            qjson_access(d)
         end)
     end
 
-    bench("qd.decode + access content", s.iters, function()
-        local t = qd.decode(s.payload)
+    bench("qjson.decode + access content", s.iters, function()
+        local t = qjson.decode(s.payload)
         table_access(t)
     end)
 
-    bench("qd.decode + qd.encode (unmodified)", s.iters, function()
-        local t = qd.decode(s.payload)
-        local _ = qd.encode(t)
+    bench("qjson.decode + qjson.encode (unmodified)", s.iters, function()
+        local t = qjson.decode(s.payload)
+        local _ = qjson.encode(t)
     end)
 end
 
@@ -358,32 +358,32 @@ do
     end
 
     next_p = make_cycler(interleaved)
-    bench("quickdecode.parse + access fields", 400, function()
+    bench("qjson.parse + access fields", 400, function()
         local p = next_p()
-        local d = qd.parse(p)
-        default_qd_access(d)
+        local d = qjson.parse(p)
+        default_qjson_access(d)
     end)
 
     if has_pooled_api then
         next_p = make_cycler(interleaved)
-        bench("quickdecode pooled :parse + access fields", 400, function()
+        bench("qjson pooled :parse + access fields", 400, function()
             local p = next_p()
             local d = pooled_decoder:parse(p)
-            default_qd_access(d)
+            default_qjson_access(d)
         end)
     end
 
     next_p = make_cycler(interleaved)
-    bench("qd.decode + access content", 400, function()
+    bench("qjson.decode + access content", 400, function()
         local p = next_p()
-        local t = qd.decode(p)
+        local t = qjson.decode(p)
         default_table_access(t)
     end)
 
     next_p = make_cycler(interleaved)
-    bench("qd.decode + qd.encode (unmodified)", 400, function()
+    bench("qjson.decode + qjson.encode (unmodified)", 400, function()
         local p = next_p()
-        local t = qd.decode(p)
-        local _ = qd.encode(t)
+        local t = qjson.decode(p)
+        local _ = qjson.encode(t)
     end)
 end
