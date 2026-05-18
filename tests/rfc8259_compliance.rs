@@ -398,11 +398,10 @@ mod structural {
     }
 
     // RFC 8259 §4: colon between key and value is mandatory.
-    // The scanner emits {"a"} as {""} with no ':' — eager does not detect this
-    // because no structural gap heuristic covers the absence of ':'.
-    // Deferred to a follow-up grammar-aware pass (issue #37).
+    // The grammar-aware pass detects this: after consuming the key
+    // string the state is ObjAfterKey, and `}` is rejected because
+    // it can only close ObjAfterOpen/ObjAfterValue.
     #[test]
-    #[ignore = "missing-colon detection deferred — grammar-aware pass required (issue #37)"]
     fn missing_colon() {
         assert_rejects_eager!("{\"a\"}", QJD_PARSE_ERROR);
     }
@@ -415,11 +414,10 @@ mod structural {
         assert_rejects_eager!("[,]", QJD_PARSE_ERROR);
     }
 
-    // [,1] — leading comma followed by a value: the gap between '[' and ','
-    // is empty (no value yet) but prev_structural is '[', not ',' — so the
-    // heuristic does not fire. Deferred to a grammar-aware pass (issue #37).
+    // [,1] — leading comma followed by a value: the grammar-aware
+    // pass rejects this because `,` is invalid in the ArrAfterOpen
+    // state (only a value or `]` is allowed after `[`).
     #[test]
-    #[ignore = "leading-comma-before-value detection deferred — grammar-aware pass required (issue #37)"]
     fn leading_comma_array_with_value() {
         assert_rejects_eager!("[,1]", QJD_PARSE_ERROR);
     }
@@ -452,13 +450,10 @@ mod structural {
     }
 
     // Missing comma inside an object (no structural separator between values):
-    // {"a":1"b":2} — the scanner emits `{`, `"`, `"`, `:`, `"`, `"`, `}`.
-    // The gap between the second close-quote and the third open-quote is empty,
-    // but prev_structural is `"` (quote) and next is `"` — the heuristic only
-    // fires on `:` / `,`, so this slips through.
-    // Deferred to grammar-aware pass (issue #37).
+    // {"a":1"b":2} — after consuming the value `1`, the state is
+    // ObjAfterValue; the next `"` (start of "b") is rejected because
+    // a key/value-position quote is not legal there.
     #[test]
-    #[ignore = "missing-comma-in-object detection deferred — grammar-aware pass required (issue #37)"]
     fn missing_comma_in_object() {
         assert_rejects_eager!("{\"a\":1\"b\":2}", QJD_PARSE_ERROR);
     }

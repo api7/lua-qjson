@@ -125,121 +125,232 @@ pub(crate) fn validate_trailing(
     Ok(())
 }
 
-/// Walk `indices` and validate every scalar value (numbers + strings).
-/// Called only in EAGER mode.
+/// Grammar-aware eager pass: walk `indices` once and validate every
+/// structural transition, key/value string, and scalar value.
+///
+/// The state machine tracks the expected next-token kind in each
+/// container context (object/array) via a stack. Empty gaps where a
+/// value is required (`[,]`, `{"a":}`), missing colons (`{"a"}`),
+/// missing commas (`{"a":1"b":2}`), non-string object keys (`{1:1}`),
+/// and stray structural tokens (`[1:2]`) all surface here as
+/// `QJD_PARSE_ERROR`.
+///
+/// Scalar tokens (numbers, `true`, `false`, `null`) live in the byte
+/// gap before the *next* structural offset. They are dispatched to
+/// `validate_number` or matched against the three literal keywords;
+/// the error-code precedence matches the previous heuristic-based
+/// `check_gap` so existing tests keep their current error codes.
 pub(crate) fn validate_eager_values(
     buf: &[u8],
     indices: &[u32],
 ) -> Result<(), qjd_err> {
-    let mut i = 0;
-    while i + 1 < indices.len() {
+    // Stack of container contexts; the top is the current state.
+    // We use a single seed entry `CtxKind::Top` for the root value.
+    let mut stack: Vec<CtxKind> = Vec::with_capacity(16);
+    stack.push(CtxKind::Top);
+
+    // Byte position just past the previous structural we consumed —
+    // i.e. the start of the current gap. A gap may contain a scalar
+    // value or be whitespace-only.
+    let mut prev_end: usize = 0;
+
+    let mut i: usize = 0;
+    while i < indices.len() {
         let idx = indices[i];
         if idx == u32::MAX { break; }
         let pos = idx as usize;
         let b = buf[pos];
 
-        // Strings: opening quote here, closing quote at indices[i+1].
-        // (The scanner emits BOTH quotes of a string in order.)
-        if b == b'"' {
-            let close = indices[i + 1] as usize;
-            // Defensive: scanner pairs quotes correctly, but guard anyway.
-            if close <= pos || close >= buf.len() || buf[close] != b'"' {
-                return Err(qjd_err::QJD_PARSE_ERROR);
+        // First, consume any scalar token sitting in the gap before
+        // this structural. This may transition the current state from
+        // a value-expecting form to its "AfterValue" form.
+        consume_scalar_gap(buf, prev_end, pos, stack.last_mut().unwrap())?;
+
+        match b {
+            b'{' | b'[' => {
+                let cur = stack.last_mut().unwrap();
+                match *cur {
+                    CtxKind::Top
+                    | CtxKind::ArrAfterOpen
+                    | CtxKind::ArrAfterComma
+                    | CtxKind::ObjAfterColon => {
+                        // Transition parent to AfterValue ahead of the
+                        // descent; the inner container's close pops back.
+                        *cur = parent_after_value(*cur);
+                        stack.push(if b == b'{' {
+                            CtxKind::ObjAfterOpen
+                        } else {
+                            CtxKind::ArrAfterOpen
+                        });
+                    }
+                    _ => return Err(qjd_err::QJD_PARSE_ERROR),
+                }
+                prev_end = pos + 1;
+                i += 1;
             }
-            let span = &buf[pos + 1 .. close];
-            strings::validate_string_span(span)?;
-            i += 2;
-            continue;
-        }
+            b'}' => {
+                let top = stack.pop().ok_or(qjd_err::QJD_PARSE_ERROR)?;
+                if !matches!(top, CtxKind::ObjAfterOpen | CtxKind::ObjAfterValue) {
+                    return Err(qjd_err::QJD_PARSE_ERROR);
+                }
+                if stack.is_empty() { return Err(qjd_err::QJD_PARSE_ERROR); }
+                prev_end = pos + 1;
+                i += 1;
+            }
+            b']' => {
+                let top = stack.pop().ok_or(qjd_err::QJD_PARSE_ERROR)?;
+                if !matches!(top, CtxKind::ArrAfterOpen | CtxKind::ArrAfterValue) {
+                    return Err(qjd_err::QJD_PARSE_ERROR);
+                }
+                if stack.is_empty() { return Err(qjd_err::QJD_PARSE_ERROR); }
+                prev_end = pos + 1;
+                i += 1;
+            }
+            b',' => {
+                let cur = stack.last_mut().ok_or(qjd_err::QJD_PARSE_ERROR)?;
+                match *cur {
+                    CtxKind::ArrAfterValue => *cur = CtxKind::ArrAfterComma,
+                    CtxKind::ObjAfterValue => *cur = CtxKind::ObjAfterComma,
+                    _ => return Err(qjd_err::QJD_PARSE_ERROR),
+                }
+                prev_end = pos + 1;
+                i += 1;
+            }
+            b':' => {
+                let cur = stack.last_mut().ok_or(qjd_err::QJD_PARSE_ERROR)?;
+                match *cur {
+                    CtxKind::ObjAfterKey => *cur = CtxKind::ObjAfterColon,
+                    _ => return Err(qjd_err::QJD_PARSE_ERROR),
+                }
+                prev_end = pos + 1;
+                i += 1;
+            }
+            b'"' => {
+                // The scanner pairs the opening and closing quotes; the
+                // closing quote is at indices[i + 1].
+                if i + 1 >= indices.len() { return Err(qjd_err::QJD_PARSE_ERROR); }
+                let close = indices[i + 1] as usize;
+                if close <= pos || close >= buf.len() || buf[close] != b'"' {
+                    return Err(qjd_err::QJD_PARSE_ERROR);
+                }
+                strings::validate_string_span(&buf[pos + 1 .. close])?;
 
-        // Container brackets and `:`/`,` are not values; skip.
-        if matches!(b, b'{' | b'}' | b'[' | b']' | b':' | b',') {
-            i += 1;
-            continue;
+                let cur = stack.last_mut().ok_or(qjd_err::QJD_PARSE_ERROR)?;
+                match *cur {
+                    // Key position in an object.
+                    CtxKind::ObjAfterOpen | CtxKind::ObjAfterComma => {
+                        *cur = CtxKind::ObjAfterKey;
+                    }
+                    // Value position (top-level, array element, or object value).
+                    CtxKind::Top
+                    | CtxKind::ArrAfterOpen
+                    | CtxKind::ArrAfterComma
+                    | CtxKind::ObjAfterColon => {
+                        *cur = parent_after_value(*cur);
+                    }
+                    _ => return Err(qjd_err::QJD_PARSE_ERROR),
+                }
+                prev_end = close + 1;
+                i += 2;
+            }
+            _ => return Err(qjd_err::QJD_PARSE_ERROR),
         }
+    }
 
-        // Should not happen: scanner only emits the 7 structural chars.
+    // Tail: a top-level scalar root (e.g. `42`, `true`) lives in the
+    // gap after the last structural — or, if there are no structurals,
+    // the whole buffer.
+    consume_scalar_gap(buf, prev_end, buf.len(), stack.last_mut().unwrap())?;
+
+    // After the walk, the stack must hold exactly one frame: the root
+    // context, which must be `TopDone` (root value consumed).
+    if stack.len() != 1 || stack[0] != CtxKind::TopDone {
         return Err(qjd_err::QJD_PARSE_ERROR);
     }
-
-    // Scalar values (numbers, true, false, null) live in the gaps between
-    // structural offsets. Walk those gaps and dispatch.
-    validate_scalars_in_gaps(buf, indices)
+    Ok(())
 }
 
-/// For each consecutive pair of structural offsets, examine the bytes
-/// between them. If the gap contains a scalar (anything other than
-/// whitespace), validate its grammar.
-fn validate_scalars_in_gaps(buf: &[u8], indices: &[u32]) -> Result<(), qjd_err> {
-    let mut prev_end: usize = 0;
-    let mut in_str = false;
-    // Track the last non-quote structural char so check_gap can reject empty
-    // gaps in positions where a value is required (after `:` or `,`).
-    let mut prev_structural: u8 = 0;
-    for &idx in indices {
-        if idx == u32::MAX { break; }
-        let pos = idx as usize;
-        let b = buf[pos];
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CtxKind {
+    Top,           // top-level value not yet consumed
+    TopDone,       // top-level value consumed; only whitespace/EOI allowed
+    ArrAfterOpen,  // just saw `[`; expect value or `]`
+    ArrAfterValue, // just saw a value; expect `,` or `]`
+    ArrAfterComma, // just saw `,`; expect value (no trailing comma)
+    ObjAfterOpen,  // just saw `{`; expect key (string) or `}`
+    ObjAfterKey,   // just saw key string; expect `:`
+    ObjAfterColon, // just saw `:`; expect value
+    ObjAfterValue, // just saw value; expect `,` or `}`
+    ObjAfterComma, // just saw `,`; expect key (no trailing comma)
+}
 
-        if b == b'"' {
-            // Toggle: the bytes between two quotes are the string interior
-            // (already validated above). Skip gap-scanning across them.
-            if in_str {
-                in_str = false;
-                prev_end = pos + 1;
-            } else {
-                // Validate any scalar in the gap leading up to this quote.
-                // An open-quote is itself a value, so pass it as the next char:
-                // an empty gap before a string is always fine (`:` `"` and `,` `"` are
-                // both valid — the string IS the value).
-                check_gap(buf, prev_end, pos, prev_structural, b'"')?;
-                in_str = true;
-                prev_structural = b'"';
-            }
-            continue;
-        }
-        if in_str { continue; }
-
-        check_gap(buf, prev_end, pos, prev_structural, b)?;
-        prev_end = pos + 1;
-        prev_structural = b;
+/// Transition the value-expecting state to its corresponding
+/// "after value" state once the value (scalar / string / container)
+/// has been consumed.
+#[inline]
+fn parent_after_value(s: CtxKind) -> CtxKind {
+    match s {
+        CtxKind::Top           => CtxKind::TopDone,
+        CtxKind::ArrAfterOpen  => CtxKind::ArrAfterValue,
+        CtxKind::ArrAfterComma => CtxKind::ArrAfterValue,
+        CtxKind::ObjAfterColon => CtxKind::ObjAfterValue,
+        other                  => other, // unreachable for callers
     }
-    // Tail gap (top-level scalar like "42"): next char is EOF (0 sentinel)
-    check_gap(buf, prev_end, buf.len(), prev_structural, 0)
 }
 
-/// `prev_structural`: the last non-quote structural char before this gap.
-/// `next_structural`: the structural char immediately after this gap (opens or closes).
-fn check_gap(buf: &[u8], start: usize, end: usize, prev_structural: u8, next_structural: u8) -> Result<(), qjd_err> {
-    // Strip surrounding whitespace.
+/// Examine the byte gap `[start, end)` between two structurals.
+/// If the gap contains a scalar token, validate it and transition
+/// `*state` to its corresponding "AfterValue" form. If the gap is
+/// whitespace only, leave `*state` unchanged — the next structural's
+/// own check rejects empty values where they are not allowed
+/// (e.g. `ObjAfterColon` followed by `}` is caught when `}` pops).
+fn consume_scalar_gap(
+    buf: &[u8],
+    start: usize,
+    end: usize,
+    state: &mut CtxKind,
+) -> Result<(), qjd_err> {
+    // Strip whitespace.
     let mut s = start;
     while s < end && is_ws(buf[s]) { s += 1; }
     let mut e = end;
     while e > s && is_ws(buf[e - 1]) { e -= 1; }
+
     if s == e {
-        // Empty gap: a value is required after `:` (object value) or `,` (next
-        // element), BUT only when the next token is not a structural value-starter
-        // (`"`, `{`, `[`) — those ARE the values. An empty gap before `}` / `]`
-        // / `,` when the preceding token demands a value is a structural error.
-        // This heuristic catches {"a":}, [,], [1,] without a full grammar walk.
-        let next_is_value_starter = matches!(next_structural, b'"' | b'{' | b'[');
-        if matches!(prev_structural, b':' | b',') && !next_is_value_starter {
-            return Err(qjd_err::QJD_PARSE_ERROR);
-        }
         return Ok(());
     }
-    let scalar = &buf[s..e];
 
-    // Dispatch on first byte.
+    // The gap is non-empty: it MUST be a scalar token, and the state
+    // must allow a scalar at this position. Strings and containers are
+    // handled by their structural-token cases, not here.
+    if !matches!(
+        *state,
+        CtxKind::Top
+            | CtxKind::ArrAfterOpen
+            | CtxKind::ArrAfterComma
+            | CtxKind::ObjAfterColon
+    ) {
+        return Err(qjd_err::QJD_PARSE_ERROR);
+    }
+
+    validate_scalar(&buf[s..e])?;
+    *state = parent_after_value(*state);
+    Ok(())
+}
+
+/// Dispatch a non-empty whitespace-trimmed scalar token to its
+/// grammar validator. Mirrors the previous `check_gap` precedence:
+///   - `true` / `false` / `null` exact → Ok
+///   - `NaN` / `Infinity` → `QJD_INVALID_NUMBER` (via validate_number)
+///   - `-` / digit / `+` / `.` → `validate_number`
+///   - Else → `QJD_PARSE_ERROR`
+fn validate_scalar(scalar: &[u8]) -> Result<(), qjd_err> {
     match scalar[0] {
         b't' => if scalar == b"true"  { Ok(()) } else { Err(qjd_err::QJD_PARSE_ERROR) },
         b'f' => if scalar == b"false" { Ok(()) } else { Err(qjd_err::QJD_PARSE_ERROR) },
         b'n' => if scalar == b"null"  { Ok(()) } else { Err(qjd_err::QJD_PARSE_ERROR) },
-        // RFC-valid and common malformed number starters (+, ., -, digit).
         b'-' | b'0'..=b'9' | b'+' | b'.' => number::validate_number(scalar),
-        // NaN / Infinity are "meant as numbers" → QJD_INVALID_NUMBER, not parse error.
         _ if scalar == b"NaN" || scalar == b"Infinity" => number::validate_number(scalar),
-        // Wrong-case literals (TRUE, NULL), identifiers (undefined), other garbage.
         _ => Err(qjd_err::QJD_PARSE_ERROR),
     }
 }
@@ -309,5 +420,69 @@ mod tests {
             validate_trailing(buf, &ix(buf)),
             Err(qjd_err::QJD_TRAILING_CONTENT),
         );
+    }
+
+    // ── grammar state machine (validate_eager_values) ──────────────────
+
+    #[test]
+    fn grammar_accepts_empty_containers() {
+        for buf in [&b"{}"[..], &b"[]"[..]] {
+            assert!(validate_eager_values(buf, &ix(buf)).is_ok(),
+                "grammar should accept {:?}", buf);
+        }
+    }
+
+    #[test]
+    fn grammar_accepts_simple_values() {
+        for buf in [
+            &b"{\"a\":1}"[..], &b"[1,2,3]"[..],
+            &b"[true,false,null]"[..], &b"\"hi\""[..], &b"42"[..],
+            &b"{\"a\":[1,{\"b\":2}]}"[..],
+        ] {
+            assert!(validate_eager_values(buf, &ix(buf)).is_ok(),
+                "grammar should accept {:?}", buf);
+        }
+    }
+
+    #[test]
+    fn grammar_rejects_missing_colon() {
+        let buf = b"{\"a\"}";
+        assert_eq!(validate_eager_values(buf, &ix(buf)), Err(qjd_err::QJD_PARSE_ERROR));
+    }
+
+    #[test]
+    fn grammar_rejects_leading_comma_with_value() {
+        let buf = b"[,1]";
+        assert_eq!(validate_eager_values(buf, &ix(buf)), Err(qjd_err::QJD_PARSE_ERROR));
+    }
+
+    #[test]
+    fn grammar_rejects_missing_comma_in_object() {
+        let buf = b"{\"a\":1\"b\":2}";
+        assert_eq!(validate_eager_values(buf, &ix(buf)), Err(qjd_err::QJD_PARSE_ERROR));
+    }
+
+    #[test]
+    fn grammar_rejects_non_string_object_key() {
+        let buf = b"{1:1}";
+        assert_eq!(validate_eager_values(buf, &ix(buf)), Err(qjd_err::QJD_PARSE_ERROR));
+    }
+
+    #[test]
+    fn grammar_rejects_colon_in_array() {
+        let buf = b"[1:2]";
+        assert_eq!(validate_eager_values(buf, &ix(buf)), Err(qjd_err::QJD_PARSE_ERROR));
+    }
+
+    #[test]
+    fn grammar_rejects_missing_comma_between_arrays() {
+        let buf = b"[3[4]]";
+        assert_eq!(validate_eager_values(buf, &ix(buf)), Err(qjd_err::QJD_PARSE_ERROR));
+    }
+
+    #[test]
+    fn grammar_rejects_trailing_garbage_inside_object() {
+        let buf = b"{\"a\":\"a\" 123}";
+        assert_eq!(validate_eager_values(buf, &ix(buf)), Err(qjd_err::QJD_PARSE_ERROR));
     }
 }

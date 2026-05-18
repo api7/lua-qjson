@@ -34,51 +34,12 @@ const KNOWN_Y_FAILURES: &[&str] = &[
 
 /// n_* files that we currently accept but shouldn't (validator gap).
 ///
-/// All 13 entries below require a grammar-aware structural pass that tracks
-/// which token types are legal in each parser state (array element, object
-/// key, object value, etc.).  That pass is deferred to issue #37.
-///
-/// The current validator only catches structural errors detectable from
-/// bracket balance + gap heuristics; it does not enforce:
-///   - that object keys must be strings
-///   - that `:` vs `,` are used in the right places
-///   - that array elements are separated by commas (not colons/semicolons)
-///   - leading commas before values (gap heuristic fires only for `[,]`)
-///   - missing commas between items when no structural gap exists
-///
-/// Fix: implement a state-machine pass in src/validate/mod.rs that tracks
-/// parser state (AfterKey, AfterColon, AfterValue, …) and rejects tokens
-/// that violate the grammar at that state.  Removing a file from this list
-/// re-enables the assertion.
+/// The grammar-aware eager pass in src/validate/mod.rs tracks parser
+/// state per container and rejects token transitions that violate
+/// RFC 8259.  Removing a file from this list re-enables the assertion.
 const KNOWN_N_FAILURES: &[&str] = &[
-    // ── array structural gaps ────────────────────────────────────────────
-    // ["": 1] — colon inside array (issue #37: grammar-aware pass)
-    "n_array_colon_instead_of_comma.json",
-    // [,1] — leading comma before first value (issue #37)
-    "n_array_comma_and_number.json",
-    // [3[4]] — missing comma between elements (issue #37)
-    "n_array_inner_array_no_comma.json",
-    // [1:2] — semicolon used instead of comma (issue #37)
-    "n_array_items_separated_by_semicolon.json",
-    // [   , ""] — leading comma (gap heuristic only catches [,] not [  ,v]) (issue #37)
-    "n_array_missing_value.json",
-    // ── object structural gaps ───────────────────────────────────────────
-    // {"x", null} — comma instead of colon (issue #37)
-    "n_object_comma_instead_of_colon.json",
-    // {"a":"a" 123} — missing comma between key-value pairs (issue #37)
-    "n_object_garbage_at_end.json",
-    // {:"b"} — missing object key (issue #37)
-    "n_object_missing_key.json",
-    // {"a" "b"} — missing colon between key and value (issue #37)
-    "n_object_missing_semicolon.json",
-    // {1:1} — non-string key: number (issue #37)
-    "n_object_non_string_key.json",
-    // {9999E9999:1} — non-string key: huge number (issue #37)
-    "n_object_non_string_key_but_huge_number_instead.json",
-    // {null:null,null:null} — non-string key: null literal (issue #37)
-    "n_object_repeated_null_null.json",
-    // { "foo" : "bar", "a" } — trailing key without value (issue #37)
-    "n_object_with_single_string.json",
+    // (intentionally empty — see git history for the previous list,
+    // which was closed by the grammar-aware structural pass.)
 ];
 
 fn corpus_dir() -> &'static Path {
