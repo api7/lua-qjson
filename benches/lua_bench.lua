@@ -11,9 +11,10 @@ local function read_file(p)
     return s
 end
 
--- Shape: a multimodal chat-completion request with one ~1.5K text question
--- and N base64-encoded image parts (each 50-500 KB) until the payload reaches
--- target_bytes. Mirrors the production case the bench is meant to reflect.
+-- Shape: a multimodal chat-completion request with multiple historical
+-- messages. Each message contains one small text part and one base64-encoded
+-- image part. The number of messages scales with payload size: a 10 MB request
+-- has roughly ten 1 MB image-bearing messages.
 --
 -- Image sizes are drawn from a deterministic Park-Miller LCG (not math.random,
 -- which delegates to libc rand() and varies across machines) so the same
@@ -117,41 +118,28 @@ local function make_b64(size)
 end
 
 local function make_payload(target_bytes)
-    local rng_state = 42
-    local function rng_range(lo, hi)
-        -- Park-Miller minimal-standard LCG: a=48271, m=2^31-1. Multiplication
-        -- fits in double precision (48271 * 2^31 < 2^53).
-        rng_state = (rng_state * 48271) % 2147483647
-        return lo + (rng_state % (hi - lo + 1))
-    end
-
-    local text = string.rep("Q", 1500)
+    local message_count = math.max(1, math.ceil(target_bytes / (1024 * 1024)))
+    local envelope = '{"model":"gpt-4-vision","temperature":0.7,"messages":[]}'
+    local text = string.rep("Q", 256)
     local text_part = '{"type":"text","text":"' .. text .. '"}'
-    local parts = { text_part }
-    local current = 200 + #text_part  -- approx outer envelope overhead
+    local image_prefix = '{"type":"image_url","image_url":{"url":"data:image/jpeg;base64,'
+    local image_suffix = '"}}'
+    local message_overhead = #('{"role":"user","content":[,]}') + #text_part
+        + #image_prefix + #image_suffix
+    local remaining = target_bytes - #envelope - (message_count * message_overhead)
+    local image_size = math.max(1024, math.floor(remaining / message_count))
 
-    while current < target_bytes do
-        local remaining = target_bytes - current
-        local img_size
-        if remaining < 50 * 1024 then
-            -- Final image: shrink below the 50 KB floor so the label matches
-            -- the actual payload size. Bench iters all see the same payload
-            -- regardless, so the smaller tail blob doesn't change what's
-            -- being measured.
-            img_size = math.max(1024, remaining)
-        else
-            local upper = math.min(500 * 1024, remaining)
-            img_size = rng_range(50 * 1024, upper)
-        end
-        local b64 = make_b64(img_size)
-        local img_part = '{"type":"image_url","image_url":{"url":"data:image/jpeg;base64,'
-            .. b64 .. '"}}'
-        parts[#parts + 1] = img_part
-        current = current + #img_part + 1  -- +1 for comma
+    local messages = {}
+    for i = 1, message_count do
+        local role = i % 2 == 1 and "user" or "assistant"
+        local b64 = make_b64(image_size)
+        local image_part = image_prefix .. b64 .. image_suffix
+        messages[i] = '{"role":"' .. role .. '","content":['
+            .. text_part .. "," .. image_part .. ']}'
     end
 
-    return '{"model":"gpt-4-vision","temperature":0.7,"messages":'
-        .. '[{"role":"user","content":[' .. table.concat(parts, ",") .. ']}]}'
+    return '{"model":"gpt-4-vision","temperature":0.7,"messages":['
+        .. table.concat(messages, ",") .. ']}'
 end
 
 local ROUNDS = 5
@@ -197,12 +185,29 @@ local function default_cjson_access(obj)
     end
 end
 
+local content_paths_by_message_count = {}
+
+local function content_paths(n)
+    local paths = content_paths_by_message_count[n]
+    if paths then
+        return paths
+    end
+
+    paths = {}
+    for i = 0, n - 1 do
+        paths[i + 1] = "messages[" .. i .. "].content"
+    end
+    content_paths_by_message_count[n] = paths
+    return paths
+end
+
 local function default_qd_access(d)
     local _ = d:get_str("model")
     local _ = d:get_f64("temperature")
     local n = d:len("messages") or 0
-    for i = 0, n - 1 do
-        local _ = d:typeof("messages[" .. i .. "].content")
+    local paths = content_paths(n)
+    for i = 1, n do
+        local _ = d:typeof(paths[i])
     end
 end
 

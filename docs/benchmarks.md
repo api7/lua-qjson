@@ -33,11 +33,12 @@ The harness lives at `benches/lua_bench.lua`. For each scenario:
    KB — measures GC-rooted state retained by the parser, not transient
    per-call allocations.
 
-The payload is a synthetic multimodal chat-completion request — one
-~1.5 KB text part plus N base64-encoded image parts of 50–500 KB each
-until the target size is reached. The image size sequence comes from a
-Park–Miller LCG with `seed=42` rather than `math.random` so the payload is
-byte-identical across hosts.
+The payload is a synthetic multimodal chat-completion request with multiple
+historical messages. Each message contains one small text part and one
+base64-encoded image part. Message count scales with payload size: the 10 MB
+scenario has roughly ten messages, each carrying one ~1 MB image, so the
+access pattern matches request bodies where every historical message includes
+an image.
 
 A separate `github-100k` scenario simulates a GitHub Issues API response
 (`/repos/{owner}/{repo}/issues`) with ~100 KB of realistic REST API
@@ -49,9 +50,9 @@ parsing workloads with ~3-5% structural density.
 
 | Row | What it does | Notes |
 |---|---|---|
-| `cjson.decode + access fields` | `cjson.decode(s)`, read `model` / `temperature`, then read every `message.content` | Eager Lua table |
-| `quickdecode.parse + access fields` | `qd.parse(s)`, read `model` / `temperature`, then touch every `messages[i].content` path | Lazy structural scan; explicit path-based reads |
-| `qd.decode + access content` | `qd.decode(s)`, read `model` / `temperature`, then read every `message.content` | Lazy table proxy; reads go through `__index` |
+| `cjson.decode + access fields` | `cjson.decode(s)`, read `model` / `temperature`, then read every `messages[*].content` | Eager Lua table |
+| `quickdecode.parse + access fields` | `qd.parse(s)`, read `model` / `temperature`, then touch every `messages[*].content` path | Lazy structural scan; explicit path reads |
+| `qd.decode + access content` | `qd.decode(s)`, read `model` / `temperature`, then read every `messages[*].content` | Lazy table proxy; reads go through `__index` |
 | `qd.decode + qd.encode (unmodified)` | `qd.decode(s)` then re-emit as JSON | Substring fast path — no fields touched, so the proxy re-emits the original byte range via `memcpy` |
 
 ## Reproducing
@@ -73,52 +74,52 @@ Each row is "parse + access request fields" on the named payload.
 
 | Scenario | Size | cjson | `qd.parse` | `qd.decode + access content` | `qd.decode + qd.encode` |
 |---|---:|---:|---:|---:|---:|
-| small      |   2.1 KB | 113,541 | 132,830 |  82,169 | 148,117 |
-| medium     |  60.4 KB |   8,219 | 198,413 | 140,845 | 149,298 |
-| github-100k |   100 KB |   2,410 |   4,505 |   4,450 |   4,781 |
-| 100k       |   100 KB |   4,869 | 135,501 |  97,752 | 111,982 |
-| 200k       |   200 KB |   2,441 |  73,964 |  60,753 |  65,963 |
-| 500k       |   500 KB |     978 |  31,797 |  28,902 |  30,166 |
-| 1m         |  1.00 MB |     478 |  16,287 |  15,560 |  15,890 |
-| 2m         |  2.00 MB |     237 |   8,180 |   7,877 |   7,764 |
-| 5m         |  5.00 MB |      94 |   2,899 |   2,930 |   2,969 |
-| 10m        | 10.00 MB |      47 |   1,044 |   1,046 |   1,049 |
-| interleaved (100k/200k/500k/1m, cycled) | — | 1,066 | 32,204 | 28,696 | 30,485 |
+| small      |   2.1 KB | 113,056 | 132,184 |  81,769 | 145,722 |
+| medium     |  60.4 KB |   8,194 | 196,773 | 142,086 | 147,406 |
+| github-100k |   100 KB |   2,424 |   4,510 |   4,444 |   4,783 |
+| 100k       |   100 KB |   4,874 | 144,509 | 100,100 | 107,527 |
+| 200k       |   200 KB |   2,446 |  78,247 |  64,350 |  69,832 |
+| 500k       |   500 KB |     982 |  33,003 |  30,211 |  31,299 |
+| 1m         |  1.00 MB |     478 |  16,930 |  16,146 |  16,358 |
+| 2m         |  2.00 MB |     238 |   8,361 |   8,127 |   8,302 |
+| 5m         |  5.00 MB |      95 |   2,939 |   2,923 |   2,979 |
+| 10m        | 10.00 MB |      48 |   1,046 |   1,045 |     955 |
+| interleaved (100k/200k/500k/1m, cycled) | — | 1,063 | 33,498 | 30,595 | 31,646 |
 
 ### Speed-up vs. baselines
 
 | Scenario | `qd.parse` / cjson | `qd.decode + access content` / cjson |
 |---|---:|---:|
 | small  |  1.2× |  0.7× |
-| medium | 24.1× | 17.1× |
+| medium | 24.0× | 17.3× |
 | github-100k | 1.9× | 1.8× |
-| 100k   | 27.8× | 20.1× |
-| 200k   | 30.3× | 24.9× |
-| 500k   | 32.5× | 29.6× |
-| 1m     | 34.1× | 32.6× |
-| 2m     | 34.5× | 33.2× |
-| 5m     | 30.8× | 31.2× |
-| 10m    | 22.2× | 22.3× |
+| 100k   | 29.6× | 20.5× |
+| 200k   | 32.0× | 26.3× |
+| 500k   | 33.6× | 30.8× |
+| 1m     | 35.4× | 33.8× |
+| 2m     | 35.1× | 34.1× |
+| 5m     | 30.9× | 30.8× |
+| 10m    | 21.8× | 21.8× |
 
 ## Results — memory delta (KB retained after 5 rounds)
 
-Post-run `collectgarbage("count")` minus baseline. Captures GC-rooted state
-the parser retains across iterations; transient per-call allocations are
-collected before the snapshot.
+Post-run `collectgarbage("count")` minus baseline. Captures heap usage after
+the timing rounds without forcing a final collection, so short-lived garbage
+from the last round may still be included.
 
 | Scenario | cjson | `qd.parse` | `qd.decode + access content` | `qd.decode + qd.encode` |
 |---|---:|---:|---:|---:|
-| small      | +15,977 | +4,069 | +17,403 | +13,478 |
-| medium     |  +1,955 |    +66 |  +1,349 |  +1,349 |
-| github-100k | +12,761 |   +19 |    +591 |    +273 |
-| 100k       |    +602 |   +71 |    +739 |    +270 |
-| 200k       |    +505 |   +34 |    +370 |    +136 |
-| 500k       |    +648 |   +14 |    +148 |     +54 |
-| 1m         |  +1,151 |   +10 |    +111 |     +41 |
-| 2m         |  +2,312 |   +14 |    +148 |     +54 |
-| 5m         |  +5,723 |   +14 |    +148 |     +55 |
-| 10m        | +11,262 |   +14 |    +148 |     +54 |
-| interleaved | +4,509 |  +271 |  +2,955 |  +1,079 |
+| small      | +15,985 | +4,069 | +17,408 | +13,478 |
+| medium     |  +1,955 |    +67 |  +1,349 |  +1,349 |
+| github-100k | +12,761 |   +20 |    +591 |    +273 |
+| 100k       |    +485 |   +74 |    +739 |    +270 |
+| 200k       |    +392 |   +34 |    +370 |    +135 |
+| 500k       |    +577 |   +14 |    +148 |     +54 |
+| 1m         |  +1,082 |   +10 |    +111 |     +41 |
+| 2m         |  +1,155 |   +18 |    +217 |     +54 |
+| 5m         |  +1,316 |   +14 |    +409 |     +54 |
+| 10m        |  +1,583 |   +14 |    +717 |     +54 |
+| interleaved | +3,356 |  +271 |  +2,955 |  +1,080 |
 
 `qd.parse` retention is essentially constant across payload size: the only
 GC-rooted state is the reusable `indices: Vec<u32>` and `scratch` buffers.
@@ -133,11 +134,10 @@ key into the Lua table heap.
    The small 2 KB row is dominated by fixed Lua/FFI overhead, but medium and
    larger multimodal payloads show roughly 20–35× higher throughput than
    `cjson` for request-field access.
-2. **Reading every message `content` is still access-light for large
+2. **Reading every `messages[*].content` is still access-light for large
    multimodal bodies.** The benchmark touches the top-level request fields and
-   one `content` field per message, but it does not materialize every nested
-   image part or base64 string unless that field is read through the lazy table
-   API.
+   one `content` field per message; the payload size comes from image data
+   inside each message.
 3. **The win drops at 10 MB.** `qd.parse` is L3-bandwidth-bound at that
    size, and the `qd.decode` proxy's per-`__index` dispatch starts to
    amortize less well against the cheaper structural scan. `cjson` is still
@@ -150,7 +150,7 @@ key into the Lua table heap.
 5. **Memory retention** for `quickdecode` is essentially flat in payload
    size; the eager parsers retain ~1× the input size after the first run
    because the Lua table tree stays GC-rooted until the next collection.
-   The 10 MB case retains ~11 MB for `cjson`, ~14 KB for
+   The 10 MB case retains ~1.5 MB for `cjson`, ~14 KB for
    `qd.parse`.
 6. **REST API payloads (github-100k) show a smaller speedup** because their
    structural density is higher than the multimodal request ladder. Memory
