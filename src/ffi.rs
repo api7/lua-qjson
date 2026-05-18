@@ -152,8 +152,10 @@ pub unsafe extern "C" fn qjson_parse_ex(
 /// produced by `qjson_parse` is undefined behavior.
 #[no_mangle]
 pub unsafe extern "C" fn qjson_free(doc: *mut qjson_doc) {
-    if doc.is_null() { return; }
-    let _ = Box::from_raw(doc);
+    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        if doc.is_null() { return; }
+        let _ = Box::from_raw(doc);
+    }));
 }
 
 use crate::cursor::Cursor;

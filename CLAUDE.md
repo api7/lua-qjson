@@ -13,7 +13,7 @@ The `Makefile` is the canonical entry point; `make help` lists targets.
 ```sh
 make build              # cargo build --release  → target/release/libqjson.so
 make test               # cargo test --release + busted Lua tests
-make lint               # cargo clippy -D warnings + cargo fmt --check
+make lint               # cargo clippy --release --all-targets -- -D warnings
 make bench              # OpenResty LuaJIT benchmark vs lua-cjson and simdjson
 ```
 

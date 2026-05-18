@@ -10,7 +10,8 @@ unsafe fn open_root(json: &[u8]) -> (*mut qjson_doc, qjson_cursor) {
     let doc = qjson_parse(json.as_ptr(), json.len(), &mut err);
     assert!(!doc.is_null());
     let mut cur: qjson_cursor = std::mem::zeroed();
-    qjson_open(doc, ptr::null(), 0, &mut cur);
+    let rc = qjson_open(doc, ptr::null(), 0, &mut cur);
+    assert_eq!(rc, 0);
     (doc, cur)
 }
 

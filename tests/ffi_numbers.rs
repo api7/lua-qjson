@@ -24,7 +24,8 @@ fn get_i64_negative() {
     let d = parse(b"{\"a\":-7}");
     let mut v: i64 = 0;
     let p = b"a";
-    unsafe { qjson_get_i64(d, p.as_ptr() as *const i8, p.len(), &mut v) };
+    let rc = unsafe { qjson_get_i64(d, p.as_ptr() as *const i8, p.len(), &mut v) };
+    assert_eq!(rc, 0);
     assert_eq!(v, -7);
     unsafe { qjson_free(d) };
 }
@@ -44,7 +45,8 @@ fn get_f64_basic() {
     let d = parse(b"{\"a\":1.7}");
     let mut v: f64 = 0.0;
     let p = b"a";
-    unsafe { qjson_get_f64(d, p.as_ptr() as *const i8, p.len(), &mut v) };
+    let rc = unsafe { qjson_get_f64(d, p.as_ptr() as *const i8, p.len(), &mut v) };
+    assert_eq!(rc, 0);
     assert!((v - 1.7).abs() < 1e-12);
     unsafe { qjson_free(d) };
 }
@@ -54,10 +56,12 @@ fn get_bool() {
     let d = parse(b"{\"a\":true,\"b\":false}");
     let mut v: c_int = -1;
     let p = b"a";
-    unsafe { qjson_get_bool(d, p.as_ptr() as *const i8, p.len(), &mut v) };
+    let rc = unsafe { qjson_get_bool(d, p.as_ptr() as *const i8, p.len(), &mut v) };
+    assert_eq!(rc, 0);
     assert_ne!(v, 0);
     let p = b"b";
-    unsafe { qjson_get_bool(d, p.as_ptr() as *const i8, p.len(), &mut v) };
+    let rc = unsafe { qjson_get_bool(d, p.as_ptr() as *const i8, p.len(), &mut v) };
+    assert_eq!(rc, 0);
     assert_eq!(v, 0);
     unsafe { qjson_free(d) };
 }
@@ -105,10 +109,12 @@ fn get_f64_negative_zero_and_exponent() {
     let d = parse(b"{\"a\":-0.0,\"b\":1e-300}");
     let mut v: f64 = 1.0;
     let p = b"a";
-    unsafe { qjson_get_f64(d, p.as_ptr() as *const i8, p.len(), &mut v) };
+    let rc = unsafe { qjson_get_f64(d, p.as_ptr() as *const i8, p.len(), &mut v) };
+    assert_eq!(rc, 0);
     assert_eq!(v, 0.0);
     let p = b"b";
-    unsafe { qjson_get_f64(d, p.as_ptr() as *const i8, p.len(), &mut v) };
+    let rc = unsafe { qjson_get_f64(d, p.as_ptr() as *const i8, p.len(), &mut v) };
+    assert_eq!(rc, 0);
     assert!(v > 0.0 && v < 1e-200);
     unsafe { qjson_free(d) };
 }

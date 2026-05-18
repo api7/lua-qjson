@@ -39,7 +39,8 @@ fn cursor_index_array() {
     let d = parse(b"[\"a\",\"b\",\"c\"]");
     let mut c = std::mem::MaybeUninit::<qjson_cursor>::uninit();
     let p = b"";
-    unsafe { qjson_open(d, p.as_ptr() as *const i8, 0, c.as_mut_ptr()) };
+    let rc = unsafe { qjson_open(d, p.as_ptr() as *const i8, 0, c.as_mut_ptr()) };
+    assert_eq!(rc, 0);
     let c = unsafe { c.assume_init() };
 
     let mut sub = std::mem::MaybeUninit::<qjson_cursor>::uninit();
@@ -62,7 +63,8 @@ fn cursor_field_with_dotted_key() {
     let d = parse(b"{\"a.b\":42}");
     let mut c = std::mem::MaybeUninit::<qjson_cursor>::uninit();
     let p = b"";
-    unsafe { qjson_open(d, p.as_ptr() as *const i8, 0, c.as_mut_ptr()) };
+    let rc = unsafe { qjson_open(d, p.as_ptr() as *const i8, 0, c.as_mut_ptr()) };
+    assert_eq!(rc, 0);
     let c = unsafe { c.assume_init() };
 
     let mut sub = std::mem::MaybeUninit::<qjson_cursor>::uninit();
@@ -89,7 +91,8 @@ fn walk_children_trailing_scalar_integer() {
     let d = parse(b"[10,20,30]");
     let mut c = std::mem::MaybeUninit::<qjson_cursor>::uninit();
     let empty = b"";
-    unsafe { qjson_open(d, empty.as_ptr() as *const i8, 0, c.as_mut_ptr()) };
+    let rc = unsafe { qjson_open(d, empty.as_ptr() as *const i8, 0, c.as_mut_ptr()) };
+    assert_eq!(rc, 0);
     let c = unsafe { c.assume_init() };
 
     // Index 2 is the trailing element `30`.
@@ -113,7 +116,8 @@ fn walk_children_trailing_scalar_bool() {
     let d = parse(b"[1,\"x\",true]");
     let mut c = std::mem::MaybeUninit::<qjson_cursor>::uninit();
     let empty = b"";
-    unsafe { qjson_open(d, empty.as_ptr() as *const i8, 0, c.as_mut_ptr()) };
+    let rc = unsafe { qjson_open(d, empty.as_ptr() as *const i8, 0, c.as_mut_ptr()) };
+    assert_eq!(rc, 0);
     let c = unsafe { c.assume_init() };
 
     // Index 2 is the trailing element `true`.
