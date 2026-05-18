@@ -5,7 +5,7 @@
 -- they require this module.
 
 local ffi = require("ffi")
-local C   = ffi.load("qjson")
+local C   = require("qjson.lib")
 -- Defer the require to avoid a circular dependency when qjson.lua
 -- re-exports this module.  By the time _M.decode is called, qjson
 -- is already registered in package.loaded.

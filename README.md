@@ -15,6 +15,19 @@ cargo build --release
 
 A `Makefile` wraps the common workflows; run `make help` to see `build`, `test`, `lint`, `bench`, and `clean` targets. Override `LUAJIT` / `LUA_CPATH` per invocation if your environment differs from the defaults.
 
+## Installing
+
+```sh
+luarocks install lua-qjson
+```
+
+The rock builds the Rust native library during installation, so Rust/Cargo
+must be available on the target system. The Lua module name remains `qjson`:
+
+```lua
+local qjson = require("qjson")
+```
+
 ## Testing
 
 ```sh

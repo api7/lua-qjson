@@ -43,7 +43,7 @@ int qjson_cursor_object_entry_at(const qjson_cursor*, size_t i,
                                 qjson_cursor* value_out);
 ]]
 
-local C = ffi.load("qjson")
+local C = require("qjson.lib")
 
 local err_box  = ffi.new("int[1]")
 local i64_box  = ffi.new("int64_t[1]")
