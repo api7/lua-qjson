@@ -50,7 +50,7 @@ parsing workloads with ~3-5% structural density.
 | Row | What it does | Notes |
 |---|---|---|
 | `cjson.decode + access fields` | `cjson.decode(s)`, read `model` / `temperature`, then read every `message.content` | Eager Lua table |
-| `quickdecode.parse + access fields` | `qd.parse(s)`, read `model` / `temperature`, then read every `messages[i].content` | Lazy structural scan; explicit path-based reads |
+| `quickdecode.parse + access fields` | `qd.parse(s)`, read `model` / `temperature`, then touch every `messages[i].content` path | Lazy structural scan; explicit path-based reads |
 | `qd.decode + access content` | `qd.decode(s)`, read `model` / `temperature`, then read every `message.content` | Lazy table proxy; reads go through `__index` |
 | `qd.decode + qd.encode (unmodified)` | `qd.decode(s)` then re-emit as JSON | Substring fast path — no fields touched, so the proxy re-emits the original byte range via `memcpy` |
 
@@ -71,7 +71,7 @@ Numbers below come from one such run.
 
 Each row is "parse + access request fields" on the named payload.
 
-| Scenario | Size | cjson | `qd.parse` | `qd.decode + access` | `qd.decode + qd.encode` |
+| Scenario | Size | cjson | `qd.parse` | `qd.decode + access content` | `qd.decode + qd.encode` |
 |---|---:|---:|---:|---:|---:|
 | small      |   2.1 KB | 113,541 | 132,830 |  82,169 | 148,117 |
 | medium     |  60.4 KB |   8,219 | 198,413 | 140,845 | 149,298 |
@@ -87,7 +87,7 @@ Each row is "parse + access request fields" on the named payload.
 
 ### Speed-up vs. baselines
 
-| Scenario | `qd.parse` / cjson | `qd.decode + access` / cjson |
+| Scenario | `qd.parse` / cjson | `qd.decode + access content` / cjson |
 |---|---:|---:|
 | small  |  1.2× |  0.7× |
 | medium | 24.1× | 17.1× |
@@ -106,7 +106,7 @@ Post-run `collectgarbage("count")` minus baseline. Captures GC-rooted state
 the parser retains across iterations; transient per-call allocations are
 collected before the snapshot.
 
-| Scenario | cjson | `qd.parse` | `qd.decode + access` | `qd.decode + qd.encode` |
+| Scenario | cjson | `qd.parse` | `qd.decode + access content` | `qd.decode + qd.encode` |
 |---|---:|---:|---:|---:|
 | small      | +15,977 | +4,069 | +17,403 | +13,478 |
 | medium     |  +1,955 |    +66 |  +1,349 |  +1,349 |
