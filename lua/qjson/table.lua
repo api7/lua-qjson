@@ -1,16 +1,16 @@
--- Lazy table view + cjson-compatible encoder for quickdecode.
+-- Lazy table view + cjson-compatible encoder for qjson.
 --
--- This module relies on the FFI cdef set up by `lua/quickdecode.lua`, so
--- callers must `require("quickdecode")` (transitively or directly) before
+-- This module relies on the FFI cdef set up by `lua/qjson.lua`, so
+-- callers must `require("qjson")` (transitively or directly) before
 -- they require this module.
 
 local ffi = require("ffi")
-local C   = ffi.load("quickdecode")
--- Defer the require to avoid a circular dependency when quickdecode.lua
--- re-exports this module.  By the time _M.decode is called, quickdecode
+local C   = ffi.load("qjson")
+-- Defer the require to avoid a circular dependency when qjson.lua
+-- re-exports this module.  By the time _M.decode is called, qjson
 -- is already registered in package.loaded.
-local function get_qd()
-    return require("quickdecode")
+local function get_qjson()
+    return require("qjson")
 end
 
 -- Optional cjson bridge: reuse its sentinels when available so callers'
@@ -37,13 +37,13 @@ local bool_box = ffi.new("int[1]")
 local size_box = ffi.new("size_t[1]")
 local type_box = ffi.new("int[1]")
 local strp_box = ffi.new("const uint8_t*[1]")
-local cur_box   = ffi.new("qjd_cursor[1]")
-local child_box = ffi.new("qjd_cursor[1]")
+local cur_box   = ffi.new("qjson_cursor[1]")
+local child_box = ffi.new("qjson_cursor[1]")
 local sz_a      = ffi.new("size_t[1]")
 local sz_b      = ffi.new("size_t[1]")
 
-local QJD_OK        = 0
-local QJD_NOT_FOUND = 2
+local QJSON_OK        = 0
+local QJSON_NOT_FOUND = 2
 local T_NULL = 0
 local T_BOOL = 1
 local T_NUM  = 2
@@ -52,22 +52,22 @@ local T_ARR  = 4
 local T_OBJ  = 5
 
 local function check(rc)
-    if rc == QJD_OK then return true end
-    if rc == QJD_NOT_FOUND then return false end
-    error("quickdecode: " .. ffi.string(C.qjd_strerror(rc)))
+    if rc == QJSON_OK then return true end
+    if rc == QJSON_NOT_FOUND then return false end
+    error("qjson: " .. ffi.string(C.qjson_strerror(rc)))
 end
 
 local LazyObject = {}
 local LazyArray  = {}
 
 -- Build a new lazy view for a child container cursor.
--- src_box is an FFI cdata `qjd_cursor[1]`; src_box[0] is the cursor whose
+-- src_box is an FFI cdata `qjson_cursor[1]`; src_box[0] is the cursor whose
 -- data we copy into a fresh per-view allocation so the new view's _cur
 -- survives later overwrites of src_box.
 local function wrap_child(parent_view, src_box)
-    C.qjd_cursor_bytes(src_box[0], sz_a, sz_b)
-    local own_box = ffi.new("qjd_cursor[1]")
-    ffi.copy(own_box, src_box, ffi.sizeof("qjd_cursor"))
+    C.qjson_cursor_bytes(src_box[0], sz_a, sz_b)
+    local own_box = ffi.new("qjson_cursor[1]")
+    ffi.copy(own_box, src_box, ffi.sizeof("qjson_cursor"))
     return {
         _doc     = parent_view._doc,
         _cur_box = own_box,        -- keep cdata alive
@@ -78,22 +78,22 @@ local function wrap_child(parent_view, src_box)
 end
 
 -- Decode the value at src_box[0] into a Lua value.
--- src_box is a `qjd_cursor[1]`; for container types, a new view is created
+-- src_box is a `qjson_cursor[1]`; for container types, a new view is created
 -- via wrap_child so the caller's box can be freely reused afterwards.
 local function decode_cursor(parent_view, src_box)
-    local trc = C.qjd_cursor_typeof(src_box[0], "", 0, type_box)
+    local trc = C.qjson_cursor_typeof(src_box[0], "", 0, type_box)
     if not check(trc) then return nil end
     local t = type_box[0]
     if t == T_STR then
-        local rrc = C.qjd_cursor_get_str(src_box[0], "", 0, strp_box, size_box)
+        local rrc = C.qjson_cursor_get_str(src_box[0], "", 0, strp_box, size_box)
         if not check(rrc) then return nil end
         return ffi.string(strp_box[0], size_box[0])
     elseif t == T_NUM then
-        local rrc = C.qjd_cursor_get_f64(src_box[0], "", 0, f64_box)
+        local rrc = C.qjson_cursor_get_f64(src_box[0], "", 0, f64_box)
         if not check(rrc) then return nil end
         return f64_box[0]
     elseif t == T_BOOL then
-        local rrc = C.qjd_cursor_get_bool(src_box[0], "", 0, bool_box)
+        local rrc = C.qjson_cursor_get_bool(src_box[0], "", 0, bool_box)
         if not check(rrc) then return nil end
         return bool_box[0] ~= 0
     elseif t == T_NULL then
@@ -117,7 +117,7 @@ local function read_object_field(self, key)
     if type(key) ~= "string" then return nil end
     -- Use child_box so the lookup result does not alias self._cur (which is
     -- itself stored in root_box's backing memory in the decode caller).
-    local rc = C.qjd_cursor_field(self._cur, key, #key, child_box)
+    local rc = C.qjson_cursor_field(self._cur, key, #key, child_box)
     if not check(rc) then return nil end
     local v = decode_cursor(self, child_box)
     -- Cache containers so identity is stable and materialization sticks.
@@ -136,7 +136,7 @@ local function read_array_index(self, key)
     -- 1-based external, 0-based internal
     local i = key - 1
     if i < 0 or i ~= math.floor(i) then return nil end
-    local rc = C.qjd_cursor_index(self._cur, i, child_box)
+    local rc = C.qjson_cursor_index(self._cur, i, child_box)
     if not check(rc) then return nil end
     local v = decode_cursor(self, child_box)
     -- Cache containers so identity is stable and materialization sticks.
@@ -151,10 +151,10 @@ LazyArray.__index = read_array_index
 local function lazy_object_iter(state, _prev_key)
     local i = state.i
     state.i = i + 1
-    local rc = C.qjd_cursor_object_entry_at(
+    local rc = C.qjson_cursor_object_entry_at(
         state.view._cur, i, strp_box, size_box, child_box
     )
-    if rc == QJD_NOT_FOUND then return nil end
+    if rc == QJSON_NOT_FOUND then return nil end
     check(rc)
     local k = ffi.string(strp_box[0], size_box[0])
     local v = decode_cursor(state.view, child_box)
@@ -167,8 +167,8 @@ end
 
 local function lazy_array_iter(state, _prev_i)
     local i = state.i
-    local rc = C.qjd_cursor_index(state.view._cur, i, child_box)
-    if rc == QJD_NOT_FOUND then return nil end
+    local rc = C.qjson_cursor_index(state.view._cur, i, child_box)
+    if rc == QJSON_NOT_FOUND then return nil end
     check(rc)
     state.i = i + 1
     local v = decode_cursor(state.view, child_box)
@@ -198,7 +198,7 @@ function _M.pairs(t)
 end
 
 local function lazy_len(self)
-    local rc = C.qjd_cursor_len(self._cur, "", 0, size_box)
+    local rc = C.qjson_cursor_len(self._cur, "", 0, size_box)
     check(rc)
     return tonumber(size_box[0])
 end
@@ -209,7 +209,7 @@ LazyArray.__len  = lazy_len
 -- Public fallback for `#t` on a lazy proxy. Vanilla LuaJIT 5.1 does not invoke
 -- __len on tables (only userdata) unless built with LUAJIT_ENABLE_LUA52COMPAT
 -- (OpenResty's default). Callers running on a non-compat LuaJIT must use
--- qt.len(t) — same role qt.pairs / qt.ipairs play for __pairs / __ipairs.
+-- qjson.len(t) — same role qjson.pairs / qjson.ipairs play for __pairs / __ipairs.
 function _M.len(t)
     local mt = getmetatable(t)
     if mt == LazyObject or mt == LazyArray then
@@ -225,8 +225,8 @@ local function materialize_object_contents(view)
     local i = 0
     local pairs_out = {}
     while true do
-        local rc = C.qjd_cursor_object_entry_at(view._cur, i, strp_box, size_box, child_box)
-        if rc == QJD_NOT_FOUND then break end
+        local rc = C.qjson_cursor_object_entry_at(view._cur, i, strp_box, size_box, child_box)
+        if rc == QJSON_NOT_FOUND then break end
         check(rc)
         local k = ffi.string(strp_box[0], size_box[0])
         local v = decode_cursor(view, child_box)
@@ -242,8 +242,8 @@ local function materialize_array_contents(view)
     local i = 0
     local out = {}
     while true do
-        local rc = C.qjd_cursor_index(view._cur, i, child_box)
-        if rc == QJD_NOT_FOUND then break end
+        local rc = C.qjson_cursor_index(view._cur, i, child_box)
+        if rc == QJSON_NOT_FOUND then break end
         check(rc)
         out[i + 1] = decode_cursor(view, child_box)
         i = i + 1
@@ -309,27 +309,27 @@ LazyArray.__newindex = function(t, k, v)
 end
 
 function _M.decode(json_str)
-    -- Reuse the existing qd.parse path to get a Doc with stable buffer hold.
-    local doc = get_qd().parse(json_str)
+    -- Reuse the existing qjson.parse path to get a Doc with stable buffer hold.
+    local doc = get_qjson().parse(json_str)
     -- Open the root cursor into cur_box, then copy into a dedicated box owned
     -- by the view so that later child lookups (which reuse child_box) do not
     -- alias the root cursor's backing storage.
-    local rc = C.qjd_open(doc._ptr, "", 0, cur_box)
+    local rc = C.qjson_open(doc._ptr, "", 0, cur_box)
     if not check(rc) then
-        error("quickdecode: open root failed")
+        error("qjson: open root failed")
     end
-    local root_box = ffi.new("qjd_cursor[1]")
-    ffi.copy(root_box, cur_box, ffi.sizeof("qjd_cursor"))
+    local root_box = ffi.new("qjson_cursor[1]")
+    ffi.copy(root_box, cur_box, ffi.sizeof("qjson_cursor"))
     -- Determine root container kind (object/array) and wrap accordingly.
     -- Both have meaningful byte spans for encode.
-    local trc = C.qjd_cursor_typeof(root_box[0], "", 0, type_box)
+    local trc = C.qjson_cursor_typeof(root_box[0], "", 0, type_box)
     if not check(trc) then
-        error("quickdecode: root typeof failed")
+        error("qjson: root typeof failed")
     end
     local rt = type_box[0]
-    local brc = C.qjd_cursor_bytes(root_box[0], sz_a, sz_b)
+    local brc = C.qjson_cursor_bytes(root_box[0], sz_a, sz_b)
     if not check(brc) then
-        error("quickdecode: root byte-span failed")
+        error("qjson: root byte-span failed")
     end
     local view = {
         _doc     = doc,
@@ -343,7 +343,7 @@ function _M.decode(json_str)
     elseif rt == T_ARR then
         return setmetatable(view, LazyArray)
     else
-        error("quickdecode: top-level JSON value is not an object or array")
+        error("qjson: top-level JSON value is not an object or array")
     end
 end
 
@@ -396,7 +396,7 @@ end
 
 local function encode_number(n)
     if n ~= n or n == math.huge or n == -math.huge then
-        error("qd.encode: cannot encode non-finite number")
+        error("qjson.encode: cannot encode non-finite number")
     end
     if n == math.floor(n) and math.abs(n) < 1e15 then
         return string_format("%d", n)
@@ -437,8 +437,8 @@ local function encode_lazy_object_walking(t)
     local parts = {}
     local i = 0
     while true do
-        local rc = C.qjd_cursor_object_entry_at(t._cur, i, strp_box, size_box, child_box)
-        if rc == QJD_NOT_FOUND then break end
+        local rc = C.qjson_cursor_object_entry_at(t._cur, i, strp_box, size_box, child_box)
+        if rc == QJSON_NOT_FOUND then break end
         check(rc)
         local k = ffi.string(strp_box[0], size_box[0])
         local v
@@ -456,11 +456,11 @@ end
 
 local function encode_lazy_array_walking(t)
     local parts = {}
-    local rc = C.qjd_cursor_len(t._cur, "", 0, size_box)
+    local rc = C.qjson_cursor_len(t._cur, "", 0, size_box)
     check(rc)
     local n = tonumber(size_box[0])
     for i = 0, n - 1 do
-        local irc = C.qjd_cursor_index(t._cur, i, child_box)
+        local irc = C.qjson_cursor_index(t._cur, i, child_box)
         check(irc)
         local cached = rawget(t, i + 1)
         local v
@@ -511,7 +511,7 @@ local function encode_object(t)
     local parts = {}
     for k, v in pairs(t) do
         if type(k) ~= "string" then
-            error("qd.encode: object key must be a string, got " .. type(k))
+            error("qjson.encode: object key must be a string, got " .. type(k))
         end
         parts[#parts+1] = encode_string(k) .. ":" .. encode(v)
     end
@@ -539,13 +539,13 @@ encode = function(v)
         end
         return encode_object(v)
     end
-    error("qd.encode: unsupported value type: " .. tv)
+    error("qjson.encode: unsupported value type: " .. tv)
 end
 
 _M.encode = encode
 
 -- Debug convenience: tostring(lazy_view) returns the original JSON bytes.
--- Not the canonical encoder — callers should still use qd.encode for output.
+-- Not the canonical encoder — callers should still use qjson.encode for output.
 LazyObject.__tostring = encode_proxy
 LazyArray.__tostring  = encode_proxy
 

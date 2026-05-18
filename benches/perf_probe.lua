@@ -1,11 +1,11 @@
--- Minimal probe for perf: hammers qd.parse on a fixed 100K payload so perf
+-- Minimal probe for perf: hammers qjson.parse on a fixed 100K payload so perf
 -- samples concentrate on the FFI entry + parse hot path. Not a benchmark —
 -- there is no timing or memory accounting here, just sustained work.
 
 package.path  = package.path  .. ";./lua/?.lua"
 package.cpath = package.cpath .. ";./target/release/lib?.so"
 
-local qd = require("quickdecode")
+local qjson = require("qjson")
 
 -- Same payload generator as lua_bench.lua so probe output corresponds to
 -- the same shape the bench measures. Park-Miller LCG keeps it deterministic.
@@ -46,14 +46,14 @@ local iters = tonumber(arg[1]) or 500000
 
 -- Warmup so JIT traces compile before perf starts sampling steady state.
 for _ = 1, 1000 do
-    local d = qd.parse(payload)
+    local d = qjson.parse(payload)
     local _ = d:get_str("model")
 end
 
 io.stderr:write(string.format("probe: %d bytes payload, %d iters\n", #payload, iters))
 
 for _ = 1, iters do
-    local d = qd.parse(payload)
+    local d = qjson.parse(payload)
     local _ = d:get_str("model")
     local _ = d:get_f64("temperature")
     local _ = d:get_str("messages[0].role")

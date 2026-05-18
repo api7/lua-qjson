@@ -23,8 +23,8 @@
 use std::fs;
 use std::path::Path;
 
-use quickdecode::doc::Document;
-use quickdecode::options::{Options, QJD_MODE_EAGER, QJD_MODE_LAZY};
+use qjson::doc::Document;
+use qjson::options::{Options, QJSON_MODE_EAGER, QJSON_MODE_LAZY};
 
 /// y_* files that we currently reject but shouldn't.
 /// Each is annotated with why and what follow-up would fix it.
@@ -84,8 +84,8 @@ fn is_known_n_failure(path: &std::path::Path) -> bool {
 
 #[test]
 fn y_files_accepted_in_both_modes() {
-    let eager = Options { mode: QJD_MODE_EAGER, max_depth: 0 };
-    let lazy  = Options { mode: QJD_MODE_LAZY,  max_depth: 0 };
+    let eager = Options { mode: QJSON_MODE_EAGER, max_depth: 0 };
+    let lazy  = Options { mode: QJSON_MODE_LAZY,  max_depth: 0 };
     let mut failures = Vec::new();
     let mut skipped = 0usize;
 
@@ -119,7 +119,7 @@ fn y_files_accepted_in_both_modes() {
 
 #[test]
 fn n_files_rejected_in_eager_mode() {
-    let eager = Options { mode: QJD_MODE_EAGER, max_depth: 0 };
+    let eager = Options { mode: QJSON_MODE_EAGER, max_depth: 0 };
     let mut accepted = Vec::new();
     let mut skipped = 0usize;
 
@@ -149,7 +149,7 @@ fn n_files_rejected_in_eager_mode() {
 #[test]
 fn document_i_files_behavior() {
     // Implementation-defined cases — document what we do, do not assert.
-    let eager = Options { mode: QJD_MODE_EAGER, max_depth: 0 };
+    let eager = Options { mode: QJSON_MODE_EAGER, max_depth: 0 };
     for path in iter_files("i_") {
         let data = fs::read(&path).unwrap();
         let verdict = match Document::parse_with_options(&data, &eager) {

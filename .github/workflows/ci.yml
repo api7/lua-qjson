@@ -85,7 +85,7 @@ jobs:
 
       - name: Run busted tests (under LuaJIT)
         run: |
-          # ffi.load("quickdecode") uses dlopen which respects LD_LIBRARY_PATH,
+          # ffi.load("qjson") uses dlopen which respects LD_LIBRARY_PATH,
           # not LuaJIT's package.cpath. Point dlopen at the release build dir.
           LD_LIBRARY_PATH="$PWD/target/release" \
             busted --lua=$(which luajit) tests/lua \

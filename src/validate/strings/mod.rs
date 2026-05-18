@@ -17,16 +17,16 @@ mod avx2;
 #[cfg(target_arch = "aarch64")]
 mod neon;
 
-use crate::error::qjd_err;
+use crate::error::qjson_err;
 use once_cell::sync::OnceCell;
 
-type ValidateFn = fn(&[u8]) -> Result<(), qjd_err>;
+type ValidateFn = fn(&[u8]) -> Result<(), qjson_err>;
 static VALIDATE_FN: OnceCell<ValidateFn> = OnceCell::new();
 
 /// Verify that the raw span (excluding surrounding quotes) contains no
 /// unescaped control characters (0x00..=0x1F), every backslash escape is
 /// RFC 8259 §7 compliant, and the byte sequence is valid UTF-8 per RFC 3629.
-pub(crate) fn validate_string_span(span: &[u8]) -> Result<(), qjd_err> {
+pub(crate) fn validate_string_span(span: &[u8]) -> Result<(), qjson_err> {
     let f = *VALIDATE_FN.get_or_init(|| {
         #[cfg(all(target_arch = "x86_64", feature = "avx2"))]
         {
@@ -58,11 +58,11 @@ mod tests {
     #[test] fn ascii_ok()         { assert!(validate_string_span(b"hello").is_ok()); }
     #[test] fn utf8_ok()          { assert!(validate_string_span("中文".as_bytes()).is_ok()); }
     #[test] fn escapes_ok()       { assert!(validate_string_span(b"a\\nb\\u00e9").is_ok()); }
-    #[test] fn tab_raw_bad()      { assert_eq!(validate_string_span(b"a\tb").unwrap_err(), qjd_err::QJD_INVALID_STRING); }
-    #[test] fn null_raw_bad()     { assert_eq!(validate_string_span(b"a\x00b").unwrap_err(), qjd_err::QJD_INVALID_STRING); }
-    #[test] fn newline_raw_bad()  { assert_eq!(validate_string_span(b"a\nb").unwrap_err(), qjd_err::QJD_INVALID_STRING); }
+    #[test] fn tab_raw_bad()      { assert_eq!(validate_string_span(b"a\tb").unwrap_err(), qjson_err::QJSON_INVALID_STRING); }
+    #[test] fn null_raw_bad()     { assert_eq!(validate_string_span(b"a\x00b").unwrap_err(), qjson_err::QJSON_INVALID_STRING); }
+    #[test] fn newline_raw_bad()  { assert_eq!(validate_string_span(b"a\nb").unwrap_err(), qjson_err::QJSON_INVALID_STRING); }
     #[test] fn del_0x7f_ok()      { assert!(validate_string_span(b"a\x7fb").is_ok()); } // RFC 8259 does NOT forbid 0x7F
-    #[test] fn invalid_utf8_bad() { assert_eq!(validate_string_span(&[0xC0, 0xC0]).unwrap_err(), qjd_err::QJD_INVALID_UTF8); }
+    #[test] fn invalid_utf8_bad() { assert_eq!(validate_string_span(&[0xC0, 0xC0]).unwrap_err(), qjson_err::QJSON_INVALID_UTF8); }
 
     // ── Single-pass / SIMD edge cases ────────────────────────────────────
 
@@ -83,7 +83,7 @@ mod tests {
         // Long ASCII run skipped by SIMD, then a control byte in the tail.
         let mut s = vec![b'x'; 200];
         s.push(b'\t');
-        assert_eq!(validate_string_span(&s).unwrap_err(), qjd_err::QJD_INVALID_STRING);
+        assert_eq!(validate_string_span(&s).unwrap_err(), qjson_err::QJSON_INVALID_STRING);
     }
 
     #[test]
@@ -112,59 +112,59 @@ mod tests {
         let mut s = vec![b'x'; 31];
         s.push(b'\\');
         s.push(b'q');
-        assert_eq!(validate_string_span(&s).unwrap_err(), qjd_err::QJD_INVALID_STRING);
+        assert_eq!(validate_string_span(&s).unwrap_err(), qjson_err::QJSON_INVALID_STRING);
     }
 
     #[test]
     fn truncated_u_escape_at_end() {
         // `\uXX` with only 2 hex digits — RFC requires exactly 4.
-        assert_eq!(validate_string_span(b"\\uAB").unwrap_err(), qjd_err::QJD_INVALID_STRING);
-        assert_eq!(validate_string_span(b"\\uABC").unwrap_err(), qjd_err::QJD_INVALID_STRING);
+        assert_eq!(validate_string_span(b"\\uAB").unwrap_err(), qjson_err::QJSON_INVALID_STRING);
+        assert_eq!(validate_string_span(b"\\uABC").unwrap_err(), qjson_err::QJSON_INVALID_STRING);
         // Bare `\u` at end.
-        assert_eq!(validate_string_span(b"\\u").unwrap_err(), qjd_err::QJD_INVALID_STRING);
+        assert_eq!(validate_string_span(b"\\u").unwrap_err(), qjson_err::QJSON_INVALID_STRING);
     }
 
     #[test]
     fn dangling_backslash_at_end() {
-        assert_eq!(validate_string_span(b"abc\\").unwrap_err(), qjd_err::QJD_INVALID_STRING);
+        assert_eq!(validate_string_span(b"abc\\").unwrap_err(), qjson_err::QJSON_INVALID_STRING);
     }
 
     #[test]
     fn unknown_escape_introducer() {
         // `\a`, `\q`, etc. are not valid RFC 8259 escapes.
-        assert_eq!(validate_string_span(b"\\a").unwrap_err(), qjd_err::QJD_INVALID_STRING);
-        assert_eq!(validate_string_span(b"\\q").unwrap_err(), qjd_err::QJD_INVALID_STRING);
-        assert_eq!(validate_string_span(b"\\x41").unwrap_err(), qjd_err::QJD_INVALID_STRING);
+        assert_eq!(validate_string_span(b"\\a").unwrap_err(), qjson_err::QJSON_INVALID_STRING);
+        assert_eq!(validate_string_span(b"\\q").unwrap_err(), qjson_err::QJSON_INVALID_STRING);
+        assert_eq!(validate_string_span(b"\\x41").unwrap_err(), qjson_err::QJSON_INVALID_STRING);
     }
 
     #[test]
     fn u_escape_non_hex_bad() {
-        assert_eq!(validate_string_span(b"\\u00ZZ").unwrap_err(), qjd_err::QJD_INVALID_STRING);
-        assert_eq!(validate_string_span(b"\\uGHIJ").unwrap_err(), qjd_err::QJD_INVALID_STRING);
+        assert_eq!(validate_string_span(b"\\u00ZZ").unwrap_err(), qjson_err::QJSON_INVALID_STRING);
+        assert_eq!(validate_string_span(b"\\uGHIJ").unwrap_err(), qjson_err::QJSON_INVALID_STRING);
     }
 
     #[test]
     fn overlong_utf8_rejected() {
         // C0 80 would encode U+0000 in 2 bytes (overlong) — RFC 3629 forbids.
-        assert_eq!(validate_string_span(&[0xC0, 0x80]).unwrap_err(), qjd_err::QJD_INVALID_UTF8);
+        assert_eq!(validate_string_span(&[0xC0, 0x80]).unwrap_err(), qjson_err::QJSON_INVALID_UTF8);
         // E0 80 80 would encode U+0000 in 3 bytes (overlong).
-        assert_eq!(validate_string_span(&[0xE0, 0x80, 0x80]).unwrap_err(), qjd_err::QJD_INVALID_UTF8);
+        assert_eq!(validate_string_span(&[0xE0, 0x80, 0x80]).unwrap_err(), qjson_err::QJSON_INVALID_UTF8);
         // F0 80 80 80 would encode U+0000 in 4 bytes (overlong).
-        assert_eq!(validate_string_span(&[0xF0, 0x80, 0x80, 0x80]).unwrap_err(), qjd_err::QJD_INVALID_UTF8);
+        assert_eq!(validate_string_span(&[0xF0, 0x80, 0x80, 0x80]).unwrap_err(), qjson_err::QJSON_INVALID_UTF8);
     }
 
     #[test]
     fn surrogate_in_utf8_rejected() {
         // ED A0 80 = U+D800, the start of the high-surrogate range.
-        assert_eq!(validate_string_span(&[0xED, 0xA0, 0x80]).unwrap_err(), qjd_err::QJD_INVALID_UTF8);
+        assert_eq!(validate_string_span(&[0xED, 0xA0, 0x80]).unwrap_err(), qjson_err::QJSON_INVALID_UTF8);
         // ED BF BF = U+DFFF, the end of the low-surrogate range.
-        assert_eq!(validate_string_span(&[0xED, 0xBF, 0xBF]).unwrap_err(), qjd_err::QJD_INVALID_UTF8);
+        assert_eq!(validate_string_span(&[0xED, 0xBF, 0xBF]).unwrap_err(), qjson_err::QJSON_INVALID_UTF8);
     }
 
     #[test]
     fn lone_continuation_byte_rejected() {
-        assert_eq!(validate_string_span(&[0x80]).unwrap_err(), qjd_err::QJD_INVALID_UTF8);
-        assert_eq!(validate_string_span(&[b'a', 0xBF, b'b']).unwrap_err(), qjd_err::QJD_INVALID_UTF8);
+        assert_eq!(validate_string_span(&[0x80]).unwrap_err(), qjson_err::QJSON_INVALID_UTF8);
+        assert_eq!(validate_string_span(&[b'a', 0xBF, b'b']).unwrap_err(), qjson_err::QJSON_INVALID_UTF8);
     }
 
     #[test]
@@ -176,17 +176,17 @@ mod tests {
     #[test]
     fn truncated_utf8_sequence_rejected() {
         // 2-byte lead with no continuation.
-        assert_eq!(validate_string_span(&[0xC3]).unwrap_err(), qjd_err::QJD_INVALID_UTF8);
+        assert_eq!(validate_string_span(&[0xC3]).unwrap_err(), qjson_err::QJSON_INVALID_UTF8);
         // 3-byte lead with only one continuation.
-        assert_eq!(validate_string_span(&[0xE4, 0xB8]).unwrap_err(), qjd_err::QJD_INVALID_UTF8);
+        assert_eq!(validate_string_span(&[0xE4, 0xB8]).unwrap_err(), qjson_err::QJSON_INVALID_UTF8);
         // 4-byte lead with only two continuations.
-        assert_eq!(validate_string_span(&[0xF0, 0x9F, 0x98]).unwrap_err(), qjd_err::QJD_INVALID_UTF8);
+        assert_eq!(validate_string_span(&[0xF0, 0x9F, 0x98]).unwrap_err(), qjson_err::QJSON_INVALID_UTF8);
     }
 
     #[test]
     fn utf8_out_of_range_rejected() {
         // F5..FF are not valid lead bytes (would encode > U+10FFFF).
-        assert_eq!(validate_string_span(&[0xF5, 0x80, 0x80, 0x80]).unwrap_err(), qjd_err::QJD_INVALID_UTF8);
-        assert_eq!(validate_string_span(&[0xFF]).unwrap_err(), qjd_err::QJD_INVALID_UTF8);
+        assert_eq!(validate_string_span(&[0xF5, 0x80, 0x80, 0x80]).unwrap_err(), qjson_err::QJSON_INVALID_UTF8);
+        assert_eq!(validate_string_span(&[0xFF]).unwrap_err(), qjson_err::QJSON_INVALID_UTF8);
     }
 }

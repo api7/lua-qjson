@@ -1,10 +1,10 @@
-use crate::error::qjd_err;
+use crate::error::qjson_err;
 
-pub(crate) fn parse_i64(bytes: &[u8]) -> Result<i64, qjd_err> {
+pub(crate) fn parse_i64(bytes: &[u8]) -> Result<i64, qjson_err> {
     crate::validate::validate_number(bytes)?;
     // After ABNF validation, integer-only inputs have no `.`/`e`/`E`.
     if bytes.iter().any(|&b| b == b'.' || b == b'e' || b == b'E') {
-        return Err(qjd_err::QJD_TYPE_MISMATCH);
+        return Err(qjson_err::QJSON_TYPE_MISMATCH);
     }
     let (neg, rest) = match bytes[0] {
         b'-' => (true, &bytes[1..]),
@@ -18,19 +18,19 @@ pub(crate) fn parse_i64(bytes: &[u8]) -> Result<i64, qjd_err> {
             if neg { x.checked_sub(d) } else { x.checked_add(d) }
         }) {
             Some(n) => n,
-            None    => return Err(qjd_err::QJD_OUT_OF_RANGE),
+            None    => return Err(qjson_err::QJSON_OUT_OF_RANGE),
         };
     }
     Ok(v)
 }
 
-pub(crate) fn parse_f64(bytes: &[u8]) -> Result<f64, qjd_err> {
+pub(crate) fn parse_f64(bytes: &[u8]) -> Result<f64, qjson_err> {
     crate::validate::validate_number(bytes)?;
-    let s = std::str::from_utf8(bytes).map_err(|_| qjd_err::QJD_DECODE_FAILED)?;
+    let s = std::str::from_utf8(bytes).map_err(|_| qjson_err::QJSON_DECODE_FAILED)?;
     match s.parse::<f64>() {
         Ok(v) if v.is_finite() => Ok(v),
-        Ok(_)                  => Err(qjd_err::QJD_NUMBER_OUT_OF_RANGE),
-        Err(_)                 => Err(qjd_err::QJD_DECODE_FAILED),
+        Ok(_)                  => Err(qjson_err::QJSON_NUMBER_OUT_OF_RANGE),
+        Err(_)                 => Err(qjson_err::QJSON_DECODE_FAILED),
     }
 }
 
@@ -46,22 +46,22 @@ mod tests {
 
     #[test]
     fn i64_overflow() {
-        assert_eq!(parse_i64(b"9223372036854775808"), Err(qjd_err::QJD_OUT_OF_RANGE));
+        assert_eq!(parse_i64(b"9223372036854775808"), Err(qjson_err::QJSON_OUT_OF_RANGE));
     }
 
     #[test]
     fn i64_rejects_decimal() {
-        assert_eq!(parse_i64(b"1.5"), Err(qjd_err::QJD_TYPE_MISMATCH));
+        assert_eq!(parse_i64(b"1.5"), Err(qjson_err::QJSON_TYPE_MISMATCH));
     }
 
     #[test]
     fn i64_rejects_exponent() {
-        assert_eq!(parse_i64(b"1e5"), Err(qjd_err::QJD_TYPE_MISMATCH));
+        assert_eq!(parse_i64(b"1e5"), Err(qjson_err::QJSON_TYPE_MISMATCH));
     }
 
     #[test]
     fn i64_rejects_empty() {
-        assert_eq!(parse_i64(b""), Err(qjd_err::QJD_INVALID_NUMBER));
+        assert_eq!(parse_i64(b""), Err(qjson_err::QJSON_INVALID_NUMBER));
     }
 
     #[test] fn f64_zero()    { assert_eq!(parse_f64(b"0.0").unwrap(),  0.0); }
@@ -71,6 +71,6 @@ mod tests {
 
     #[test]
     fn f64_rejects_garbage() {
-        assert_eq!(parse_f64(b"hello"), Err(qjd_err::QJD_INVALID_NUMBER));
+        assert_eq!(parse_f64(b"hello"), Err(qjson_err::QJSON_INVALID_NUMBER));
     }
 }

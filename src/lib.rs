@@ -1,4 +1,4 @@
-//! lua-quick-decode: Rust JSON decoder for LuaJIT FFI consumers.
+//! qjson: Rust JSON decoder for LuaJIT FFI consumers.
 
 pub mod error;
 pub mod options;

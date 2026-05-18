@@ -1,13 +1,13 @@
-local qd = require("quickdecode")
+local qjson = require("qjson")
 
-describe("quickdecode GC", function()
-    it("collects Doc without crashing and frees underlying qjd_doc", function()
+describe("qjson GC", function()
+    it("collects Doc without crashing and frees underlying qjson_doc", function()
         -- Create and drop many Docs to exercise the ffi.gc finalizer path.
         -- A leak or double-free would surface as either crash, memory growth,
         -- or use-after-free under valgrind. Here we just confirm the loop
         -- completes and that values remain correct mid-loop.
         for i = 1, 200 do
-            local d = qd.parse(string.format('{"i":%d}', i))
+            local d = qjson.parse(string.format('{"i":%d}', i))
             assert.are.equal(i, d:get_i64("i"))
             d = nil  -- drop reference
         end
@@ -19,7 +19,7 @@ describe("quickdecode GC", function()
         -- Use a weak table to confirm the Doc is reachable for collection.
         local refs = setmetatable({}, { __mode = "v" })
         do
-            local d = qd.parse('{"a":1}')
+            local d = qjson.parse('{"a":1}')
             refs[1] = d
             assert.are.equal(1, d:get_i64("a"))
         end

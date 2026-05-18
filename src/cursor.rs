@@ -1,5 +1,5 @@
 use crate::doc::Document;
-use crate::error::qjd_err;
+use crate::error::qjson_err;
 use crate::path::{PathIter, PathSeg};
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -21,7 +21,7 @@ impl Cursor {
         Cursor { idx_start: 0, idx_end: n - 2 }
     }
 
-    pub(crate) fn resolve(self, doc: &Document, path: &[u8]) -> Result<Cursor, qjd_err> {
+    pub(crate) fn resolve(self, doc: &Document, path: &[u8]) -> Result<Cursor, qjson_err> {
         let mut cur = self;
         for seg in PathIter::new(path) {
             let seg = seg?;
@@ -31,13 +31,13 @@ impl Cursor {
     }
 }
 
-fn step(doc: &Document, cur: Cursor, seg: &PathSeg) -> Result<Cursor, qjd_err> {
+fn step(doc: &Document, cur: Cursor, seg: &PathSeg) -> Result<Cursor, qjson_err> {
     // The cursor must point at a container.
     let opener_byte = container_opener_byte(doc, cur)
-        .ok_or(qjd_err::QJD_TYPE_MISMATCH)?;
+        .ok_or(qjson_err::QJSON_TYPE_MISMATCH)?;
     match (seg, opener_byte) {
         (PathSeg::Key(_), b'{') | (PathSeg::Idx(_), b'[') => {}
-        _ => return Err(qjd_err::QJD_TYPE_MISMATCH),
+        _ => return Err(qjson_err::QJSON_TYPE_MISMATCH),
     }
 
     walk_children(doc, cur, seg)
@@ -55,7 +55,7 @@ fn container_opener_byte(doc: &Document, cur: Cursor) -> Option<u8> {
 /// Iterate children of the container at `cur` and return a Cursor for the
 /// matching child. Populates the skip cache on the first visit; uses it on
 /// subsequent visits.
-fn walk_children(doc: &Document, cur: Cursor, seg: &PathSeg) -> Result<Cursor, qjd_err> {
+fn walk_children(doc: &Document, cur: Cursor, seg: &PathSeg) -> Result<Cursor, qjson_err> {
     let is_obj = matches!(seg, PathSeg::Key(_));
     let mut cache = doc.skip.borrow_mut();
     let (slot_n, was_cached) = cache.get_or_insert(cur.idx_start);
@@ -90,7 +90,7 @@ fn walk_children(doc: &Document, cur: Cursor, seg: &PathSeg) -> Result<Cursor, q
             let slot = cache.slot_mut(slot_n);
             slot.child_starts = starts;
             slot.child_ends   = ends;
-            return Err(qjd_err::QJD_NOT_FOUND);
+            return Err(qjson_err::QJSON_NOT_FOUND);
         }
     }
 
@@ -110,7 +110,7 @@ fn walk_children(doc: &Document, cur: Cursor, seg: &PathSeg) -> Result<Cursor, q
                 let key_open = doc.indices[i as usize] as usize;
                 let key_close = doc.indices[(i + 1) as usize] as usize;
                 if doc.buf.get(key_open).copied() != Some(b'"') {
-                    return Err(qjd_err::QJD_PARSE_ERROR);
+                    return Err(qjson_err::QJSON_PARSE_ERROR);
                 }
                 let key_bytes = &doc.buf[key_open + 1 .. key_close];
                 matches!(seg, PathSeg::Key(want) if key_bytes == *want)
@@ -128,7 +128,7 @@ fn walk_children(doc: &Document, cur: Cursor, seg: &PathSeg) -> Result<Cursor, q
         match doc.buf[after_pos] {
             b',' => { i = skip_end + 1; arr_idx += 1; }
             b'}' | b']' => break,
-            _ => return Err(qjd_err::QJD_PARSE_ERROR),
+            _ => return Err(qjson_err::QJSON_PARSE_ERROR),
         }
     }
 
@@ -138,13 +138,13 @@ fn walk_children(doc: &Document, cur: Cursor, seg: &PathSeg) -> Result<Cursor, q
 
     match result {
         Some(c) => Ok(c),
-        None    => Err(qjd_err::QJD_NOT_FOUND),
+        None    => Err(qjson_err::QJSON_NOT_FOUND),
     }
 }
 
 fn resolve_in_known_children(
     doc: &Document, starts: &[u32], ends: &[u32], is_obj: bool, seg: &PathSeg,
-) -> Result<Cursor, qjd_err> {
+) -> Result<Cursor, qjson_err> {
     for (k, (&i, &cursor_end)) in starts.iter().zip(ends.iter()).enumerate() {
         let matched = if is_obj {
             let key_open = doc.indices[i as usize] as usize;
@@ -159,7 +159,7 @@ fn resolve_in_known_children(
             return Ok(Cursor { idx_start: value_idx_start, idx_end: cursor_end });
         }
     }
-    Err(qjd_err::QJD_NOT_FOUND)
+    Err(qjson_err::QJSON_NOT_FOUND)
 }
 
 /// Given the indices position of a value's first marker, return:
@@ -175,9 +175,9 @@ fn resolve_in_known_children(
 ///   - container: index after the matching closer (= closer_idx + 1)
 ///   - string:    index after the close '"' (= start + 2)
 ///   - scalar:    start itself (indices[start] IS the separator/closer)
-pub(crate) fn find_value_span(doc: &Document, start: u32) -> Result<(u32, u32), qjd_err> {
+pub(crate) fn find_value_span(doc: &Document, start: u32) -> Result<(u32, u32), qjson_err> {
     let pos = doc.indices[start as usize] as usize;
-    let b = *doc.buf.get(pos).ok_or(qjd_err::QJD_PARSE_ERROR)?;
+    let b = *doc.buf.get(pos).ok_or(qjson_err::QJSON_PARSE_ERROR)?;
     match b {
         b'{' | b'[' => {
             // Brace-count to matching closer.
@@ -186,14 +186,14 @@ pub(crate) fn find_value_span(doc: &Document, start: u32) -> Result<(u32, u32), 
             let mut k = start + 1;
             while (k as usize) < doc.indices.len() {
                 let cb_pos = doc.indices[k as usize] as usize;
-                if cb_pos >= doc.buf.len() { return Err(qjd_err::QJD_PARSE_ERROR); }
+                if cb_pos >= doc.buf.len() { return Err(qjson_err::QJSON_PARSE_ERROR); }
                 let cb = doc.buf[cb_pos];
                 match cb {
                     b'{' | b'[' => depth += 1,
                     b'}' | b']' => {
                         depth -= 1;
                         if depth == 0 {
-                            if cb != want_close { return Err(qjd_err::QJD_PARSE_ERROR); }
+                            if cb != want_close { return Err(qjson_err::QJSON_PARSE_ERROR); }
                             // cursor_end = closer index (k)
                             // skip_end   = one past closer (k+1), pointing at ','
                             //              or parent closer
@@ -204,7 +204,7 @@ pub(crate) fn find_value_span(doc: &Document, start: u32) -> Result<(u32, u32), 
                 }
                 k += 1;
             }
-            Err(qjd_err::QJD_PARSE_ERROR)
+            Err(qjson_err::QJSON_PARSE_ERROR)
         }
         b'"' => {
             // String value: indices has both opening (start) and closing (start+1) quotes.
@@ -222,11 +222,11 @@ pub(crate) fn find_value_span(doc: &Document, start: u32) -> Result<(u32, u32), 
     }
 }
 
-pub(crate) fn resolve_single_key(doc: &Document, cur: Cursor, key: &[u8]) -> Result<Cursor, qjd_err> {
+pub(crate) fn resolve_single_key(doc: &Document, cur: Cursor, key: &[u8]) -> Result<Cursor, qjson_err> {
     step(doc, cur, &PathSeg::Key(key))
 }
 
-pub(crate) fn resolve_single_idx(doc: &Document, cur: Cursor, idx: u32) -> Result<Cursor, qjd_err> {
+pub(crate) fn resolve_single_idx(doc: &Document, cur: Cursor, idx: u32) -> Result<Cursor, qjson_err> {
     step(doc, cur, &PathSeg::Idx(idx))
 }
 
@@ -260,21 +260,21 @@ mod tests {
     fn missing_key_is_not_found() {
         let d = doc_of(b"{\"a\":1}");
         let r = Cursor::root(&d).resolve(&d, b"b");
-        assert_eq!(r, Err(qjd_err::QJD_NOT_FOUND));
+        assert_eq!(r, Err(qjson_err::QJSON_NOT_FOUND));
     }
 
     #[test]
     fn type_mismatch_on_index_into_object() {
         let d = doc_of(b"{\"a\":1}");
         let r = Cursor::root(&d).resolve(&d, b"[0]");
-        assert_eq!(r, Err(qjd_err::QJD_TYPE_MISMATCH));
+        assert_eq!(r, Err(qjson_err::QJSON_TYPE_MISMATCH));
     }
 
     #[test]
     fn type_mismatch_on_key_into_array() {
         let d = doc_of(b"[1,2,3]");
         let r = Cursor::root(&d).resolve(&d, b"a");
-        assert_eq!(r, Err(qjd_err::QJD_TYPE_MISMATCH));
+        assert_eq!(r, Err(qjson_err::QJSON_TYPE_MISMATCH));
     }
 
     #[test]
@@ -287,7 +287,7 @@ mod tests {
     fn array_out_of_bounds() {
         let d = doc_of(b"[10,20]");
         let r = Cursor::root(&d).resolve(&d, b"[5]");
-        assert_eq!(r, Err(qjd_err::QJD_NOT_FOUND));
+        assert_eq!(r, Err(qjson_err::QJSON_NOT_FOUND));
     }
 
     #[test]
