@@ -93,6 +93,13 @@ fn get_bool(doc: *mut qjson_doc, path: &[u8]) -> bool {
     v != 0
 }
 
+fn is_null(doc: *mut qjson_doc, path: &[u8]) -> bool {
+    let mut v: c_int = -1;
+    let rc = unsafe { qjson_is_null(doc, path.as_ptr() as *const i8, path.len(), &mut v) };
+    assert_eq!(rc, qjson_err::QJSON_OK as c_int);
+    v != 0
+}
+
 fn len(doc: *mut qjson_doc, path: &[u8]) -> usize {
     let mut n: usize = 0;
     let rc = unsafe { qjson_len(doc, path.as_ptr() as *const i8, path.len(), &mut n) };
@@ -303,6 +310,93 @@ fn cjson_parser_literals_parse_with_qjson() {
     for json in valid_values {
         assert_parses_in_both_modes(json, json.as_bytes());
     }
+}
+
+#[test]
+fn cjson_empty_and_null_literals_keep_shape() {
+    let empty_array = parse(b"[]");
+    assert_eq!(len(empty_array, b""), 0);
+    unsafe { qjson_free(empty_array) };
+
+    let empty_object = parse(b"{}");
+    assert_eq!(len(empty_object, b""), 0);
+    unsafe { qjson_free(empty_object) };
+
+    let array_with_null = parse(b"[null]");
+    assert!(is_null(array_with_null, b"[0]"));
+    unsafe { qjson_free(array_with_null) };
+
+    let object_with_null = parse(br#"{"null":null}"#);
+    assert!(is_null(object_with_null, b"null"));
+    unsafe { qjson_free(object_with_null) };
+}
+
+#[test]
+fn cjson_malformed_container_literals_are_rejected() {
+    let invalid = [
+        b"".as_slice(),
+        b"[".as_slice(),
+        b"]".as_slice(),
+        b"{".as_slice(),
+        b"}".as_slice(),
+        b"[1,]".as_slice(),
+        br#"{"one"}"#.as_slice(),
+        br#"{"one":1,}"#.as_slice(),
+    ];
+
+    for json in invalid {
+        assert!(
+            Document::parse(json).is_err(),
+            "malformed cJSON parser literal was accepted: {:?}",
+            String::from_utf8_lossy(json)
+        );
+    }
+}
+
+#[test]
+fn cjson_fixture_invalid_paths_and_type_mismatches_fail() {
+    let data = parse_file(&repo_root().join("tests/vendor/cJSON/tests/inputs/test11"));
+    let doc = parse(&data);
+
+    let mut wrong_type_p: *const u8 = ptr::null();
+    let mut wrong_type_n: usize = 0;
+    let rc = unsafe {
+        qjson_get_str(
+            doc,
+            b"format.width".as_ptr() as *const i8,
+            b"format.width".len(),
+            &mut wrong_type_p,
+            &mut wrong_type_n,
+        )
+    };
+    assert_eq!(rc, qjson_err::QJSON_TYPE_MISMATCH as c_int);
+
+    let mut p: *const u8 = ptr::null();
+    let mut n: usize = 0;
+    let rc = unsafe {
+        qjson_get_str(
+            doc,
+            b"format.missing".as_ptr() as *const i8,
+            b"format.missing".len(),
+            &mut p,
+            &mut n,
+        )
+    };
+    assert_eq!(rc, qjson_err::QJSON_NOT_FOUND as c_int);
+
+    let mut nested = std::mem::MaybeUninit::<qjson_cursor>::uninit();
+    let format_type = open(doc, b"format.type");
+    let rc = unsafe {
+        qjson_cursor_field(
+            &format_type,
+            b"child".as_ptr() as *const i8,
+            b"child".len(),
+            nested.as_mut_ptr(),
+        )
+    };
+    assert_eq!(rc, qjson_err::QJSON_TYPE_MISMATCH as c_int);
+
+    unsafe { qjson_free(doc) };
 }
 
 #[test]
