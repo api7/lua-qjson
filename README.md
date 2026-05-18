@@ -83,8 +83,8 @@ busted tests/lua --lpath='./lua/?.lua' --cpath='./target/release/lib?.so'
 ## Benchmarks
 
 `quickdecode` vs. `lua-cjson` and `lua-resty-simdjson` on multimodal
-chat-completion payloads, "parse + access model, temperature, and every
-messages[*].content path" workload (median ops/s under OpenResty LuaJIT 2.1,
+chat-completion payloads, "parse + access model, temperature, and all
+messages[*].content paths" workload (median ops/s under OpenResty LuaJIT 2.1,
 Intel Core i5-9400; 5 rounds, deterministic payload):
 
 | Size | cjson | simdjson | `qd.parse` | `qd.decode + access content` | speedup vs. cjson |
