@@ -3,7 +3,31 @@ local ffi = require("ffi")
 local tried = {}
 local attempts = {}
 local last_error
-local required_symbol = "qjson_parse"
+local required_symbols = {
+    "qjson_strerror",
+    "qjson_parse",
+    "qjson_parse_ex",
+    "qjson_free",
+    "qjson_get_str",
+    "qjson_get_i64",
+    "qjson_get_f64",
+    "qjson_get_bool",
+    "qjson_is_null",
+    "qjson_typeof",
+    "qjson_len",
+    "qjson_open",
+    "qjson_cursor_open",
+    "qjson_cursor_field",
+    "qjson_cursor_index",
+    "qjson_cursor_get_str",
+    "qjson_cursor_get_i64",
+    "qjson_cursor_get_f64",
+    "qjson_cursor_get_bool",
+    "qjson_cursor_typeof",
+    "qjson_cursor_len",
+    "qjson_cursor_bytes",
+    "qjson_cursor_object_entry_at",
+}
 
 local function try_load(name)
     if tried[name] then
@@ -13,14 +37,16 @@ local function try_load(name)
     attempts[#attempts + 1] = name
     local ok, lib = pcall(ffi.load, name)
     if ok then
-        local has_symbol, symbol = pcall(function()
-            return lib[required_symbol]
-        end)
-        if has_symbol and symbol ~= nil then
-            return lib
+        for _, required_symbol in ipairs(required_symbols) do
+            local has_symbol, symbol = pcall(function()
+                return lib[required_symbol]
+            end)
+            if not has_symbol or symbol == nil then
+                last_error = "loaded " .. name .. " but missing required symbol " .. required_symbol
+                return nil
+            end
         end
-        last_error = "loaded " .. name .. " but missing required symbol " .. required_symbol
-        return nil
+        return lib
     end
     last_error = lib
     return nil

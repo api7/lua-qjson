@@ -58,14 +58,37 @@ jobs:
       - name: Verify rockspec exists
         id: verify_rockspec
         shell: bash
+        env:
+          VERSION_WITHOUT_V: ${{ steps.release_env.outputs.version_without_v }}
         run: |
-          mapfile -t rockspecs < <(find rockspec -maxdepth 1 -name "lua-qjson-${{ steps.release_env.outputs.version_without_v }}-*.rockspec" -print | sort)
-          if [ ${#rockspecs[@]} -eq 0 ]; then
-              echo "rockspec file not found for version ${{ steps.release_env.outputs.version_without_v }}"
+          rockspec_file="$(python3 - <<'PY'
+          import os
+          import re
+          from pathlib import Path
+
+          version = os.environ["VERSION_WITHOUT_V"]
+          pattern = re.compile(r"^lua-qjson-" + re.escape(version) + r"-(\d+)\.rockspec$")
+          matches = []
+          for path in Path("rockspec").glob("lua-qjson-" + version + "-*.rockspec"):
+              match = pattern.match(path.name)
+              if match:
+                  matches.append((int(match.group(1)), str(path)))
+          if not matches:
+              raise SystemExit("rockspec file not found for version " + version)
+          print(max(matches)[1])
+          PY
+          )"
+          echo "rockspec_file=${rockspec_file}" >> $GITHUB_OUTPUT
+
+      - name: Validate LuaRocks token
+        shell: bash
+        env:
+          LUAROCKS_TOKEN: ${{ secrets.LUAROCKS_TOKEN }}
+        run: |
+          if [ -z "$LUAROCKS_TOKEN" ]; then
+              echo "LUAROCKS_TOKEN secret is not configured"
               exit 1
           fi
-          rockspec_file="${rockspecs[$((${#rockspecs[@]} - 1))]}"
-          echo "rockspec_file=${rockspec_file}" >> $GITHUB_OUTPUT
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
@@ -78,10 +101,11 @@ jobs:
       - name: Upload to LuaRocks
         env:
           LUAROCKS_TOKEN: ${{ secrets.LUAROCKS_TOKEN }}
+          ROCKSPEC_FILE: ${{ steps.verify_rockspec.outputs.rockspec_file }}
         shell: bash
         run: |
           mkdir -p "$HOME/.luarocks"
           chmod 700 "$HOME/.luarocks"
-          lua -e 'local token = assert(os.getenv("LUAROCKS_TOKEN"), "missing LUAROCKS_TOKEN"); local f = assert(io.open(os.getenv("HOME") .. "/.luarocks/upload_config.lua", "w")); f:write(("key = %q\n"):format(token)); f:write("server = \"https://luarocks.org\"\nversion = \"1.0\"\n"); f:close()'
+          lua -e 'local token = os.getenv("LUAROCKS_TOKEN"); assert(token and token ~= "", "missing LUAROCKS_TOKEN"); local f = assert(io.open(os.getenv("HOME") .. "/.luarocks/upload_config.lua", "w")); f:write(("key = %q\n"):format(token)); f:write("server = \"https://luarocks.org\"\nversion = \"1.0\"\n"); f:close()'
           chmod 600 "$HOME/.luarocks/upload_config.lua"
-          luarocks upload "${{ steps.verify_rockspec.outputs.rockspec_file }}"
+          luarocks upload "$ROCKSPEC_FILE"

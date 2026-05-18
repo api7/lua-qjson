@@ -96,7 +96,22 @@ jobs:
       - name: Validate LuaRocks package
         run: |
           rm -rf /tmp/lua-qjson-rock
-          ROCKSPEC="$(ls -1 rockspec/lua-qjson-*.rockspec | sort | tail -n1)"
+          ROCKSPEC="$(python3 - <<'PY'
+          import re
+          from pathlib import Path
+
+          pattern = re.compile(r"^lua-qjson-(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?-(\d+)\.rockspec$")
+          matches = []
+          for path in Path("rockspec").glob("lua-qjson-*.rockspec"):
+              match = pattern.match(path.name)
+              if match:
+                  major, minor, patch, prerelease, revision = match.groups()
+                  matches.append((int(major), int(minor), int(patch), prerelease is None, prerelease or "", int(revision), str(path)))
+          if not matches:
+              raise SystemExit("no lua-qjson rockspec found")
+          print(max(matches)[-1])
+          PY
+          )"
           luarocks make "$ROCKSPEC" --tree /tmp/lua-qjson-rock
           eval "$(luarocks path --tree /tmp/lua-qjson-rock)"
           unset LD_LIBRARY_PATH
@@ -133,7 +148,22 @@ jobs:
       - name: Validate LuaRocks package
         run: |
           rm -rf /tmp/lua-qjson-rock
-          ROCKSPEC="$(ls -1 rockspec/lua-qjson-*.rockspec | sort | tail -n1)"
+          ROCKSPEC="$(python3 - <<'PY'
+          import re
+          from pathlib import Path
+
+          pattern = re.compile(r"^lua-qjson-(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?-(\d+)\.rockspec$")
+          matches = []
+          for path in Path("rockspec").glob("lua-qjson-*.rockspec"):
+              match = pattern.match(path.name)
+              if match:
+                  major, minor, patch, prerelease, revision = match.groups()
+                  matches.append((int(major), int(minor), int(patch), prerelease is None, prerelease or "", int(revision), str(path)))
+          if not matches:
+              raise SystemExit("no lua-qjson rockspec found")
+          print(max(matches)[-1])
+          PY
+          )"
           luarocks make "$ROCKSPEC" --tree /tmp/lua-qjson-rock
           eval "$(luarocks path --tree /tmp/lua-qjson-rock)"
           unset LD_LIBRARY_PATH

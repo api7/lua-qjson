@@ -29,7 +29,13 @@ describe("qjson native loader", function()
         local old_lib = package.loaded["qjson.lib"]
         local old_ffi = package.loaded.ffi
         local old_cpath = package.cpath
-        local valid_lib = { qjson_parse = true }
+        local valid_lib = setmetatable({}, {
+            __index = function(_, key)
+                if string.sub(key, 1, 6) == "qjson_" then
+                    return true
+                end
+            end,
+        })
 
         package.loaded["qjson.lib"] = nil
         package.loaded.ffi = {
