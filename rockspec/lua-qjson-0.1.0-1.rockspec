@@ -26,6 +26,7 @@ build = {
     type = "command",
     build_command = "cargo build --release",
     install_command = [[
+        set -e;
         mkdir -p "$(LUADIR)/qjson" "$(LIBDIR)" &&
         cp lua/qjson.lua "$(LUADIR)/qjson.lua" &&
         cp lua/qjson/lib.lua "$(LUADIR)/qjson/lib.lua" &&
