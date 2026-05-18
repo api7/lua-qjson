@@ -50,7 +50,7 @@ parsing workloads with ~3-5% structural density.
 | Row | What it does | Notes |
 |---|---|---|
 | `cjson.decode + access fields` | `cjson.decode(s)`, read `model` / `temperature`, then read every `message.content` | Eager Lua table |
-| `quickdecode.parse + access fields` | `qd.parse(s)`, read `model` / `temperature`, then read every `messages[i].content` type | Lazy structural scan; explicit path-based reads |
+| `quickdecode.parse + access fields` | `qd.parse(s)`, read `model` / `temperature`, then read every `messages[i].content` | Lazy structural scan; explicit path-based reads |
 | `qd.decode + access content` | `qd.decode(s)`, read `model` / `temperature`, then read every `message.content` | Lazy table proxy; reads go through `__index` |
 | `qd.decode + qd.encode (unmodified)` | `qd.decode(s)` then re-emit as JSON | Substring fast path — no fields touched, so the proxy re-emits the original byte range via `memcpy` |
 
@@ -73,32 +73,32 @@ Each row is "parse + access request fields" on the named payload.
 
 | Scenario | Size | cjson | `qd.parse` | `qd.decode + access` | `qd.decode + qd.encode` |
 |---|---:|---:|---:|---:|---:|
-| small      |   2.1 KB | 114,427 | 133,536 |  82,816 | 146,101 |
-| medium     |  60.4 KB |   8,178 | 161,342 | 143,719 | 147,275 |
-| github-100k |   100 KB |   2,431 |   4,474 |   4,449 |   4,774 |
-| 100k       |   100 KB |   4,865 | 135,501 | 102,987 | 114,943 |
-| 200k       |   200 KB |   2,443 |  72,780 |  62,189 |  67,295 |
-| 500k       |   500 KB |     979 |  32,000 |  29,412 |  30,534 |
-| 1m         |  1.00 MB |     478 |  16,538 |  15,723 |  16,043 |
-| 2m         |  2.00 MB |     238 |   8,319 |   8,055 |   8,183 |
-| 5m         |  5.00 MB |      94 |   2,933 |   2,926 |   2,982 |
-| 10m        | 10.00 MB |      47 |   1,015 |   1,042 |   1,065 |
-| interleaved (100k/200k/500k/1m, cycled) | — | 1,066 | 32,717 | 29,089 | 30,969 |
+| small      |   2.1 KB | 113,541 | 132,830 |  82,169 | 148,117 |
+| medium     |  60.4 KB |   8,219 | 198,413 | 140,845 | 149,298 |
+| github-100k |   100 KB |   2,410 |   4,505 |   4,450 |   4,781 |
+| 100k       |   100 KB |   4,869 | 135,501 |  97,752 | 111,982 |
+| 200k       |   200 KB |   2,441 |  73,964 |  60,753 |  65,963 |
+| 500k       |   500 KB |     978 |  31,797 |  28,902 |  30,166 |
+| 1m         |  1.00 MB |     478 |  16,287 |  15,560 |  15,890 |
+| 2m         |  2.00 MB |     237 |   8,180 |   7,877 |   7,764 |
+| 5m         |  5.00 MB |      94 |   2,899 |   2,930 |   2,969 |
+| 10m        | 10.00 MB |      47 |   1,044 |   1,046 |   1,049 |
+| interleaved (100k/200k/500k/1m, cycled) | — | 1,066 | 32,204 | 28,696 | 30,485 |
 
 ### Speed-up vs. baselines
 
 | Scenario | `qd.parse` / cjson | `qd.decode + access` / cjson |
 |---|---:|---:|
 | small  |  1.2× |  0.7× |
-| medium | 19.7× | 17.6× |
-| github-100k | 1.8× | 1.8× |
-| 100k   | 27.9× | 21.2× |
-| 200k   | 29.8× | 25.5× |
-| 500k   | 32.7× | 30.0× |
-| 1m     | 34.6× | 32.9× |
-| 2m     | 35.0× | 33.8× |
-| 5m     | 31.2× | 31.1× |
-| 10m    | 21.6× | 22.2× |
+| medium | 24.1× | 17.1× |
+| github-100k | 1.9× | 1.8× |
+| 100k   | 27.8× | 20.1× |
+| 200k   | 30.3× | 24.9× |
+| 500k   | 32.5× | 29.6× |
+| 1m     | 34.1× | 32.6× |
+| 2m     | 34.5× | 33.2× |
+| 5m     | 30.8× | 31.2× |
+| 10m    | 22.2× | 22.3× |
 
 ## Results — memory delta (KB retained after 5 rounds)
 
@@ -108,17 +108,17 @@ collected before the snapshot.
 
 | Scenario | cjson | `qd.parse` | `qd.decode + access` | `qd.decode + qd.encode` |
 |---|---:|---:|---:|---:|
-| small      | +15,974 | +4,069 | +17,425 | +13,478 |
-| medium     |  +1,955 |    +81 |  +1,349 |  +1,349 |
-| github-100k | +12,655 |   +83 |    +592 |    +273 |
-| 100k       |    +601 |   +77 |    +739 |    +270 |
-| 200k       |    +506 |   +34 |    +370 |    +135 |
-| 500k       |    +648 |   +14 |    +149 |     +54 |
+| small      | +15,977 | +4,069 | +17,403 | +13,478 |
+| medium     |  +1,955 |    +66 |  +1,349 |  +1,349 |
+| github-100k | +12,761 |   +19 |    +591 |    +273 |
+| 100k       |    +602 |   +71 |    +739 |    +270 |
+| 200k       |    +505 |   +34 |    +370 |    +136 |
+| 500k       |    +648 |   +14 |    +148 |     +54 |
 | 1m         |  +1,151 |   +10 |    +111 |     +41 |
-| 2m         |  +2,312 |   +14 |    +148 |     +55 |
+| 2m         |  +2,312 |   +14 |    +148 |     +54 |
 | 5m         |  +5,723 |   +14 |    +148 |     +55 |
 | 10m        | +11,262 |   +14 |    +148 |     +54 |
-| interleaved | +4,508 |   +70 |  +3,002 |  +1,079 |
+| interleaved | +4,509 |  +271 |  +2,955 |  +1,079 |
 
 `qd.parse` retention is essentially constant across payload size: the only
 GC-rooted state is the reusable `indices: Vec<u32>` and `scratch` buffers.

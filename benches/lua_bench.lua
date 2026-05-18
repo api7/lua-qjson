@@ -330,25 +330,14 @@ do
     bench("cjson.decode + access fields", 400, function()
         local p = next_p()
         local obj = cjson.decode(p)
-        local _ = obj.model
-        local _ = obj.temperature
-        if obj.messages then
-            for _, msg in ipairs(obj.messages) do
-                local _ = msg.content
-            end
-        end
+        default_cjson_access(obj)
     end)
 
     next_p = make_cycler(interleaved)
     bench("quickdecode.parse + access fields", 400, function()
         local p = next_p()
         local d = qd.parse(p)
-        local _ = d:get_str("model")
-        local _ = d:get_f64("temperature")
-        local n = d:len("messages") or 0
-        for i = 0, n - 1 do
-            local _ = d:typeof("messages[" .. i .. "].content")
-        end
+        default_qd_access(d)
     end)
 
     if has_pooled_api then
@@ -356,12 +345,7 @@ do
         bench("quickdecode pooled :parse + access fields", 400, function()
             local p = next_p()
             local d = pooled_decoder:parse(p)
-            local _ = d:get_str("model")
-            local _ = d:get_f64("temperature")
-            local n = d:len("messages") or 0
-            for i = 0, n - 1 do
-                local _ = d:typeof("messages[" .. i .. "].content")
-            end
+            default_qd_access(d)
         end)
     end
 
@@ -369,14 +353,7 @@ do
     bench("qd.decode + access content", 400, function()
         local p = next_p()
         local t = qd.decode(p)
-        local _ = t.model
-        local _ = t.temperature
-        if t.messages then
-            for i = 1, qd.len(t.messages) do
-                local msg = t.messages[i]
-                local _ = msg.content
-            end
-        end
+        default_table_access(t)
     end)
 
     next_p = make_cycler(interleaved)
