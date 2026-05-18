@@ -96,9 +96,46 @@ jobs:
       - name: Validate LuaRocks package
         run: |
           rm -rf /tmp/lua-qjson-rock
-          ROCKSPEC="$(ls -1 rockspec/lua-qjson-*-1.rockspec | sort -V | tail -n1)"
+          ROCKSPEC="$(ls -1 rockspec/lua-qjson-*.rockspec | sort | tail -n1)"
           luarocks make "$ROCKSPEC" --tree /tmp/lua-qjson-rock
           eval "$(luarocks path --tree /tmp/lua-qjson-rock)"
           unset LD_LIBRARY_PATH
           luajit -e 'local qjson = require("qjson"); local doc = qjson.parse("{\"a\":42}"); assert(doc:get_i64("a") == 42)'
           busted --lua=$(which luajit) tests/lua
+
+  package:
+    name: LuaRocks package (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    needs: rust
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-14]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Rust (stable)
+        run: |
+          rustup toolchain install stable --profile minimal --no-self-update
+          rustup default stable
+
+      - name: Install LuaJIT
+        uses: leafo/gh-actions-lua@v10
+        with:
+          luaVersion: "luajit"
+
+      - name: Install LuaRocks
+        uses: leafo/gh-actions-luarocks@v4
+        with:
+          luarocksVersion: "3.11.1"
+
+      - name: Validate LuaRocks package
+        run: |
+          rm -rf /tmp/lua-qjson-rock
+          ROCKSPEC="$(ls -1 rockspec/lua-qjson-*.rockspec | sort | tail -n1)"
+          luarocks make "$ROCKSPEC" --tree /tmp/lua-qjson-rock
+          eval "$(luarocks path --tree /tmp/lua-qjson-rock)"
+          unset LD_LIBRARY_PATH
+          unset DYLD_LIBRARY_PATH
+          luajit -e 'local qjson = require("qjson"); local doc = qjson.parse("{\"a\":42}"); assert(doc:get_i64("a") == 42)'

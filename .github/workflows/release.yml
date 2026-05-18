@@ -59,11 +59,12 @@ jobs:
         id: verify_rockspec
         shell: bash
         run: |
-          rockspec_file="rockspec/lua-qjson-${{ steps.release_env.outputs.version_without_v }}-1.rockspec"
-          if [ ! -f "$rockspec_file" ]; then
-              echo "rockspec file not found: $rockspec_file"
+          mapfile -t rockspecs < <(find rockspec -maxdepth 1 -name "lua-qjson-${{ steps.release_env.outputs.version_without_v }}-*.rockspec" -print | sort)
+          if [ ${#rockspecs[@]} -eq 0 ]; then
+              echo "rockspec file not found for version ${{ steps.release_env.outputs.version_without_v }}"
               exit 1
           fi
+          rockspec_file="${rockspecs[$((${#rockspecs[@]} - 1))]}"
           echo "rockspec_file=${rockspec_file}" >> $GITHUB_OUTPUT
 
       - name: Create Release

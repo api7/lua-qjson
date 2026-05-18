@@ -3,6 +3,7 @@ local ffi = require("ffi")
 local tried = {}
 local attempts = {}
 local last_error
+local required_symbol = "qjson_parse"
 
 local function try_load(name)
     if tried[name] then
@@ -12,7 +13,14 @@ local function try_load(name)
     attempts[#attempts + 1] = name
     local ok, lib = pcall(ffi.load, name)
     if ok then
-        return lib
+        local has_symbol, symbol = pcall(function()
+            return lib[required_symbol]
+        end)
+        if has_symbol and symbol ~= nil then
+            return lib
+        end
+        last_error = "loaded " .. name .. " but missing required symbol " .. required_symbol
+        return nil
     end
     last_error = lib
     return nil

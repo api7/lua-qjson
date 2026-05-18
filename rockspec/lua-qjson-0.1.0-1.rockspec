@@ -24,16 +24,16 @@ dependencies = {
 
 build = {
     type = "command",
-    build_command = "cargo build --release",
+    build_command = "CARGO_TARGET_DIR=target cargo build --release",
     install_command = [[
-        set -e;
-        mkdir -p "$(LUADIR)/qjson" "$(LIBDIR)" &&
-        cp lua/qjson.lua "$(LUADIR)/qjson.lua" &&
-        cp lua/qjson/lib.lua "$(LUADIR)/qjson/lib.lua" &&
-        cp lua/qjson/table.lua "$(LUADIR)/qjson/table.lua" &&
-        lib=target/release/libqjson.so;
-        if [ ! -f "$lib" ]; then lib=target/release/libqjson.dylib; fi;
-        if [ ! -f "$lib" ]; then echo "qjson native library not found"; exit 1; fi;
+        set -e
+        mkdir -p "$(LUADIR)/qjson" "$(LIBDIR)"
+        cp lua/qjson.lua "$(LUADIR)/qjson.lua"
+        cp lua/qjson/lib.lua "$(LUADIR)/qjson/lib.lua"
+        cp lua/qjson/table.lua "$(LUADIR)/qjson/table.lua"
+        lib=target/release/libqjson.so
+        if [ ! -f "$lib" ]; then lib=target/release/libqjson.dylib; fi
+        if [ ! -f "$lib" ]; then echo "qjson native library not found"; exit 1; fi
         cp "$lib" "$(LIBDIR)/qjson.so"
     ]],
 }
