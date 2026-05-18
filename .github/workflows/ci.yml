@@ -121,9 +121,9 @@ jobs:
           rustup default stable
 
       - name: Install LuaJIT
-        uses: leafo/gh-actions-lua@v10
+        uses: leafo/gh-actions-lua@v13
         with:
-          luaVersion: "luajit"
+          luaVersion: "luajit-2.1.0-beta3"
 
       - name: Install LuaRocks
         uses: leafo/gh-actions-luarocks@v4
