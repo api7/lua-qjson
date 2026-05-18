@@ -4,7 +4,7 @@ Rust-implemented fast JSON decoder exposed to LuaJIT via FFI. Optimized for the 
 
 ## Status
 
-Initial implementation complete: scalar + AVX2/PCLMUL + ARM64 NEON/PMULL structural scanner (runtime-dispatched), root-path and cursor APIs, escape-decoded strings, integer/float/bool/typeof/len, FFI panic barrier, and a LuaJIT wrapper. Rust unit/integration tests and Lua busted tests run in CI. The benchmark harness compares against lua-cjson but tuning is pending — see `Roadmap / Deferred` below.
+Initial implementation complete: scalar + AVX2/PCLMUL + ARM64 NEON/PMULL structural scanner (runtime-dispatched), root-path and cursor APIs, escape-decoded strings, integer/float/bool/typeof/len, FFI panic barrier, and a LuaJIT wrapper. Rust unit/integration tests and Lua busted tests run in CI. The benchmark harness compares against lua-cjson and lua-resty-simdjson.
 
 ## Building
 
@@ -83,38 +83,31 @@ busted tests/lua --lpath='./lua/?.lua' --cpath='./target/release/lib?.so'
 ## Benchmarks
 
 `quickdecode` vs. `lua-cjson` and `lua-resty-simdjson` on multimodal
-chat-completion payloads, "parse + access 3 fields" workload (median ops/s
-under LuaJIT 2.1, Skylake; 5 rounds, deterministic payload):
+chat-completion payloads, "parse + access model, temperature, and all
+messages[*].content paths" workload (median ops/s under OpenResty LuaJIT 2.1,
+Intel Core i5-9400; 5 rounds, deterministic payload):
 
-| Size | cjson | simdjson | `qd.parse` | `qd.decode + t.f x3` | speedup vs. cjson |
+| Size | cjson | simdjson | `qd.parse` | `qd.decode + access content` | speedup vs. cjson |
 |---:|---:|---:|---:|---:|---:|
-|   2 KB | 39,414 | 54,395 | 117,233 | 126,807 |  3.0× / 3.2× |
-| 100 KB |  2,589 | 19,944 |  72,202 |  61,162 | 27.9× / 23.6× |
-|   1 MB |    355 |  2,048 |  12,723 |  12,448 | 35.8× / 35.1× |
-|  10 MB |     32 |    128 |     537 |     609 | 16.8× / 19.0× |
+|   2 KB | 106,646 | 137,427 | 135,296 |  97,574 |  1.3× /  0.9× |
+| 100 KB |   6,045 |  46,577 | 137,931 | 134,590 | 22.8× / 22.3× |
+|   1 MB |     594 |   4,408 |  16,447 |  16,340 | 27.7× / 27.5× |
+|  10 MB |      59 |     356 |   1,035 |   1,028 | 17.5× / 17.4× |
 
 `qd.parse` wins because it skips building a Lua table for the parts you
 never read; `qd.decode + t.field` adds a cjson-shaped table proxy on top
 with similar throughput. Memory retention for `quickdecode` is essentially
-flat in payload size (a few KB for the reusable buffers), where `cjson`
-and `simdjson` retain ~1× the input size as live Lua-table state.
-
-ARM64 (Apple M4, NEON/PMULL scanner, same workload):
-
-| Size | cjson | `qd.parse` | `qd.decode + t.f x3` | speedup vs. cjson |
-|---:|---:|---:|---:|---:|
-|   2 KB | 237,124 | 705,000 | 390,000 |  3.0× /  1.6× |
-| 100 KB |  14,667 | 232,000 | 208,000 | 15.8× / 14.2× |
-|   1 MB |   1,494 |  33,700 |  33,000 | 22.6× / 22.1× |
-|  10 MB |     150 |   3,376 |   3,454 | 22.5× / 23.0× |
+flat in payload size (a few KB for the reusable buffers), while `cjson`
+and `simdjson` retain more Lua heap because they materialize the table tree.
 
 See [`docs/benchmarks.md`](docs/benchmarks.md) for the full size ladder,
 memory numbers, an "encode round-trip" row (passthrough emit via
-`memcpy`), the pure-decode (no-access) comparison, and the exact
-methodology + reproduction command.
+`memcpy`), exact environment, and the reproduction command. `make bench`
+uses `lua-resty-simdjson` when `resty.simdjson` is available in the
+OpenResty environment; otherwise it skips the simdjson rows.
 
 ```sh
-make bench       # quickdecode vs cjson
+make bench       # quickdecode vs cjson and lua-resty-simdjson
 ```
 
 ## RFC 8259 conformance

@@ -3,6 +3,10 @@ package.cpath = package.cpath .. ";./target/release/lib?.so"
 
 local qd    = require("quickdecode")
 local cjson = require("cjson")
+local simdjson_ok, simdjson_or_err = pcall(function()
+    return require("resty.simdjson").new()
+end)
+local simdjson = simdjson_ok and simdjson_or_err or nil
 
 local function read_file(p)
     local f = assert(io.open(p, "rb"))
@@ -11,19 +15,14 @@ local function read_file(p)
     return s
 end
 
--- Shape: a multimodal chat-completion request with one ~1.5K text question
--- and N base64-encoded image parts (each 50-500 KB) until the payload reaches
--- target_bytes. Mirrors the production case the bench is meant to reflect.
+-- Shape: a multimodal chat-completion request with one or more historical
+-- messages. Each message contains one small text part and one base64-encoded
+-- image part. The number of messages scales with payload size: a 10 MB request
+-- has roughly ten 1 MB image-bearing messages.
 --
--- Image sizes are drawn from a deterministic Park-Miller LCG (not math.random,
--- which delegates to libc rand() and varies across machines) so the same
--- target_bytes produces byte-identical output on any LuaJIT 2.1 host.
---
--- Size accuracy: the normal-branch upper is `min(500K, remaining)` so the
--- loop cannot overshoot during steady state. When fewer than 50 KB remain
--- the final image falls through to `math.max(1024, remaining)` — undershoot
--- is at most a few hundred bytes; worst-case overshoot is ~1 KB (only when
--- `remaining < 1024`, which the seed=42 walk does not hit for our ladder).
+-- Size accuracy: payload sizing is approximate. Message separators, role
+-- strings, and the 1 KB minimum image size can add small drift from
+-- `target_bytes` on tiny scenarios; larger scenarios stay close to target.
 -- GitHub-style payload: simulates /repos/{owner}/{repo}/issues response.
 -- Each issue has ~20 fields including nested user object, labels array,
 -- and realistic string lengths (URLs, timestamps, markdown body).
@@ -117,41 +116,28 @@ local function make_b64(size)
 end
 
 local function make_payload(target_bytes)
-    local rng_state = 42
-    local function rng_range(lo, hi)
-        -- Park-Miller minimal-standard LCG: a=48271, m=2^31-1. Multiplication
-        -- fits in double precision (48271 * 2^31 < 2^53).
-        rng_state = (rng_state * 48271) % 2147483647
-        return lo + (rng_state % (hi - lo + 1))
-    end
-
-    local text = string.rep("Q", 1500)
+    local message_count = math.max(1, math.ceil(target_bytes / (1024 * 1024)))
+    local envelope = '{"model":"gpt-4-vision","temperature":0.7,"messages":[]}'
+    local text = string.rep("Q", 256)
     local text_part = '{"type":"text","text":"' .. text .. '"}'
-    local parts = { text_part }
-    local current = 200 + #text_part  -- approx outer envelope overhead
+    local image_prefix = '{"type":"image_url","image_url":{"url":"data:image/jpeg;base64,'
+    local image_suffix = '"}}'
+    local message_overhead = #('{"role":"user","content":[,]}') + #text_part
+        + #image_prefix + #image_suffix
+    local remaining = target_bytes - #envelope - (message_count * message_overhead)
+    local image_size = math.max(1024, math.floor(remaining / message_count))
 
-    while current < target_bytes do
-        local remaining = target_bytes - current
-        local img_size
-        if remaining < 50 * 1024 then
-            -- Final image: shrink below the 50 KB floor so the label matches
-            -- the actual payload size. Bench iters all see the same payload
-            -- regardless, so the smaller tail blob doesn't change what's
-            -- being measured.
-            img_size = math.max(1024, remaining)
-        else
-            local upper = math.min(500 * 1024, remaining)
-            img_size = rng_range(50 * 1024, upper)
-        end
-        local b64 = make_b64(img_size)
-        local img_part = '{"type":"image_url","image_url":{"url":"data:image/jpeg;base64,'
-            .. b64 .. '"}}'
-        parts[#parts + 1] = img_part
-        current = current + #img_part + 1  -- +1 for comma
+    local messages = {}
+    for i = 1, message_count do
+        local role = i % 2 == 1 and "user" or "assistant"
+        local b64 = make_b64(image_size)
+        local image_part = image_prefix .. b64 .. image_suffix
+        messages[i] = '{"role":"' .. role .. '","content":['
+            .. text_part .. "," .. image_part .. ']}'
     end
 
-    return '{"model":"gpt-4-vision","temperature":0.7,"messages":'
-        .. '[{"role":"user","content":[' .. table.concat(parts, ",") .. ']}]}'
+    return '{"model":"gpt-4-vision","temperature":0.7,"messages":['
+        .. table.concat(messages, ",") .. ']}'
 end
 
 local ROUNDS = 5
@@ -190,19 +176,48 @@ end
 local function default_cjson_access(obj)
     local _ = obj.model
     local _ = obj.temperature
-    local _ = obj.messages and obj.messages[1] and obj.messages[1].role
+    if obj.messages then
+        for _, msg in ipairs(obj.messages) do
+            local _ = msg.content
+        end
+    end
+end
+
+local content_paths_by_message_count = {}
+
+local function content_paths(n)
+    local paths = content_paths_by_message_count[n]
+    if paths then
+        return paths
+    end
+
+    paths = {}
+    for i = 0, n - 1 do
+        paths[i + 1] = "messages[" .. i .. "].content"
+    end
+    content_paths_by_message_count[n] = paths
+    return paths
 end
 
 local function default_qd_access(d)
     local _ = d:get_str("model")
     local _ = d:get_f64("temperature")
-    local _ = d:get_str("messages[0].role")
+    local n = d:len("messages") or 0
+    local paths = content_paths(n)
+    for i = 1, n do
+        local _ = d:typeof(paths[i])
+    end
 end
 
 local function default_table_access(t)
     local _ = t.model
     local _ = t.temperature
-    local _ = t.messages and t.messages[1] and t.messages[1].role
+    if t.messages then
+        for i = 1, qd.len(t.messages) do
+            local msg = t.messages[i]
+            local _ = msg.content
+        end
+    end
 end
 
 -- GitHub issues accessors: array of issues, access first issue's fields
@@ -243,6 +258,11 @@ local scenarios = {
 local has_pooled_api = type(qd.new_decoder) == "function"
 local pooled_decoder = has_pooled_api and qd.new_decoder() or nil
 
+if not simdjson then
+    print("lua-resty-simdjson unavailable; skipping simdjson rows: "
+        .. tostring(simdjson_or_err))
+end
+
 for _, s in ipairs(scenarios) do
     print(string.format("=== %s (%d bytes) ===", s.name, #s.payload))
 
@@ -250,18 +270,25 @@ for _, s in ipairs(scenarios) do
     local qd_access = s.qd_access or default_qd_access
     local table_access = s.table_access or default_table_access
 
-    bench("cjson.decode + access 3 fields", s.iters, function()
+    bench("cjson.decode + access fields", s.iters, function()
         local obj = cjson.decode(s.payload)
         cjson_access(obj)
     end)
 
-    bench("quickdecode.parse + access 3 fields", s.iters, function()
+    if simdjson then
+        bench("simdjson.decode + access fields", s.iters, function()
+            local obj = simdjson:decode(s.payload)
+            cjson_access(obj)
+        end)
+    end
+
+    bench("quickdecode.parse + access fields", s.iters, function()
         local d = qd.parse(s.payload)
         qd_access(d)
     end)
 
     if has_pooled_api then
-        bench("quickdecode pooled :parse + access 3 fields", s.iters, function()
+        bench("quickdecode pooled :parse + access fields", s.iters, function()
             local d = pooled_decoder:parse(s.payload)
             qd_access(d)
         end)
@@ -273,7 +300,7 @@ for _, s in ipairs(scenarios) do
         end)
     end
 
-    bench("qd.decode + t.field x3", s.iters, function()
+    bench("qd.decode + access content", s.iters, function()
         local t = qd.decode(s.payload)
         table_access(t)
     end)
@@ -315,41 +342,42 @@ print(string.format("=== interleaved %s ===", table.concat(interleaved_names, ",
 
 do
     local next_p = make_cycler(interleaved)
-    bench("cjson.decode + access 3 fields", 400, function()
+    bench("cjson.decode + access fields", 400, function()
         local p = next_p()
         local obj = cjson.decode(p)
-        local _ = obj.model
-        local _ = obj.temperature
-        local _ = obj.messages and obj.messages[1] and obj.messages[1].role
+        default_cjson_access(obj)
     end)
 
-    next_p = make_cycler(interleaved)
-    bench("quickdecode.parse + access 3 fields", 400, function()
-        local p = next_p()
-        local d = qd.parse(p)
-        local _ = d:get_str("model")
-        local _ = d:get_f64("temperature")
-        local _ = d:get_str("messages[0].role")
-    end)
-
-    if has_pooled_api then
+    if simdjson then
         next_p = make_cycler(interleaved)
-        bench("quickdecode pooled :parse + access 3 fields", 400, function()
+        bench("simdjson.decode + access fields", 400, function()
             local p = next_p()
-            local d = pooled_decoder:parse(p)
-            local _ = d:get_str("model")
-            local _ = d:get_f64("temperature")
-            local _ = d:get_str("messages[0].role")
+            local obj = simdjson:decode(p)
+            default_cjson_access(obj)
         end)
     end
 
     next_p = make_cycler(interleaved)
-    bench("qd.decode + t.field x3", 400, function()
+    bench("quickdecode.parse + access fields", 400, function()
+        local p = next_p()
+        local d = qd.parse(p)
+        default_qd_access(d)
+    end)
+
+    if has_pooled_api then
+        next_p = make_cycler(interleaved)
+        bench("quickdecode pooled :parse + access fields", 400, function()
+            local p = next_p()
+            local d = pooled_decoder:parse(p)
+            default_qd_access(d)
+        end)
+    end
+
+    next_p = make_cycler(interleaved)
+    bench("qd.decode + access content", 400, function()
         local p = next_p()
         local t = qd.decode(p)
-        local _ = t.model
-        local _ = t.temperature
-        local _ = t.messages and t.messages[1] and t.messages[1].role
+        default_table_access(t)
     end)
 
     next_p = make_cycler(interleaved)
