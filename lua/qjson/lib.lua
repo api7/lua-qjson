@@ -21,11 +21,13 @@ end
 local function load_from_cpath()
     local names = { "qjson", "libqjson" }
     for template in string.gmatch(package.cpath, "[^;]+") do
-        for _, name in ipairs(names) do
-            local path = string.gsub(template, "%?", name)
-            local lib = try_load(path)
-            if lib then
-                return lib
+        if string.find(template, "?", 1, true) then
+            for _, name in ipairs(names) do
+                local path = string.gsub(template, "%?", name)
+                local lib = try_load(path)
+                if lib then
+                    return lib
+                end
             end
         end
     end

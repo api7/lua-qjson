@@ -35,13 +35,13 @@ jobs:
           HEAD_COMMIT_MESSAGE: ${{ github.event.head_commit.message }}
         run: |
           title="$HEAD_COMMIT_MESSAGE"
-          re="^feat: release v?(\S+)"
+          re="^feat: release v?([0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?)$"
           if [[ $title =~ $re ]]; then
               v=v${BASH_REMATCH[1]}
               echo "version=${v}" >> $GITHUB_OUTPUT
               echo "version_without_v=${BASH_REMATCH[1]}" >> $GITHUB_OUTPUT
           else
-              echo "commit format is not correct"
+              echo "commit format is not correct (expected: feat: release vX.Y.Z[-prerelease])"
               exit 1
           fi
 
