@@ -210,6 +210,7 @@ local function lazy_object_iter(state, _prev_key)
             if rc == QJSON_NOT_FOUND then
                 return p.key, p.lua_value
             end
+            check(rc)  -- propagate unexpected errors
         end
     end
 
@@ -324,6 +325,9 @@ local encode
 -- On write, record a patch instead of materializing the entire object.
 -- This allows encode to splice the original buffer with patched values.
 LazyObject.__newindex = function(t, k, v)
+    if type(k) ~= "string" then
+        error("qjson: LazyObject key must be a string, got " .. type(k))
+    end
     -- Initialize patches table if needed
     if not rawget(t, "_patches") then
         rawset(t, "_patches", {})
@@ -515,20 +519,6 @@ local function is_dirty(v)
     return false
 end
 
--- Check if a lazy view has patches (but not necessarily dirty children)
-local function has_patches(v)
-    local patches = rawget(v, "_patches")
-    return patches and #patches > 0
-end
-
--- Check if a lazy view has deletions
-local function has_deletions(v)
-    local deleted = rawget(v, "_deleted")
-    if not deleted then return false end
-    for _ in pairs(deleted) do return true end
-    return false
-end
-
 -- Walk a dirty LazyObject and emit JSON, preferring cached children (which
 -- may be materialized) over freshly resolved cursors. Non-cached children
 -- emit through a fresh proxy and naturally fast-path their unmodified subtree.
@@ -637,6 +627,8 @@ local function encode_lazy_object_walking_with_patches(t, patches, deleted)
         local rc = C.qjson_cursor_field_bytes(t._cur, p.key, #p.key, sz_a, sz_b)
         if rc == QJSON_NOT_FOUND then
             parts[#parts + 1] = encode_string(p.key) .. ":" .. p.encoded_value
+        elseif rc ~= QJSON_OK then
+            check(rc)  -- propagate unexpected errors
         end
     end
 
@@ -650,38 +642,30 @@ local function encode_with_patches(t)
     local patches = rawget(t, "_patches") or {}
     local deleted = rawget(t, "_deleted") or {}
 
-    -- Collect replacements: { {start, end_, value}, ... }
+    -- Classify each patch into a replacement (existing field) or a new field
+    -- in a single FFI pass. Replacements carry the byte span; presence of any
+    -- new field forces the walking fallback.
     local replacements = {}
-
-    -- For each patch, find the field's byte range in the original buffer
+    local has_new_field = false
     for _, p in ipairs(patches) do
         local rc = C.qjson_cursor_field_bytes(t._cur, p.key, #p.key, sz_a, sz_b)
         if rc == QJSON_OK then
-            -- Existing field: replace value
             replacements[#replacements + 1] = {
                 start = tonumber(sz_a[0]),
                 end_ = tonumber(sz_b[0]),
                 value = p.encoded_value,
             }
+        elseif rc == QJSON_NOT_FOUND then
+            has_new_field = true
+        else
+            check(rc)  -- propagate unexpected errors
         end
-        -- If NOT_FOUND, it's a new field - handled separately below
     end
 
-    -- Collect deleted field spans (we need to find the full field span including key)
-    -- For simplicity, we'll handle deletions by walking and skipping deleted keys
+    -- Deletions and new fields are handled by the walking fallback,
+    -- which avoids the comma-rewriting headache the splice path would have.
     local has_deleted = false
     for _ in pairs(deleted) do has_deleted = true; break end
-
-    -- If we have deletions or new fields, fall back to walking
-    -- (splicing deletions is complex due to comma handling)
-    local has_new_field = false
-    for _, p in ipairs(patches) do
-        local rc = C.qjson_cursor_field_bytes(t._cur, p.key, #p.key, sz_a, sz_b)
-        if rc == QJSON_NOT_FOUND then
-            has_new_field = true
-            break
-        end
-    end
 
     if has_deleted or has_new_field then
         return encode_lazy_object_walking_with_patches(t, patches, deleted)

@@ -242,16 +242,21 @@ describe("Lazy Patch - edge cases", function()
         local t = qjson.decode('{"a.b":1}')
         t["a.b"] = 10
         assert.are.equal(10, t["a.b"])
+        local out = qjson.encode(t)
+        local cjson = require("cjson")
+        local parsed = cjson.decode(out)
+        assert.are.equal(10, parsed["a.b"])
     end)
 
     it("handles unicode in values", function()
         local t = qjson.decode('{"a":"hello"}')
-        t.a = "hello world"
-        assert.are.equal("hello world", t.a)
+        local unicode = "你好 🌏 café"
+        t.a = unicode
+        assert.are.equal(unicode, t.a)
         local out = qjson.encode(t)
         local cjson = require("cjson")
         local parsed = cjson.decode(out)
-        assert.are.equal("hello world", parsed.a)
+        assert.are.equal(unicode, parsed.a)
     end)
 
     it("handles boolean values", function()
@@ -272,6 +277,38 @@ describe("Lazy Patch - edge cases", function()
         local cjson = require("cjson")
         local parsed = cjson.decode(out)
         assert.are.equal(cjson.null, parsed.a)
+    end)
+
+    it("deletes a non-existent field without error", function()
+        local t = qjson.decode('{"a":1}')
+        t.b = nil
+        assert.is_nil(t.b)
+        assert.are.equal(1, t.a)
+        local out = qjson.encode(t)
+        local cjson = require("cjson")
+        local parsed = cjson.decode(out)
+        assert.is_nil(parsed.b)
+        assert.are.equal(1, parsed.a)
+    end)
+
+    it("handles all original fields deleted plus new fields added", function()
+        local t = qjson.decode('{"a":1,"b":2}')
+        t.a = nil
+        t.b = nil
+        t.c = 3
+        t.d = 4
+        local out = qjson.encode(t)
+        local cjson = require("cjson")
+        local parsed = cjson.decode(out)
+        assert.is_nil(parsed.a)
+        assert.is_nil(parsed.b)
+        assert.are.equal(3, parsed.c)
+        assert.are.equal(4, parsed.d)
+    end)
+
+    it("rejects non-string keys on LazyObject", function()
+        local t = qjson.decode('{"a":1}')
+        assert.has_error(function() t[1] = "x" end)
     end)
 end)
 

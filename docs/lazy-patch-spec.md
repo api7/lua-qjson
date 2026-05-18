@@ -1,5 +1,7 @@
 # Lazy Patch: Structural Patching for qjson.decode
 
+> **Note:** This document is the original *design* memo. The Lua snippets below are high-level pseudocode showing intent — they are not the shipped code. The actual implementation lives in `lua/qjson/table.lua` and `src/ffi.rs`; the splice path is used only for the "all patches target existing fields, no deletions" case, while deletions and new fields fall through to a walking-based encoder (`encode_lazy_object_walking_with_patches`) that avoids the comma-rewriting issues that the splice pseudocode below has. Helper names like `find_field_value_span` correspond to the FFI symbol `qjson_cursor_field_bytes` (`src/ffi.rs:821`).
+
 ## Overview
 
 This spec describes an optimization for the "decode → modify few fields → encode" workflow. Instead of materializing the entire root container on first write, we record patches and apply them during encode by splicing the original buffer.
@@ -53,12 +55,13 @@ local out = qjson.encode(tab)       -- Splices: buf[0..model_start] + "gpt4o" + 
 #### Patch Record (Lua side)
 
 ```lua
--- Stored in the lazy view's internal table
+-- Stored in the lazy view's internal table.
+-- Each patch records key, encoded JSON value, and the original Lua value
+-- (so __index can hand back the user's value without re-decoding).
+-- Byte offsets are resolved lazily during encode via qjson_cursor_field_bytes.
 _patches = {
-    -- Each patch records the key and new encoded value
-    -- Byte offsets are resolved lazily during encode
-    { key = "model", encoded_value = '"gpt4o"' },
-    { key = "temperature", encoded_value = "0.9" },
+    { key = "model",       encoded_value = '"gpt4o"', lua_value = "gpt4o" },
+    { key = "temperature", encoded_value = "0.9",      lua_value = 0.9 },
 }
 ```
 
@@ -105,23 +108,23 @@ LazyObject.__newindex = function(t, k, v)
             end
         end
     else
-        -- Encode the new value
+        -- Encode the new value (we keep both encoded and the original Lua
+        -- value so __index can return v without re-decoding).
         local encoded = encode_value(v)
-        
-        -- Update or add patch
+
         local found = false
         for _, p in ipairs(patches) do
             if p.key == k then
                 p.encoded_value = encoded
+                p.lua_value = v
                 found = true
                 break
             end
         end
         if not found then
-            patches[#patches + 1] = { key = k, encoded_value = encoded }
+            patches[#patches + 1] = { key = k, encoded_value = encoded, lua_value = v }
         end
-        
-        -- Remove from deleted if previously deleted
+
         deleted[k] = nil
     end
 end
