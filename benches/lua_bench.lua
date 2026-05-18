@@ -3,7 +3,10 @@ package.cpath = package.cpath .. ";./target/release/lib?.so"
 
 local qd    = require("quickdecode")
 local cjson = require("cjson")
-local simdjson = require("resty.simdjson").new()
+local simdjson_ok, simdjson_or_err = pcall(function()
+    return require("resty.simdjson").new()
+end)
+local simdjson = simdjson_ok and simdjson_or_err or nil
 
 local function read_file(p)
     local f = assert(io.open(p, "rb"))
@@ -255,6 +258,11 @@ local scenarios = {
 local has_pooled_api = type(qd.new_decoder) == "function"
 local pooled_decoder = has_pooled_api and qd.new_decoder() or nil
 
+if not simdjson then
+    print("lua-resty-simdjson unavailable; skipping simdjson rows: "
+        .. tostring(simdjson_or_err))
+end
+
 for _, s in ipairs(scenarios) do
     print(string.format("=== %s (%d bytes) ===", s.name, #s.payload))
 
@@ -267,10 +275,12 @@ for _, s in ipairs(scenarios) do
         cjson_access(obj)
     end)
 
-    bench("simdjson.decode + access fields", s.iters, function()
-        local obj = simdjson:decode(s.payload)
-        cjson_access(obj)
-    end)
+    if simdjson then
+        bench("simdjson.decode + access fields", s.iters, function()
+            local obj = simdjson:decode(s.payload)
+            cjson_access(obj)
+        end)
+    end
 
     bench("quickdecode.parse + access fields", s.iters, function()
         local d = qd.parse(s.payload)
@@ -338,12 +348,14 @@ do
         default_cjson_access(obj)
     end)
 
-    next_p = make_cycler(interleaved)
-    bench("simdjson.decode + access fields", 400, function()
-        local p = next_p()
-        local obj = simdjson:decode(p)
-        default_cjson_access(obj)
-    end)
+    if simdjson then
+        next_p = make_cycler(interleaved)
+        bench("simdjson.decode + access fields", 400, function()
+            local p = next_p()
+            local obj = simdjson:decode(p)
+            default_cjson_access(obj)
+        end)
+    end
 
     next_p = make_cycler(interleaved)
     bench("quickdecode.parse + access fields", 400, function()

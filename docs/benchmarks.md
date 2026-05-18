@@ -20,7 +20,7 @@ Lua-table baselines.
 | Runtime | OpenResty `resty` 0.29 / OpenResty 1.21.4.4 / LuaJIT 2.1.1723681758 |
 | `quickdecode` | this repo, release build, AVX2 + PCLMUL scanner active |
 | `lua-cjson` | vendored `openresty/lua-cjson` |
-| `lua-resty-simdjson` | OpenResty lualib `resty.simdjson` |
+| `lua-resty-simdjson` | `Kong/lua-resty-simdjson` commit `77322db640927c14968f1314a9fb1bb2bc084015`, installed under OpenResty lualib |
 
 ## Methodology
 
@@ -70,6 +70,8 @@ make bench
 This builds `quickdecode`, builds the vendored `lua-cjson` against OpenResty's
 LuaJIT, then invokes `benches/lua_bench.lua` through OpenResty's `resty` so
 `lua-resty-simdjson` runs in its normal `ngx` environment.
+If `resty.simdjson` is not available on `package.path` / `package.cpath`, the
+harness prints a skip message and omits the simdjson rows.
 
 Numbers below come from one such run.
 
