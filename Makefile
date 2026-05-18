@@ -1,15 +1,18 @@
-# Overridable: `make bench LUAJIT=/path/to/luajit LUA_CPATH='...'`
-LUAJIT    ?= $(shell command -v luajit 2>/dev/null || echo /usr/local/openresty/luajit/bin/luajit)
-LUA_CPATH ?= ./vendor/lua-cjson/?.so;./?.so;/usr/local/openresty/lualib/?.so;/usr/local/lib/lua/5.1/?.so;/usr/local/openresty/luajit/lib/lua/5.1/?.so
+# Overridable: `make bench LUAJIT=/path/to/luajit RESTY=/path/to/resty LUA_CPATH='...'`
+OPENRESTY ?= /usr/local/openresty
+LUAJIT    ?= $(OPENRESTY)/luajit/bin/luajit
+RESTY     ?= $(OPENRESTY)/bin/resty
+LUA_PATH  ?= ./lua/?.lua;$(OPENRESTY)/lualib/?.lua;$(OPENRESTY)/lualib/?/init.lua;;
+LUA_CPATH ?= ./vendor/lua-cjson/?.so;./target/release/lib?.so;./?.so;$(OPENRESTY)/lualib/?.so;/usr/local/lib/lua/5.1/?.so;$(OPENRESTY)/luajit/lib/lua/5.1/?.so
 
-LUAJIT_PREFIX ?= $(shell dirname $$(dirname $$(command -v $(LUAJIT) 2>/dev/null || echo /usr/local/openresty/luajit/bin/luajit)))
+LUAJIT_PREFIX ?= $(shell dirname $$(dirname $$(command -v $(LUAJIT) 2>/dev/null || echo $(OPENRESTY)/luajit/bin/luajit)))
 LUAJIT_INC    ?= $(LUAJIT_PREFIX)/include/luajit-2.1
 
 LIB_DIR := $(CURDIR)/target/release
 ifeq ($(shell uname),Darwin)
-LUA_ENV := DYLD_LIBRARY_PATH=$(LIB_DIR) LUA_CPATH='$(LUA_CPATH)'
+LUA_ENV := DYLD_LIBRARY_PATH=$(LIB_DIR) LUA_PATH='$(LUA_PATH)' LUA_CPATH='$(LUA_CPATH)'
 else
-LUA_ENV := LD_LIBRARY_PATH=$(LIB_DIR) LUA_CPATH='$(LUA_CPATH)'
+LUA_ENV := LD_LIBRARY_PATH=$(LIB_DIR) LUA_PATH='$(LUA_PATH)' LUA_CPATH='$(LUA_CPATH)'
 endif
 
 .PHONY: help build test lint bench clean
@@ -29,8 +32,8 @@ test: build ## Run cargo tests + busted Lua tests
 lint: ## Run clippy with -D warnings
 	cargo clippy --release --all-targets -- -D warnings
 
-bench: build vendor/lua-cjson/cjson.so ## Run the LuaJIT vs cjson benchmark
-	$(LUA_ENV) $(LUAJIT) benches/lua_bench.lua
+bench: build vendor/lua-cjson/cjson.so ## Run the OpenResty LuaJIT benchmark
+	$(LUA_ENV) $(RESTY) benches/lua_bench.lua
 
 vendor/lua-cjson/cjson.so: | vendor/lua-cjson/Makefile
 ifeq ($(shell uname),Darwin)

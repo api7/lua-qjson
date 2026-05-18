@@ -1,12 +1,14 @@
 # Benchmarks
 
 Throughput and memory comparison of `quickdecode` (this library) against
-`lua-cjson` on a multimodal chat-completion payload ladder from 2 KB to 10 MB.
+`lua-cjson` and `lua-resty-simdjson` on a multimodal chat-completion payload
+ladder from 2 KB to 10 MB.
 
 `quickdecode` is optimized for *parse + read a small part of the document*;
 the data below quantifies how the lazy structural scan behaves when the caller
 reads request metadata plus every chat message `content`, without eagerly
-building the whole Lua table. `lua-cjson` is the eager-table baseline.
+building the whole Lua table. `lua-cjson` and `lua-resty-simdjson` are eager
+Lua-table baselines.
 
 ## Environment
 
@@ -15,9 +17,10 @@ building the whole Lua table. `lua-cjson` is the eager-table baseline.
 | Host CPU | Intel Xeon (Skylake, IBRS), 4 cores |
 | Memory | 15 GiB |
 | OS | Linux x86_64 |
-| Runtime | Homebrew LuaJIT 2.1.1774896198 |
+| Runtime | OpenResty `resty` 0.29 / LuaJIT 2.1.1723681758 |
 | `quickdecode` | this repo, release build, AVX2 + PCLMUL scanner active |
 | `lua-cjson` | vendored `openresty/lua-cjson` |
+| `lua-resty-simdjson` | OpenResty lualib `resty.simdjson` |
 
 ## Methodology
 
@@ -51,20 +54,22 @@ parsing workloads with ~3-5% structural density.
 | Row | What it does | Notes |
 |---|---|---|
 | `cjson.decode + access fields` | `cjson.decode(s)`, read `model` / `temperature`, then read every `messages[*].content` | Eager Lua table |
+| `simdjson.decode + access fields` | `resty.simdjson:decode(s)`, read `model` / `temperature`, then read every `messages[*].content` | Eager Lua table |
 | `quickdecode.parse + access fields` | `qd.parse(s)`, read `model` / `temperature`, then touch every `messages[*].content` path | Lazy structural scan; explicit path reads |
 | `qd.decode + access content` | `qd.decode(s)`, read `model` / `temperature`, then read every `messages[*].content` | Lazy table proxy; reads go through `__index` |
 | `qd.decode + qd.encode (unmodified)` | `qd.decode(s)` then re-emit as JSON | Substring fast path — no fields touched, so the proxy re-emits the original byte range via `memcpy` |
 
 ## Reproducing
 
-The straight comparison against `cjson` is one command:
+Run the full comparison with one command:
 
 ```sh
 make bench
 ```
 
-This invokes `benches/lua_bench.lua` with `LD_LIBRARY_PATH=target/release`
-and a `LUA_CPATH` that picks up the vendored `lua-cjson` build.
+This builds `quickdecode`, builds the vendored `lua-cjson` against OpenResty's
+LuaJIT, then invokes `benches/lua_bench.lua` through OpenResty's `resty` so
+`lua-resty-simdjson` runs in its normal `ngx` environment.
 
 Numbers below come from one such run.
 
@@ -72,34 +77,34 @@ Numbers below come from one such run.
 
 Each row is "parse + access request fields" on the named payload.
 
-| Scenario | Size | cjson | `qd.parse` | `qd.decode + access content` | `qd.decode + qd.encode` |
-|---|---:|---:|---:|---:|---:|
-| small      |   2.1 KB | 113,056 | 132,184 |  81,769 | 145,722 |
-| medium     |  60.4 KB |   8,194 | 196,773 | 142,086 | 147,406 |
-| github-100k |   100 KB |   2,424 |   4,510 |   4,444 |   4,783 |
-| 100k       |   100 KB |   4,874 | 144,509 | 100,100 | 107,527 |
-| 200k       |   200 KB |   2,446 |  78,247 |  64,350 |  69,832 |
-| 500k       |   500 KB |     982 |  33,003 |  30,211 |  31,299 |
-| 1m         |  1.00 MB |     478 |  16,930 |  16,146 |  16,358 |
-| 2m         |  2.00 MB |     238 |   8,361 |   8,127 |   8,302 |
-| 5m         |  5.00 MB |      95 |   2,939 |   2,923 |   2,979 |
-| 10m        | 10.00 MB |      48 |   1,046 |   1,045 |     955 |
-| interleaved (100k/200k/500k/1m, cycled) | — | 1,063 | 33,498 | 30,595 | 31,646 |
+| Scenario | Size | cjson | simdjson | `qd.parse` | `qd.decode + access content` | `qd.decode + qd.encode` |
+|---|---:|---:|---:|---:|---:|---:|
+| small      |   2.1 KB | 106,646 | 137,427 | 135,296 |  97,574 | 202,388 |
+| medium     |  60.4 KB |  10,086 |  86,029 | 189,970 | 198,098 | 175,562 |
+| github-100k |   100 KB |   2,208 |   2,880 |   4,496 |   4,479 |   4,809 |
+| 100k       |   100 KB |   6,045 |  46,577 | 137,931 | 134,590 | 153,139 |
+| 200k       |   200 KB |   3,025 |  22,563 |  78,247 |  75,873 |  81,433 |
+| 500k       |   500 KB |   1,216 |   9,128 |  33,058 |  32,680 |  34,188 |
+| 1m         |  1.00 MB |     594 |   4,408 |  16,447 |  16,340 |  16,722 |
+| 2m         |  2.00 MB |     296 |   1,966 |   8,247 |   8,224 |   8,055 |
+| 5m         |  5.00 MB |     118 |     600 |   2,869 |   2,945 |   2,992 |
+| 10m        | 10.00 MB |      59 |     356 |   1,035 |   1,028 |   1,050 |
+| interleaved (100k/200k/500k/1m, cycled) | — | 1,318 | 9,116 | 33,342 | 32,752 | 34,031 |
 
 ### Speed-up vs. baselines
 
-| Scenario | `qd.parse` / cjson | `qd.decode + access content` / cjson |
-|---|---:|---:|
-| small  |  1.2× |  0.7× |
-| medium | 24.0× | 17.3× |
-| github-100k | 1.9× | 1.8× |
-| 100k   | 29.6× | 20.5× |
-| 200k   | 32.0× | 26.3× |
-| 500k   | 33.6× | 30.8× |
-| 1m     | 35.4× | 33.8× |
-| 2m     | 35.1× | 34.1× |
-| 5m     | 30.9× | 30.8× |
-| 10m    | 21.8× | 21.8× |
+| Scenario | `qd.parse` / cjson | `qd.parse` / simdjson | `qd.decode + access content` / cjson | `qd.decode + access content` / simdjson |
+|---|---:|---:|---:|---:|
+| small  |  1.3× |  1.0× |  0.9× |  0.7× |
+| medium | 18.8× |  2.2× | 19.6× |  2.3× |
+| github-100k | 2.0× |  1.6× | 2.0× |  1.6× |
+| 100k   | 22.8× |  3.0× | 22.3× |  2.9× |
+| 200k   | 25.9× |  3.5× | 25.1× |  3.4× |
+| 500k   | 27.2× |  3.6× | 26.9× |  3.6× |
+| 1m     | 27.7× |  3.7× | 27.5× |  3.7× |
+| 2m     | 27.9× |  4.2× | 27.8× |  4.2× |
+| 5m     | 24.3× |  4.8× | 25.0× |  4.9× |
+| 10m    | 17.5× |  2.9× | 17.4× |  2.9× |
 
 ## Results — memory delta (KB retained after 5 rounds)
 
@@ -107,19 +112,19 @@ Post-run `collectgarbage("count")` minus baseline. Captures heap usage after
 the timing rounds without forcing a final collection, so short-lived garbage
 from the last round may still be included.
 
-| Scenario | cjson | `qd.parse` | `qd.decode + access content` | `qd.decode + qd.encode` |
-|---|---:|---:|---:|---:|
-| small      | +15,985 | +4,069 | +17,408 | +13,478 |
-| medium     |  +1,955 |    +67 |  +1,349 |  +1,349 |
-| github-100k | +12,761 |   +20 |    +591 |    +273 |
-| 100k       |    +485 |   +74 |    +739 |    +270 |
-| 200k       |    +392 |   +34 |    +370 |    +135 |
-| 500k       |    +577 |   +14 |    +148 |     +54 |
-| 1m         |  +1,082 |   +10 |    +111 |     +41 |
-| 2m         |  +1,155 |   +18 |    +217 |     +54 |
-| 5m         |  +1,316 |   +14 |    +409 |     +54 |
-| 10m        |  +1,583 |   +14 |    +717 |     +54 |
-| interleaved | +3,356 |  +271 |  +2,955 |  +1,080 |
+| Scenario | cjson | simdjson | `qd.parse` | `qd.decode + access content` | `qd.decode + qd.encode` |
+|---|---:|---:|---:|---:|---:|
+| small      | +15,464 | +15,447 | +4,094 | +15,251 | +11,908 |
+| medium     |  +1,955 |  +2,660 |   +160 |  +1,210 |  +1,216 |
+| github-100k | +13,187 | +3,362 |   +29 |    +548 |    +242 |
+| 100k       |    +484 |   +748 |   +79 |    +704 |    +241 |
+| 200k       |    +392 |   +523 |   +40 |    +352 |    +124 |
+| 500k       |    +577 |   +630 |   +17 |    +142 |     +48 |
+| 1m         |  +1,082 | +1,121 |   +13 |    +107 |     +37 |
+| 2m         |  +1,155 | +1,248 |   +21 |    +211 |     +48 |
+| 5m         |  +1,316 | +1,538 |   +17 |    +403 |     +48 |
+| 10m        |  +1,583 | +2,014 |   +16 |    +844 |     +48 |
+| interleaved | +3,355 | +4,404 |  +314 |  +2,825 |    +945 |
 
 `qd.parse` retention is essentially constant across payload size: the only
 GC-rooted state is the reusable `indices: Vec<u32>` and `scratch` buffers.
@@ -132,8 +137,9 @@ key into the Lua table heap.
 
 1. **`quickdecode` is fastest once payloads move beyond tiny inputs.**
    The small 2 KB row is dominated by fixed Lua/FFI overhead, but medium and
-   larger multimodal payloads show roughly 20–35× higher throughput than
-   `cjson` for request-field access.
+   larger multimodal payloads show roughly 18–28× higher throughput than
+   `cjson` and roughly 3–5× higher throughput than `lua-resty-simdjson`
+   for request-field access.
 2. **Reading every `messages[*].content` is still access-light for large
    multimodal bodies.** The benchmark touches the top-level request fields and
    one `content` field per message; the payload size comes from image data
@@ -148,10 +154,10 @@ key into the Lua table heap.
    re-emit is `memcpy`, not re-serialize, and the throughput tracks
    `qd.parse` very closely.
 5. **Memory retention** for `quickdecode` is essentially flat in payload
-   size; the eager parsers retain ~1× the input size after the first run
+   size; the eager parsers retain more Lua heap after the first run
    because the Lua table tree stays GC-rooted until the next collection.
-   The 10 MB case retains ~1.5 MB for `cjson`, ~14 KB for
-   `qd.parse`.
+   The 10 MB case retains ~1.5 MB for `cjson`, ~2.0 MB for simdjson,
+   and ~16 KB for `qd.parse`.
 6. **REST API payloads (github-100k) show a smaller speedup** because their
    structural density is higher than the multimodal request ladder. Memory
    savings remain dramatic because `cjson` must materialize every nested

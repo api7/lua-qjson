@@ -14,7 +14,7 @@ The `Makefile` is the canonical entry point; `make help` lists targets.
 make build              # cargo build --release  → target/release/libquickdecode.so
 make test               # cargo test --release + busted Lua tests
 make lint               # cargo clippy -D warnings + cargo fmt --check
-make bench              # LuaJIT vs lua-cjson on benches/fixtures
+make bench              # OpenResty LuaJIT benchmark vs lua-cjson and simdjson
 ```
 
 Under the hood / for narrower invocations:
@@ -79,7 +79,7 @@ src/
 lua/quickdecode.lua    LuaJIT wrapper (ffi.cdef + Doc/Cursor metatables)
 include/lua_quick_decode.h  public C header
 tests/                Rust integration tests + tests/lua/ busted suite
-benches/              lua_bench.lua vs lua-cjson; fixtures/ has small_api.json + medium_resp.json
+benches/              lua_bench.lua vs lua-cjson/simdjson; fixtures/ has small_api.json + medium_resp.json
 ```
 
 The enum values in `src/error.rs` are duplicated in `include/lua_quick_decode.h` and `lua/quickdecode.lua` (the latter only encodes the `T_*` type tags and `NOT_FOUND = 2`). Keep all three in sync when adding/renumbering codes.

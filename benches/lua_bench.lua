@@ -3,6 +3,7 @@ package.cpath = package.cpath .. ";./target/release/lib?.so"
 
 local qd    = require("quickdecode")
 local cjson = require("cjson")
+local simdjson = require("resty.simdjson").new()
 
 local function read_file(p)
     local f = assert(io.open(p, "rb"))
@@ -272,6 +273,11 @@ for _, s in ipairs(scenarios) do
         cjson_access(obj)
     end)
 
+    bench("simdjson.decode + access fields", s.iters, function()
+        local obj = simdjson:decode(s.payload)
+        cjson_access(obj)
+    end)
+
     bench("quickdecode.parse + access fields", s.iters, function()
         local d = qd.parse(s.payload)
         qd_access(d)
@@ -335,6 +341,13 @@ do
     bench("cjson.decode + access fields", 400, function()
         local p = next_p()
         local obj = cjson.decode(p)
+        default_cjson_access(obj)
+    end)
+
+    next_p = make_cycler(interleaved)
+    bench("simdjson.decode + access fields", 400, function()
+        local p = next_p()
+        local obj = simdjson:decode(p)
         default_cjson_access(obj)
     end)
 
