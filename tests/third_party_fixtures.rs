@@ -59,6 +59,18 @@ fn cjson_input_cases() -> Vec<PathBuf> {
     paths
 }
 
+fn cjson_json_patch_cases() -> Vec<PathBuf> {
+    let dir = repo_root().join("tests/vendor/cJSON/tests/json-patch-tests");
+    let mut paths: Vec<_> = fs::read_dir(&dir)
+        .unwrap_or_else(|e| panic!("missing cJSON json-patch-tests at {}: {e}", dir.display()))
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| path.extension().and_then(|s| s.to_str()) == Some("json"))
+        .collect();
+    paths.sort();
+    paths
+}
+
 fn simdjson_example_cases() -> Vec<PathBuf> {
     let dir = repo_root().join("tests/vendor/simdjson/jsonexamples");
     let mut paths: Vec<_> = fs::read_dir(&dir)
@@ -66,6 +78,18 @@ fn simdjson_example_cases() -> Vec<PathBuf> {
         .filter_map(Result::ok)
         .map(|entry| entry.path())
         .filter(|path| path.extension().and_then(|s| s.to_str()) == Some("json"))
+        .collect();
+    paths.sort();
+    paths
+}
+
+fn simdjson_ndjson_cases() -> Vec<PathBuf> {
+    let dir = repo_root().join("tests/vendor/simdjson/jsonexamples");
+    let mut paths: Vec<_> = fs::read_dir(&dir)
+        .unwrap_or_else(|e| panic!("missing simdjson submodule at {}: {e}", dir.display()))
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| path.extension().and_then(|s| s.to_str()) == Some("ndjson"))
         .collect();
     paths.sort();
     paths
@@ -168,6 +192,35 @@ fn cjson_input_corpus_parses_in_both_modes() {
 }
 
 #[test]
+fn cjson_json_patch_corpus_parses_in_both_modes() {
+    let cases = cjson_json_patch_cases();
+    assert!(
+        cases.len() >= 4,
+        "expected the cJSON json-patch-tests corpus, got {} files",
+        cases.len()
+    );
+
+    for path in cases {
+        let name = path
+            .strip_prefix(repo_root())
+            .unwrap_or(&path)
+            .display()
+            .to_string();
+        assert_parses_in_both_modes(&name, &parse_file(&path));
+    }
+}
+
+#[test]
+fn cjson_non_json_input_is_rejected() {
+    let path = repo_root().join("tests/vendor/cJSON/tests/inputs/test6");
+    let data = parse_file(&path);
+    assert!(
+        Document::parse(&data).is_err(),
+        "cJSON test6 is an HTML error page and must not parse as JSON"
+    );
+}
+
+#[test]
 fn simdjson_jsonexamples_parse_in_both_modes() {
     let cases = simdjson_example_cases();
     assert!(
@@ -183,6 +236,35 @@ fn simdjson_jsonexamples_parse_in_both_modes() {
             .to_string();
         assert_parses_in_both_modes(&name, &parse_file(&path));
     }
+}
+
+#[test]
+fn simdjson_ndjson_examples_parse_each_record_in_both_modes() {
+    let cases = simdjson_ndjson_cases();
+    assert!(
+        !cases.is_empty(),
+        "expected at least one simdjson ndjson example file"
+    );
+
+    let mut records = 0;
+    for path in cases {
+        let data = parse_file(&path);
+        for (line_no, line) in data.split(|b| *b == b'\n').enumerate() {
+            let line = line.strip_suffix(b"\r").unwrap_or(line);
+            if line.is_empty() {
+                continue;
+            }
+            records += 1;
+            let name = format!(
+                "{}:{}",
+                path.strip_prefix(repo_root()).unwrap_or(&path).display(),
+                line_no + 1
+            );
+            assert_parses_in_both_modes(&name, line);
+        }
+    }
+
+    assert!(records >= 793, "expected simdjson NDJSON records, got {records}");
 }
 
 #[test]

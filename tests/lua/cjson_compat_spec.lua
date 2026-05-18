@@ -31,6 +31,12 @@ local function deep_equal(a, b)
     return true
 end
 
+local function assert_equivalent_json(src)
+    assert.is_true(deep_equal(qjson.materialize(qjson.decode(src)), cjson.decode(src)))
+    local out = qjson.encode(qjson.decode(src))
+    assert.is_true(deep_equal(cjson.decode(out), cjson.decode(src)))
+end
+
 describe("qjson vs lua-cjson", function()
     it("agrees on simple string field", function()
         local s = '{"a":"x"}'
@@ -68,6 +74,10 @@ describe("qjson vs lua-cjson", function()
         "tests/vendor/cJSON/tests/inputs/test9",
         "tests/vendor/cJSON/tests/inputs/test10",
         "tests/vendor/cJSON/tests/inputs/test11",
+        "tests/vendor/cJSON/tests/json-patch-tests/cjson-utils-tests.json",
+        "tests/vendor/cJSON/tests/json-patch-tests/package.json",
+        "tests/vendor/cJSON/tests/json-patch-tests/spec_tests.json",
+        "tests/vendor/cJSON/tests/json-patch-tests/tests.json",
         "tests/vendor/simdjson/jsonexamples/citm_catalog.json",
         "tests/vendor/simdjson/jsonexamples/example_config.json",
         "tests/vendor/simdjson/jsonexamples/twitter.json",
@@ -87,4 +97,14 @@ describe("qjson vs lua-cjson", function()
             assert.is_true(deep_equal(cjson.decode(out), cjson.decode(src)))
         end)
     end
+
+    it("materializes and encodes each simdjson NDJSON record like lua-cjson", function()
+        local src = read_file("tests/vendor/simdjson/jsonexamples/amazon_cellphones.ndjson")
+        local records = 0
+        for line in src:gmatch("([^\r\n]+)") do
+            records = records + 1
+            assert_equivalent_json(line)
+        end
+        assert.is_true(records >= 793)
+    end)
 end)
