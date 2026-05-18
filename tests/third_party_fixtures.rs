@@ -381,9 +381,20 @@ fn simdjson_big_integer_literals_parse_but_do_not_fit_i64() {
         Document::parse(data).unwrap();
     }
 
-    let doc = parse(cases[0]);
+    for data in &cases[..2] {
+        let doc = parse(data);
+        let mut v: i64 = 0;
+        let rc = unsafe { qjson_get_i64(doc, b"val".as_ptr() as *const i8, b"val".len(), &mut v) };
+        assert_eq!(rc, qjson_err::QJSON_OUT_OF_RANGE as c_int);
+        unsafe { qjson_free(doc) };
+    }
+
+    let doc = parse(cases[2]);
+    let root = open(doc, b"");
+    let big_integer = cursor_index(&root, 1);
+    let empty = b"";
     let mut v: i64 = 0;
-    let rc = unsafe { qjson_get_i64(doc, b"val".as_ptr() as *const i8, b"val".len(), &mut v) };
+    let rc = unsafe { qjson_cursor_get_i64(&big_integer, empty.as_ptr() as *const i8, 0, &mut v) };
     assert_eq!(rc, qjson_err::QJSON_OUT_OF_RANGE as c_int);
     unsafe { qjson_free(doc) };
 }
