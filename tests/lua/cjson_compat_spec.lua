@@ -58,22 +58,31 @@ describe("qjson vs lua-cjson", function()
     end)
 
     local fixture_paths = {
-        "tests/fixtures/third_party/cjson/test1.json",
-        "tests/fixtures/third_party/cjson/test2.json",
-        "tests/fixtures/third_party/cjson/test9.json",
-        "tests/fixtures/third_party/cjson/test10.json",
-        "tests/fixtures/third_party/cjson/test11.json",
-        "tests/fixtures/third_party/simdjson/example_config.json",
+        "tests/vendor/cJSON/tests/inputs/test1",
+        "tests/vendor/cJSON/tests/inputs/test2",
+        "tests/vendor/cJSON/tests/inputs/test3",
+        "tests/vendor/cJSON/tests/inputs/test4",
+        "tests/vendor/cJSON/tests/inputs/test5",
+        "tests/vendor/cJSON/tests/inputs/test7",
+        "tests/vendor/cJSON/tests/inputs/test8",
+        "tests/vendor/cJSON/tests/inputs/test9",
+        "tests/vendor/cJSON/tests/inputs/test10",
+        "tests/vendor/cJSON/tests/inputs/test11",
+        "tests/vendor/simdjson/jsonexamples/citm_catalog.json",
+        "tests/vendor/simdjson/jsonexamples/example_config.json",
+        "tests/vendor/simdjson/jsonexamples/twitter.json",
     }
 
     for _, path in ipairs(fixture_paths) do
-        it("materializes like lua-cjson for fixture " .. path, function()
-            local src = read_file(path)
+        local p = path
+
+        it("materializes like lua-cjson for fixture " .. p, function()
+            local src = read_file(p)
             assert.is_true(deep_equal(qjson.materialize(qjson.decode(src)), cjson.decode(src)))
         end)
 
-        it("encodes a lua-cjson-equivalent value for fixture " .. path, function()
-            local src = read_file(path)
+        it("encodes a lua-cjson-equivalent value for fixture " .. p, function()
+            local src = read_file(p)
             local out = qjson.encode(qjson.decode(src))
             assert.is_true(deep_equal(cjson.decode(out), cjson.decode(src)))
         end)

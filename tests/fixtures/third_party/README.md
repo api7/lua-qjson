@@ -1,26 +1,19 @@
-# Third-party JSON fixtures
+# Third-party JSON fixture sources
 
-This directory contains a small, selected corpus adapted from upstream JSON
-parser test data. The C/C++ test harnesses are not vendored; qjson consumes
-these files through its own Rust and Lua test suites.
+qjson reuses mature upstream JSON test data through git submodules instead of
+copying large C/C++ test harnesses into this repository.
 
-## DaveGamble/cJSON
+- `tests/vendor/cJSON`: `DaveGamble/cJSON`, MIT licensed. Rust and Lua tests
+  consume `tests/inputs/*` fixtures with matching `.expected` files, and Rust
+  ports selected parser literals from cJSON number/string/array tests.
+- `tests/vendor/simdjson`: `simdjson/simdjson`, dual Apache-2.0/MIT licensed.
+  qjson uses the MIT option and consumes the single-document `.json` files in
+  `jsonexamples/`; the `.ndjson` streaming example is intentionally excluded.
 
-- Source: https://github.com/DaveGamble/cJSON
-- Upstream paths: `tests/inputs/test1`, `test2`, `test9`, `test10`, `test11`
-- License: MIT
-- Copyright: Copyright (c) 2009-2017 Dave Gamble and cJSON contributors
+The upstream submodules carry their own license files:
 
-The MIT license notice from upstream requires preserving the copyright and
-permission notice with copied substantial portions.
+- `tests/vendor/cJSON/LICENSE`
+- `tests/vendor/simdjson/LICENSE-MIT`
 
-## simdjson/simdjson
-
-- Source: https://github.com/simdjson/simdjson
-- Upstream paths: `jsonexamples/example_config.json` plus selected DOM test
-  literals from `tests/dom/big_integer_tests.cpp`
-- License choice for copied material: MIT
-- Copyright: Copyright 2018-2025 The simdjson authors
-
-simdjson is dual-licensed under Apache-2.0 and MIT; qjson uses the MIT option
-for this copied test material.
+The local Rust and Lua harnesses are qjson tests; the upstream C/C++ harnesses
+are left in the submodules as source material rather than compiled here.

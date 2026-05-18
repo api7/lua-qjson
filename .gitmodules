@@ -4,3 +4,9 @@
 [submodule "tests/vendor/JSONTestSuite"]
 	path = tests/vendor/JSONTestSuite
 	url = https://github.com/nst/JSONTestSuite
+[submodule "tests/vendor/cJSON"]
+	path = tests/vendor/cJSON
+	url = https://github.com/DaveGamble/cJSON.git
+[submodule "tests/vendor/simdjson"]
+	path = tests/vendor/simdjson
+	url = https://github.com/simdjson/simdjson.git
