@@ -199,11 +199,12 @@ describe("Lazy Patch - iteration with patches", function()
 end)
 
 describe("Lazy Patch - nested modifications", function()
-    it("nested object modification triggers child materialization", function()
+    it("nested object modification records a patch on the child (child stays lazy)", function()
         local t = qjson.decode('{"a":{"x":1},"b":2}')
         t.a.x = 10
-        -- Child is now materialized
-        assert.is_nil(getmetatable(t.a))
+        -- Per lazy-patch-spec edge case 1: parent and child both stay lazy;
+        -- the child records its own patch instead of materializing.
+        assert.are.equal(qjson._LazyObject, getmetatable(t.a))
         assert.are.equal(10, t.a.x)
         local out = qjson.encode(t)
         local cjson = require("cjson")

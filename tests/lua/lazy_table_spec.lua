@@ -168,20 +168,20 @@ describe("__ipairs / qjson.ipairs over LazyArray", function()
     end)
 end)
 
-describe("__newindex — first-write materialization", function()
-    it("converts LazyObject into a plain table preserving existing keys", function()
+describe("__newindex — patch tracking on lazy objects", function()
+    it("LazyObject stays lazy after assignment, with new field readable", function()
         local t = qjson.decode('{"a":1,"b":2}')
         t.c = 3
-        assert.is_nil(getmetatable(t))
+        assert.are.equal(qjson._LazyObject, getmetatable(t))
         assert.are.equal(1, t.a)
         assert.are.equal(2, t.b)
         assert.are.equal(3, t.c)
     end)
 
-    it("nested containers remain lazy after parent materialization", function()
+    it("nested containers remain lazy when sibling field is written", function()
         local t = qjson.decode('{"inner":{"x":1}}')
         t.extra = "y"
-        assert.is_nil(getmetatable(t))
+        assert.are.equal(qjson._LazyObject, getmetatable(t))
         local inner = t.inner
         assert.are.equal(qjson._LazyObject, getmetatable(inner))
         assert.are.equal(1, inner.x)

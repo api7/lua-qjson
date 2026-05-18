@@ -593,82 +593,6 @@ local function has_dirty_children(t)
     return false
 end
 
--- Encode a LazyObject with patches by splicing the original buffer.
--- This is the fast path for "decode -> modify few fields -> encode".
-local function encode_with_patches(t)
-    local buf = t._doc._hold
-    local patches = rawget(t, "_patches") or {}
-    local deleted = rawget(t, "_deleted") or {}
-
-    -- Build a set of patched keys for quick lookup
-    local patched_keys = {}
-    for _, p in ipairs(patches) do
-        patched_keys[p.key] = p
-    end
-
-    -- Collect replacements: { {start, end_, value}, ... }
-    local replacements = {}
-
-    -- For each patch, find the field's byte range in the original buffer
-    for _, p in ipairs(patches) do
-        local rc = C.qjson_cursor_field_bytes(t._cur, p.key, #p.key, sz_a, sz_b)
-        if rc == QJSON_OK then
-            -- Existing field: replace value
-            replacements[#replacements + 1] = {
-                start = tonumber(sz_a[0]),
-                end_ = tonumber(sz_b[0]),
-                value = p.encoded_value,
-            }
-        end
-        -- If NOT_FOUND, it's a new field - handled separately below
-    end
-
-    -- Collect deleted field spans (we need to find the full field span including key)
-    -- For simplicity, we'll handle deletions by walking and skipping deleted keys
-    local has_deleted = false
-    for _ in pairs(deleted) do has_deleted = true; break end
-
-    -- If we have deletions or new fields, fall back to walking
-    -- (splicing deletions is complex due to comma handling)
-    local new_fields = {}
-    for _, p in ipairs(patches) do
-        local rc = C.qjson_cursor_field_bytes(t._cur, p.key, #p.key, sz_a, sz_b)
-        if rc == QJSON_NOT_FOUND then
-            new_fields[#new_fields + 1] = p
-        end
-    end
-
-    if has_deleted or #new_fields > 0 then
-        -- Fall back to walking for complex cases
-        return encode_lazy_object_walking_with_patches(t, patches, deleted)
-    end
-
-    -- Sort replacements by start offset
-    table.sort(replacements, function(a, b) return a.start < b.start end)
-
-    -- Build output by splicing
-    local parts = {}
-    local pos = t._bs + 1  -- 1-based Lua index
-
-    for _, r in ipairs(replacements) do
-        -- Copy unchanged portion (convert 0-based to 1-based)
-        local r_start_1based = r.start + 1
-        if r_start_1based > pos then
-            parts[#parts + 1] = buf:sub(pos, r_start_1based - 1)
-        end
-        -- Insert replacement
-        parts[#parts + 1] = r.value
-        pos = r.end_ + 1  -- end_ is exclusive, so +1 for 1-based
-    end
-
-    -- Copy remaining portion
-    if pos <= t._be then
-        parts[#parts + 1] = buf:sub(pos, t._be)
-    end
-
-    return table.concat(parts)
-end
-
 -- Walk a LazyObject with patches, handling deletions and new fields
 local function encode_lazy_object_walking_with_patches(t, patches, deleted)
     local parts = {}
@@ -717,6 +641,76 @@ local function encode_lazy_object_walking_with_patches(t, patches, deleted)
     end
 
     return "{" .. table.concat(parts, ",") .. "}"
+end
+
+-- Encode a LazyObject with patches by splicing the original buffer.
+-- This is the fast path for "decode -> modify few fields -> encode".
+local function encode_with_patches(t)
+    local buf = t._doc._hold
+    local patches = rawget(t, "_patches") or {}
+    local deleted = rawget(t, "_deleted") or {}
+
+    -- Collect replacements: { {start, end_, value}, ... }
+    local replacements = {}
+
+    -- For each patch, find the field's byte range in the original buffer
+    for _, p in ipairs(patches) do
+        local rc = C.qjson_cursor_field_bytes(t._cur, p.key, #p.key, sz_a, sz_b)
+        if rc == QJSON_OK then
+            -- Existing field: replace value
+            replacements[#replacements + 1] = {
+                start = tonumber(sz_a[0]),
+                end_ = tonumber(sz_b[0]),
+                value = p.encoded_value,
+            }
+        end
+        -- If NOT_FOUND, it's a new field - handled separately below
+    end
+
+    -- Collect deleted field spans (we need to find the full field span including key)
+    -- For simplicity, we'll handle deletions by walking and skipping deleted keys
+    local has_deleted = false
+    for _ in pairs(deleted) do has_deleted = true; break end
+
+    -- If we have deletions or new fields, fall back to walking
+    -- (splicing deletions is complex due to comma handling)
+    local has_new_field = false
+    for _, p in ipairs(patches) do
+        local rc = C.qjson_cursor_field_bytes(t._cur, p.key, #p.key, sz_a, sz_b)
+        if rc == QJSON_NOT_FOUND then
+            has_new_field = true
+            break
+        end
+    end
+
+    if has_deleted or has_new_field then
+        return encode_lazy_object_walking_with_patches(t, patches, deleted)
+    end
+
+    -- Sort replacements by start offset
+    table.sort(replacements, function(a, b) return a.start < b.start end)
+
+    -- Build output by splicing
+    local parts = {}
+    local pos = t._bs + 1  -- 1-based Lua index
+
+    for _, r in ipairs(replacements) do
+        -- Copy unchanged portion (convert 0-based to 1-based)
+        local r_start_1based = r.start + 1
+        if r_start_1based > pos then
+            parts[#parts + 1] = buf:sub(pos, r_start_1based - 1)
+        end
+        -- Insert replacement
+        parts[#parts + 1] = r.value
+        pos = r.end_ + 1  -- end_ is exclusive, so +1 for 1-based
+    end
+
+    -- Copy remaining portion
+    if pos <= t._be then
+        parts[#parts + 1] = buf:sub(pos, t._be)
+    end
+
+    return table.concat(parts)
 end
 
 local function encode_proxy(t)
