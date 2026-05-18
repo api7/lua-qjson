@@ -34,10 +34,11 @@ typedef enum {
 #define QJSON_MODE_EAGER          0u
 #define QJSON_MODE_LAZY           1u
 #define QJSON_DEFAULT_MAX_DEPTH   1024u
+#define QJSON_MAX_MAX_DEPTH       4096u
 
 typedef struct {
     uint32_t mode;       /* QJSON_MODE_EAGER (0) or QJSON_MODE_LAZY (1) */
-    uint32_t max_depth;  /* 0 = use QJSON_DEFAULT_MAX_DEPTH */
+    uint32_t max_depth;  /* 0 = default; values above QJSON_MAX_MAX_DEPTH are clamped */
 } qjson_options;
 
 typedef struct qjson_doc qjson_doc;
