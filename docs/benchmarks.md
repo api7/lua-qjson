@@ -14,10 +14,10 @@ Lua-table baselines.
 
 | | |
 |---|---|
-| Host CPU | Intel Xeon (Skylake, IBRS), 4 cores |
+| Host CPU | Intel Core i5-9400, 6 cores, AVX2 + PCLMUL |
 | Memory | 15 GiB |
-| OS | Linux x86_64 |
-| Runtime | OpenResty `resty` 0.29 / LuaJIT 2.1.1723681758 |
+| OS | Ubuntu 24.04.4 LTS, Linux 6.8.0-110-generic, x86_64 |
+| Runtime | OpenResty `resty` 0.29 / OpenResty 1.21.4.4 / LuaJIT 2.1.1723681758 |
 | `quickdecode` | this repo, release build, AVX2 + PCLMUL scanner active |
 | `lua-cjson` | vendored `openresty/lua-cjson` |
 | `lua-resty-simdjson` | OpenResty lualib `resty.simdjson` |
@@ -33,10 +33,10 @@ The harness lives at `benches/lua_bench.lua`. For each scenario:
 3. 5 rounds × N iterations of the workload; report the **median** ops/s
    across rounds (mean + range also reported in the raw output).
 4. Final `collectgarbage("count")` to capture the post-run memory delta in
-   KB — measures GC-rooted state retained by the parser, not transient
-   per-call allocations.
+   KB. The harness does not force a final collection after timing, so
+   short-lived garbage from the last round may still be included.
 
-The payload is a synthetic multimodal chat-completion request with multiple
+The payload is a synthetic multimodal chat-completion request with one or more
 historical messages. Each message contains one small text part and one
 base64-encoded image part. Message count scales with payload size: the 10 MB
 scenario has roughly ten messages, each carrying one ~1 MB image, so the

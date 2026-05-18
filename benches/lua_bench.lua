@@ -12,20 +12,14 @@ local function read_file(p)
     return s
 end
 
--- Shape: a multimodal chat-completion request with multiple historical
+-- Shape: a multimodal chat-completion request with one or more historical
 -- messages. Each message contains one small text part and one base64-encoded
 -- image part. The number of messages scales with payload size: a 10 MB request
 -- has roughly ten 1 MB image-bearing messages.
 --
--- Image sizes are drawn from a deterministic Park-Miller LCG (not math.random,
--- which delegates to libc rand() and varies across machines) so the same
--- target_bytes produces byte-identical output on any LuaJIT 2.1 host.
---
--- Size accuracy: the normal-branch upper is `min(500K, remaining)` so the
--- loop cannot overshoot during steady state. When fewer than 50 KB remain
--- the final image falls through to `math.max(1024, remaining)` — undershoot
--- is at most a few hundred bytes; worst-case overshoot is ~1 KB (only when
--- `remaining < 1024`, which the seed=42 walk does not hit for our ladder).
+-- Size accuracy: payload sizing is approximate. Message separators, role
+-- strings, and the 1 KB minimum image size can add small drift from
+-- `target_bytes` on tiny scenarios; larger scenarios stay close to target.
 -- GitHub-style payload: simulates /repos/{owner}/{repo}/issues response.
 -- Each issue has ~20 fields including nested user object, labels array,
 -- and realistic string lengths (URLs, timestamps, markdown body).
