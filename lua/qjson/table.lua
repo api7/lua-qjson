@@ -115,6 +115,23 @@ end
 -- raw table rather than creating a fresh proxy.
 local function read_object_field(self, key)
     if type(key) ~= "string" then return nil end
+
+    -- Check patches first
+    local patches = rawget(self, "_patches")
+    if patches then
+        for _, p in ipairs(patches) do
+            if p.key == key then
+                return p.lua_value
+            end
+        end
+    end
+
+    -- Check deleted
+    local deleted = rawget(self, "_deleted")
+    if deleted and deleted[key] then
+        return nil
+    end
+
     -- Use child_box so the lookup result does not alias self._cur (which is
     -- itself stored in root_box's backing memory in the decode caller).
     local rc = C.qjson_cursor_field(self._cur, key, #key, child_box)
@@ -148,21 +165,63 @@ LazyArray.__index = read_array_index
 
 -- Iterator function for lazy_object_iter: advances through object entries by
 -- integer index, returning key/value pairs in source order.
+-- Handles patches and deletions.
 local function lazy_object_iter(state, _prev_key)
-    local i = state.i
-    state.i = i + 1
-    local rc = C.qjson_cursor_object_entry_at(
-        state.view._cur, i, strp_box, size_box, child_box
-    )
-    if rc == QJSON_NOT_FOUND then return nil end
-    check(rc)
-    local k = ffi.string(strp_box[0], size_box[0])
-    local v = decode_cursor(state.view, child_box)
-    return k, v
+    local view = state.view
+    local patches = rawget(view, "_patches")
+    local deleted = rawget(view, "_deleted")
+
+    -- First, iterate through original fields (skipping deleted ones)
+    while state.i < state.original_count do
+        local i = state.i
+        state.i = i + 1
+        local rc = C.qjson_cursor_object_entry_at(
+            view._cur, i, strp_box, size_box, child_box
+        )
+        if rc == QJSON_NOT_FOUND then break end
+        check(rc)
+        local k = ffi.string(strp_box[0], size_box[0])
+
+        -- Skip deleted keys
+        if deleted and deleted[k] then
+            -- continue to next iteration
+        else
+            -- Check if this key has a patch
+            if patches then
+                for _, p in ipairs(patches) do
+                    if p.key == k then
+                        return k, p.lua_value
+                    end
+                end
+            end
+            -- No patch, return original value
+            local v = decode_cursor(view, child_box)
+            return k, v
+        end
+    end
+
+    -- Then, iterate through new fields (patches for keys not in original)
+    if patches then
+        while state.patch_i <= #patches do
+            local p = patches[state.patch_i]
+            state.patch_i = state.patch_i + 1
+            -- Check if this is a new field (not in original)
+            local rc = C.qjson_cursor_field_bytes(view._cur, p.key, #p.key, sz_a, sz_b)
+            if rc == QJSON_NOT_FOUND then
+                return p.key, p.lua_value
+            end
+        end
+    end
+
+    return nil
 end
 
 function LazyObject.__pairs(t)
-    return lazy_object_iter, { view = t, i = 0 }, nil
+    -- Count original fields
+    local rc = C.qjson_cursor_len(t._cur, "", 0, size_box)
+    check(rc)
+    local original_count = tonumber(size_box[0])
+    return lazy_object_iter, { view = t, i = 0, original_count = original_count, patch_i = 1 }, nil
 end
 
 local function lazy_array_iter(state, _prev_i)
@@ -256,32 +315,55 @@ end
 -- the dirty check and __newindex can share the list.
 local INTERNAL_KEYS = {
     _doc = true, _cur_box = true, _cur = true, _bs = true, _be = true,
+    _patches = true, _deleted = true,
 }
 
--- On first write, walk all existing key/value pairs into a plain table,
--- strip the lazy metatable, then apply the new assignment. Any FFI error
--- during the walk leaves `t` in its original lazy state.
--- Existing rawget-cached entries (e.g. previously returned child proxies)
--- are preserved so callers' references remain valid.
+-- Forward declaration for encode (needed by __newindex to encode patch values)
+local encode
+
+-- On write, record a patch instead of materializing the entire object.
+-- This allows encode to splice the original buffer with patched values.
 LazyObject.__newindex = function(t, k, v)
-    local contents = materialize_object_contents(t)
-    -- Snapshot user-key cache BEFORE nilling internals.
-    -- Use next() for raw iteration: pairs() invokes __pairs on lazy tables,
-    -- walking the full JSON via FFI instead of the Lua-side rawget cache.
-    local cache = {}
-    local ck, cv = next(t)
-    while ck ~= nil do
-        if not INTERNAL_KEYS[ck] then
-            cache[ck] = cv
+    -- Initialize patches table if needed
+    if not rawget(t, "_patches") then
+        rawset(t, "_patches", {})
+        rawset(t, "_deleted", {})
+    end
+
+    local patches = rawget(t, "_patches")
+    local deleted = rawget(t, "_deleted")
+
+    if v == nil then
+        -- Mark key as deleted
+        deleted[k] = true
+        -- Remove from patches if previously patched
+        for i, p in ipairs(patches) do
+            if p.key == k then
+                table.remove(patches, i)
+                break
+            end
         end
-        ck, cv = next(t, ck)
+    else
+        -- Encode the new value (we need both encoded and lua_value)
+        local encoded = encode(v)
+
+        -- Update or add patch
+        local found = false
+        for _, p in ipairs(patches) do
+            if p.key == k then
+                p.encoded_value = encoded
+                p.lua_value = v
+                found = true
+                break
+            end
+        end
+        if not found then
+            patches[#patches + 1] = { key = k, encoded_value = encoded, lua_value = v }
+        end
+
+        -- Remove from deleted if previously deleted
+        deleted[k] = nil
     end
-    t._doc, t._cur_box, t._cur, t._bs, t._be = nil, nil, nil, nil, nil
-    setmetatable(t, nil)
-    for _, kv in ipairs(contents) do
-        rawset(t, kv[1], cache[kv[1]] or kv[2])
-    end
-    rawset(t, k, v)
 end
 
 -- On first write, walk all existing elements into a plain sequence,
@@ -405,13 +487,21 @@ local function encode_number(n)
 end
 
 -- A lazy subtree is "dirty" if any cached descendant has been materialized
--- (no longer carries Lazy* metatable). Non-cached descendants are guaranteed
--- untouched, so we only need to walk the rawget-cached entries.
+-- (no longer carries Lazy* metatable), or if it has patches/deletions.
+-- Non-cached descendants are guaranteed untouched, so we only need to walk
+-- the rawget-cached entries.
 local function is_dirty(v)
     if type(v) ~= "table" then return false end
     local mt = getmetatable(v)
     if mt ~= LazyObject and mt ~= LazyArray then
         return true  -- materialized
+    end
+    -- Check for patches or deletions
+    local patches = rawget(v, "_patches")
+    local deleted = rawget(v, "_deleted")
+    if patches and #patches > 0 then return true end
+    if deleted then
+        for _ in pairs(deleted) do return true end
     end
     -- Use next() for raw table iteration: pairs() would invoke __pairs on
     -- lazy tables, walking the full JSON via FFI instead of the Lua cache.
@@ -425,10 +515,19 @@ local function is_dirty(v)
     return false
 end
 
--- Forward declaration so encode_lazy_object_walking, encode_lazy_array_walking,
--- and encode_array/encode_object can reference encode before its definition is
--- complete (Lua resolves upvalues at call time, but the slot must be declared first).
-local encode
+-- Check if a lazy view has patches (but not necessarily dirty children)
+local function has_patches(v)
+    local patches = rawget(v, "_patches")
+    return patches and #patches > 0
+end
+
+-- Check if a lazy view has deletions
+local function has_deletions(v)
+    local deleted = rawget(v, "_deleted")
+    if not deleted then return false end
+    for _ in pairs(deleted) do return true end
+    return false
+end
 
 -- Walk a dirty LazyObject and emit JSON, preferring cached children (which
 -- may be materialized) over freshly resolved cursors. Non-cached children
@@ -474,14 +573,176 @@ local function encode_lazy_array_walking(t)
     return "[" .. table.concat(parts, ",") .. "]"
 end
 
+-- Check if any cached child is dirty (materialized or has patches)
+local function has_dirty_children(t)
+    local k, child = next(t)
+    while k ~= nil do
+        if not INTERNAL_KEYS[k] then
+            if type(child) == "table" then
+                local mt = getmetatable(child)
+                if mt ~= LazyObject and mt ~= LazyArray then
+                    return true  -- materialized child
+                end
+                if is_dirty(child) then
+                    return true
+                end
+            end
+        end
+        k, child = next(t, k)
+    end
+    return false
+end
+
+-- Encode a LazyObject with patches by splicing the original buffer.
+-- This is the fast path for "decode -> modify few fields -> encode".
+local function encode_with_patches(t)
+    local buf = t._doc._hold
+    local patches = rawget(t, "_patches") or {}
+    local deleted = rawget(t, "_deleted") or {}
+
+    -- Build a set of patched keys for quick lookup
+    local patched_keys = {}
+    for _, p in ipairs(patches) do
+        patched_keys[p.key] = p
+    end
+
+    -- Collect replacements: { {start, end_, value}, ... }
+    local replacements = {}
+
+    -- For each patch, find the field's byte range in the original buffer
+    for _, p in ipairs(patches) do
+        local rc = C.qjson_cursor_field_bytes(t._cur, p.key, #p.key, sz_a, sz_b)
+        if rc == QJSON_OK then
+            -- Existing field: replace value
+            replacements[#replacements + 1] = {
+                start = tonumber(sz_a[0]),
+                end_ = tonumber(sz_b[0]),
+                value = p.encoded_value,
+            }
+        end
+        -- If NOT_FOUND, it's a new field - handled separately below
+    end
+
+    -- Collect deleted field spans (we need to find the full field span including key)
+    -- For simplicity, we'll handle deletions by walking and skipping deleted keys
+    local has_deleted = false
+    for _ in pairs(deleted) do has_deleted = true; break end
+
+    -- If we have deletions or new fields, fall back to walking
+    -- (splicing deletions is complex due to comma handling)
+    local new_fields = {}
+    for _, p in ipairs(patches) do
+        local rc = C.qjson_cursor_field_bytes(t._cur, p.key, #p.key, sz_a, sz_b)
+        if rc == QJSON_NOT_FOUND then
+            new_fields[#new_fields + 1] = p
+        end
+    end
+
+    if has_deleted or #new_fields > 0 then
+        -- Fall back to walking for complex cases
+        return encode_lazy_object_walking_with_patches(t, patches, deleted)
+    end
+
+    -- Sort replacements by start offset
+    table.sort(replacements, function(a, b) return a.start < b.start end)
+
+    -- Build output by splicing
+    local parts = {}
+    local pos = t._bs + 1  -- 1-based Lua index
+
+    for _, r in ipairs(replacements) do
+        -- Copy unchanged portion (convert 0-based to 1-based)
+        local r_start_1based = r.start + 1
+        if r_start_1based > pos then
+            parts[#parts + 1] = buf:sub(pos, r_start_1based - 1)
+        end
+        -- Insert replacement
+        parts[#parts + 1] = r.value
+        pos = r.end_ + 1  -- end_ is exclusive, so +1 for 1-based
+    end
+
+    -- Copy remaining portion
+    if pos <= t._be then
+        parts[#parts + 1] = buf:sub(pos, t._be)
+    end
+
+    return table.concat(parts)
+end
+
+-- Walk a LazyObject with patches, handling deletions and new fields
+local function encode_lazy_object_walking_with_patches(t, patches, deleted)
+    local parts = {}
+
+    -- Build a set of patched keys for quick lookup
+    local patched_keys = {}
+    for _, p in ipairs(patches) do
+        patched_keys[p.key] = p
+    end
+
+    -- Walk original fields
+    local i = 0
+    while true do
+        local rc = C.qjson_cursor_object_entry_at(t._cur, i, strp_box, size_box, child_box)
+        if rc == QJSON_NOT_FOUND then break end
+        check(rc)
+        local k = ffi.string(strp_box[0], size_box[0])
+
+        -- Skip deleted keys
+        if not deleted[k] then
+            local v
+            local patch = patched_keys[k]
+            if patch then
+                -- Use patched value (already encoded)
+                parts[#parts + 1] = encode_string(k) .. ":" .. patch.encoded_value
+            else
+                -- Use original or cached value
+                local cached = rawget(t, k)
+                if cached ~= nil and not INTERNAL_KEYS[k] then
+                    v = cached
+                else
+                    v = decode_cursor(t, child_box)
+                end
+                parts[#parts + 1] = encode_string(k) .. ":" .. encode(v)
+            end
+        end
+        i = i + 1
+    end
+
+    -- Add new fields (patches for keys not in original)
+    for _, p in ipairs(patches) do
+        local rc = C.qjson_cursor_field_bytes(t._cur, p.key, #p.key, sz_a, sz_b)
+        if rc == QJSON_NOT_FOUND then
+            parts[#parts + 1] = encode_string(p.key) .. ":" .. p.encoded_value
+        end
+    end
+
+    return "{" .. table.concat(parts, ",") .. "}"
+end
+
 local function encode_proxy(t)
-    if not is_dirty(t) then
-        -- Fast path: no mutations — slice the original buffer bytes.
+    local patches = rawget(t, "_patches")
+    local deleted = rawget(t, "_deleted")
+
+    -- Check if we have patches or deletions
+    local has_patch = patches and #patches > 0
+    local has_del = false
+    if deleted then
+        for _ in pairs(deleted) do has_del = true; break end
+    end
+
+    -- Fast path: no mutations at all — slice the original buffer bytes.
+    if not has_patch and not has_del and not has_dirty_children(t) then
         return t._doc._hold:sub(t._bs + 1, t._be)
     end
+
+    -- Has patches: use splice encoding for objects
     if getmetatable(t) == LazyObject then
-        return encode_lazy_object_walking(t)
+        if has_patch and not has_dirty_children(t) then
+            return encode_with_patches(t)
+        end
+        return encode_lazy_object_walking_with_patches(t, patches or {}, deleted or {})
     end
+
     return encode_lazy_array_walking(t)
 end
 

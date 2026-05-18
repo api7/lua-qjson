@@ -806,6 +806,68 @@ pub unsafe extern "C" fn qjson_cursor_object_entry_at(
     })
 }
 
+/// Given an object cursor and a key, write the byte range `[value_start, value_end)`
+/// of the field's value in the original buffer. Returns `QJSON_NOT_FOUND` if the
+/// key does not exist, `QJSON_TYPE_MISMATCH` if the cursor is not an object.
+///
+/// # Safety
+///
+/// See the module-level [shared safety contract](self#shared-safety-contract).
+/// `c` must point to a cursor produced by an earlier `qjson_*` call whose
+/// document is still alive; `key` must point to `key_len` bytes or be NULL
+/// with `key_len == 0`; `value_start` and `value_end` must be non-NULL and
+/// writable.
+#[no_mangle]
+pub unsafe extern "C" fn qjson_cursor_field_bytes(
+    c: *const qjson_cursor,
+    key: *const c_char, key_len: usize,
+    value_start: *mut usize, value_end: *mut usize,
+) -> c_int {
+    ffi_catch!({
+        if value_start.is_null() || value_end.is_null() || (key.is_null() && key_len != 0) {
+            return qjson_err::QJSON_INVALID_ARG as c_int;
+        }
+        let (d, cur) = match cursor_to_internal(c) {
+            Ok(x) => x, Err(e) => return e as c_int,
+        };
+        let k = if key.is_null() { &[][..] } else {
+            std::slice::from_raw_parts(key as *const u8, key_len)
+        };
+        // Resolve the field to get a child cursor
+        let child = match crate::cursor::resolve_single_key(d, cur, k) {
+            Ok(x) => x, Err(e) => return e as c_int,
+        };
+        // Get the byte range of the child value
+        let pos = d.indices[child.idx_start as usize] as usize;
+        let lead = match d.buf.get(pos) {
+            Some(b) => *b,
+            None => return qjson_err::QJSON_PARSE_ERROR as c_int,
+        };
+        match lead {
+            b'{' | b'[' | b'"' => {
+                // Container or string: span runs from opener to the matching
+                // closer, inclusive.
+                let end = d.indices[child.idx_end as usize] as usize;
+                if end >= d.buf.len() {
+                    return qjson_err::QJSON_PARSE_ERROR as c_int;
+                }
+                *value_start = pos;
+                *value_end = end + 1;
+                qjson_err::QJSON_OK as c_int
+            }
+            _ => {
+                // Scalar: delegate to scalar_byte_range.
+                let (s, e) = match scalar_byte_range(d, child) {
+                    Ok(x) => x, Err(e) => return e as c_int,
+                };
+                *value_start = s;
+                *value_end = e;
+                qjson_err::QJSON_OK as c_int
+            }
+        }
+    })
+}
+
 /// Test-only export that forces a Rust panic to verify the FFI panic barrier
 /// converts it to `QJSON_OOM` instead of unwinding across the boundary.
 ///
