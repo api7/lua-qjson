@@ -138,4 +138,4 @@ jobs:
           eval "$(luarocks path --tree /tmp/lua-qjson-rock)"
           unset LD_LIBRARY_PATH
           unset DYLD_LIBRARY_PATH
-          luajit -e 'local qjson = require("qjson"); local doc = qjson.parse("{\"a\":42}"); assert(doc:get_i64("a") == 42)'
+          lua -e 'assert(jit, "LuaJIT required"); local qjson = require("qjson"); local doc = qjson.parse("{\"a\":42}"); assert(doc:get_i64("a") == 42)'
