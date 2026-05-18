@@ -1,5 +1,6 @@
 package = "lua-qjson"
 version = "0.1.0-1"
+supported_platforms = { "linux", "macosx" }
 
 source = {
     url = "git+https://github.com/api7/lua-qjson.git",
@@ -18,7 +19,7 @@ description = {
 }
 
 dependencies = {
-    "lua >= 5.1",
+    "lua == 5.1",
 }
 
 build = {

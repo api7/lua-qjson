@@ -22,7 +22,8 @@ luarocks install lua-qjson
 ```
 
 The rock builds the Rust native library during installation, so Rust/Cargo
-must be available on the target system. The Lua module name remains `qjson`:
+and LuaJIT must be available on the target system. The Lua module name remains
+`qjson`:
 
 ```lua
 local qjson = require("qjson")
