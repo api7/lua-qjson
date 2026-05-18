@@ -92,3 +92,12 @@ jobs:
           LD_LIBRARY_PATH="$PWD/target/release" \
             busted --lua=$(which luajit) tests/lua \
               --lpath='./lua/?.lua'
+
+      - name: Validate LuaRocks package
+        run: |
+          rm -rf /tmp/lua-qjson-rock
+          luarocks make rockspec/lua-qjson-0.1.0-1.rockspec --tree /tmp/lua-qjson-rock
+          eval "$(luarocks path --tree /tmp/lua-qjson-rock)"
+          unset LD_LIBRARY_PATH
+          luajit -e 'local qjson = require("qjson"); local doc = qjson.parse("{\"a\":42}"); assert(doc:get_i64("a") == 42)'
+          busted --lua=$(which luajit) tests/lua
