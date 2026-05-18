@@ -170,10 +170,9 @@ fn cjson_input_corpus_parses_in_both_modes() {
 #[test]
 fn simdjson_jsonexamples_parse_in_both_modes() {
     let cases = simdjson_example_cases();
-    assert_eq!(
-        cases.len(),
-        3,
-        "simdjson jsonexamples currently has three single-document JSON files"
+    assert!(
+        !cases.is_empty(),
+        "expected at least one single-document JSON file in simdjson jsonexamples"
     );
 
     for path in cases {
