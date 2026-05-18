@@ -77,5 +77,10 @@ jobs:
       - name: Upload to LuaRocks
         env:
           LUAROCKS_TOKEN: ${{ secrets.LUAROCKS_TOKEN }}
+        shell: bash
         run: |
-          luarocks upload "${{ steps.verify_rockspec.outputs.rockspec_file }}" --api-key="${LUAROCKS_TOKEN}"
+          mkdir -p "$HOME/.luarocks"
+          chmod 700 "$HOME/.luarocks"
+          lua -e 'local token = assert(os.getenv("LUAROCKS_TOKEN"), "missing LUAROCKS_TOKEN"); local f = assert(io.open(os.getenv("HOME") .. "/.luarocks/upload_config.lua", "w")); f:write(("key = %q\n"):format(token)); f:write("server = \"https://luarocks.org\"\nversion = \"1.0\"\n"); f:close()'
+          chmod 600 "$HOME/.luarocks/upload_config.lua"
+          luarocks upload "${{ steps.verify_rockspec.outputs.rockspec_file }}"
