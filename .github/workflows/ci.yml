@@ -96,7 +96,8 @@ jobs:
       - name: Validate LuaRocks package
         run: |
           rm -rf /tmp/lua-qjson-rock
-          luarocks make rockspec/lua-qjson-0.1.0-1.rockspec --tree /tmp/lua-qjson-rock
+          ROCKSPEC="$(ls -1 rockspec/lua-qjson-*-1.rockspec | sort -V | tail -n1)"
+          luarocks make "$ROCKSPEC" --tree /tmp/lua-qjson-rock
           eval "$(luarocks path --tree /tmp/lua-qjson-rock)"
           unset LD_LIBRARY_PATH
           luajit -e 'local qjson = require("qjson"); local doc = qjson.parse("{\"a\":42}"); assert(doc:get_i64("a") == 42)'
