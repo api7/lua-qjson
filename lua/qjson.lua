@@ -1,48 +1,5 @@
 local ffi = require("ffi")
 
-ffi.cdef[[
-typedef struct qjson_doc qjson_doc;
-typedef struct {
-    const qjson_doc* doc;
-    uint32_t idx_start, idx_end, _reserved0, _reserved1;
-} qjson_cursor;
-
-typedef struct {
-    uint32_t mode;
-    uint32_t max_depth;
-} qjson_options;
-
-const char* qjson_strerror(int code);
-qjson_doc* qjson_parse   (const uint8_t* buf, size_t len, int* err_out);
-qjson_doc* qjson_parse_ex(const uint8_t* buf, size_t len,
-                       const qjson_options* opts, int* err_out);
-void     qjson_free    (qjson_doc* doc);
-
-int qjson_get_str (qjson_doc*, const char* path, size_t path_len, const uint8_t** p, size_t* n);
-int qjson_get_i64 (qjson_doc*, const char* path, size_t path_len, int64_t* out);
-int qjson_get_f64 (qjson_doc*, const char* path, size_t path_len, double*  out);
-int qjson_get_bool(qjson_doc*, const char* path, size_t path_len, int*     out);
-int qjson_is_null (qjson_doc*, const char* path, size_t path_len, int*     out);
-int qjson_typeof  (qjson_doc*, const char* path, size_t path_len, int*     out);
-int qjson_len     (qjson_doc*, const char* path, size_t path_len, size_t*  out);
-
-int qjson_open        (qjson_doc*, const char* path, size_t path_len, qjson_cursor* out);
-int qjson_cursor_open (const qjson_cursor*, const char* path, size_t path_len, qjson_cursor* out);
-int qjson_cursor_field(const qjson_cursor*, const char* key,  size_t key_len, qjson_cursor* out);
-int qjson_cursor_index(const qjson_cursor*, size_t i, qjson_cursor* out);
-
-int qjson_cursor_get_str (const qjson_cursor*, const char*, size_t, const uint8_t**, size_t*);
-int qjson_cursor_get_i64 (const qjson_cursor*, const char*, size_t, int64_t*);
-int qjson_cursor_get_f64 (const qjson_cursor*, const char*, size_t, double*);
-int qjson_cursor_get_bool(const qjson_cursor*, const char*, size_t, int*);
-int qjson_cursor_typeof  (const qjson_cursor*, const char*, size_t, int*);
-int qjson_cursor_len     (const qjson_cursor*, const char*, size_t, size_t*);
-int qjson_cursor_bytes(const qjson_cursor*, size_t* byte_start, size_t* byte_end);
-int qjson_cursor_object_entry_at(const qjson_cursor*, size_t i,
-                                const uint8_t** key_ptr, size_t* key_len,
-                                qjson_cursor* value_out);
-]]
-
 local C = require("qjson.lib")
 
 local err_box  = ffi.new("int[1]")

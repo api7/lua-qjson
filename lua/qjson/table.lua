@@ -1,8 +1,4 @@
 -- Lazy table view + cjson-compatible encoder for qjson.
---
--- This module relies on the FFI cdef set up by `lua/qjson.lua`, so
--- callers must `require("qjson")` (transitively or directly) before
--- they require this module.
 
 local ffi = require("ffi")
 local C   = require("qjson.lib")

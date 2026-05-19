@@ -101,12 +101,23 @@ jobs:
           from pathlib import Path
 
           pattern = re.compile(r"^lua-qjson-(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?-(\d+)\.rockspec$")
+          def prerelease_key(value):
+              if value is None:
+                  return ()
+              key = []
+              for part in value.split("."):
+                  if part.isdigit():
+                      key.append((0, int(part)))
+                  else:
+                      key.append((1, part))
+              return tuple(key)
+
           matches = []
           for path in Path("rockspec").glob("lua-qjson-*.rockspec"):
               match = pattern.match(path.name)
               if match:
                   major, minor, patch, prerelease, revision = match.groups()
-                  matches.append((int(major), int(minor), int(patch), prerelease is None, prerelease or "", int(revision), str(path)))
+                  matches.append((int(major), int(minor), int(patch), prerelease is None, prerelease_key(prerelease), int(revision), str(path)))
           if not matches:
               raise SystemExit("no lua-qjson rockspec found")
           print(max(matches)[-1])
@@ -153,12 +164,23 @@ jobs:
           from pathlib import Path
 
           pattern = re.compile(r"^lua-qjson-(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?-(\d+)\.rockspec$")
+          def prerelease_key(value):
+              if value is None:
+                  return ()
+              key = []
+              for part in value.split("."):
+                  if part.isdigit():
+                      key.append((0, int(part)))
+                  else:
+                      key.append((1, part))
+              return tuple(key)
+
           matches = []
           for path in Path("rockspec").glob("lua-qjson-*.rockspec"):
               match = pattern.match(path.name)
               if match:
                   major, minor, patch, prerelease, revision = match.groups()
-                  matches.append((int(major), int(minor), int(patch), prerelease is None, prerelease or "", int(revision), str(path)))
+                  matches.append((int(major), int(minor), int(patch), prerelease is None, prerelease_key(prerelease), int(revision), str(path)))
           if not matches:
               raise SystemExit("no lua-qjson rockspec found")
           print(max(matches)[-1])

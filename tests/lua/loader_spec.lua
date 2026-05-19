@@ -6,6 +6,7 @@ describe("qjson native loader", function()
 
         package.loaded["qjson.lib"] = nil
         package.loaded.ffi = {
+            cdef = function() end,
             load = function(name)
                 error("mock load failure for " .. name)
             end,
@@ -39,6 +40,7 @@ describe("qjson native loader", function()
 
         package.loaded["qjson.lib"] = nil
         package.loaded.ffi = {
+            cdef = function() end,
             load = function(name)
                 if name == "qjson" then
                     return {}
