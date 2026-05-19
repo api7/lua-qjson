@@ -92,3 +92,102 @@ jobs:
           LD_LIBRARY_PATH="$PWD/target/release" \
             busted --lua=$(which luajit) tests/lua \
               --lpath='./lua/?.lua'
+
+      - name: Validate LuaRocks package
+        run: |
+          rm -rf /tmp/lua-qjson-rock
+          ROCKSPEC="$(python3 - <<'PY'
+          import re
+          from pathlib import Path
+
+          pattern = re.compile(r"^lua-qjson-(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?-(\d+)\.rockspec$")
+          def prerelease_key(value):
+              if value is None:
+                  return ()
+              key = []
+              for part in value.split("."):
+                  if part.isdigit():
+                      key.append((0, int(part)))
+                  else:
+                      key.append((1, part))
+              return tuple(key)
+
+          matches = []
+          for path in Path("rockspec").glob("lua-qjson-*.rockspec"):
+              match = pattern.match(path.name)
+              if match:
+                  major, minor, patch, prerelease, revision = match.groups()
+                  matches.append((int(major), int(minor), int(patch), prerelease is None, prerelease_key(prerelease), int(revision), str(path)))
+          if not matches:
+              raise SystemExit("no lua-qjson rockspec found")
+          print(max(matches)[-1])
+          PY
+          )"
+          luarocks make "$ROCKSPEC" --tree /tmp/lua-qjson-rock
+          eval "$(luarocks path --tree /tmp/lua-qjson-rock)"
+          unset LD_LIBRARY_PATH
+          luajit -e 'local qjson = require("qjson"); local doc = qjson.parse("{\"a\":42}"); assert(doc:get_i64("a") == 42)'
+          busted --lua=$(which luajit) tests/lua
+
+  package:
+    name: LuaRocks package (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    needs: rust
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-14]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Rust (stable)
+        run: |
+          rustup toolchain install stable --profile minimal --no-self-update
+          rustup default stable
+
+      - name: Install LuaJIT
+        uses: leafo/gh-actions-lua@v13
+        with:
+          luaVersion: "luajit-2.1.0-beta3"
+
+      - name: Install LuaRocks
+        uses: leafo/gh-actions-luarocks@v4
+        with:
+          luarocksVersion: "3.11.1"
+
+      - name: Validate LuaRocks package
+        run: |
+          rm -rf /tmp/lua-qjson-rock
+          ROCKSPEC="$(python3 - <<'PY'
+          import re
+          from pathlib import Path
+
+          pattern = re.compile(r"^lua-qjson-(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?-(\d+)\.rockspec$")
+          def prerelease_key(value):
+              if value is None:
+                  return ()
+              key = []
+              for part in value.split("."):
+                  if part.isdigit():
+                      key.append((0, int(part)))
+                  else:
+                      key.append((1, part))
+              return tuple(key)
+
+          matches = []
+          for path in Path("rockspec").glob("lua-qjson-*.rockspec"):
+              match = pattern.match(path.name)
+              if match:
+                  major, minor, patch, prerelease, revision = match.groups()
+                  matches.append((int(major), int(minor), int(patch), prerelease is None, prerelease_key(prerelease), int(revision), str(path)))
+          if not matches:
+              raise SystemExit("no lua-qjson rockspec found")
+          print(max(matches)[-1])
+          PY
+          )"
+          luarocks make "$ROCKSPEC" --tree /tmp/lua-qjson-rock
+          eval "$(luarocks path --tree /tmp/lua-qjson-rock)"
+          unset LD_LIBRARY_PATH
+          unset DYLD_LIBRARY_PATH
+          lua -e 'assert(jit, "LuaJIT required"); local qjson = require("qjson"); local doc = qjson.parse("{\"a\":42}"); assert(doc:get_i64("a") == 42)'
