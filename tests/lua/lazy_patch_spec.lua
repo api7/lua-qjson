@@ -127,10 +127,23 @@ describe("Lazy Patch - type changes", function()
         assert.are.equal(10, parsed.a.x)
     end)
 
+    it("mutation of patch value after assignment is reflected in encode", function()
+        -- Regression: encoded_value was cached at assignment time; mutations to
+        -- the patched table were invisible to encode because it used the stale
+        -- encoded_value instead of re-encoding lua_value at emit time.
+        local t = qjson.decode('{"a":1}')
+        t.a = {x = 1}       -- records patch; lua_value is the table {x=1}
+        t.a.x = 2           -- mutates the table in lua_value; must show up in encode
+        local out = qjson.encode(t)
+        local cjson = require("cjson")
+        local parsed = cjson.decode(out)
+        assert.are.equal(2, parsed.a.x)
+    end)
+
     it("changes scalar to array", function()
         local t = qjson.decode('{"a":1}')
         t.a = {10, 20, 30}
-        local out = qjson.encode(t)
+
         local cjson = require("cjson")
         local parsed = cjson.decode(out)
         assert.are.same({10, 20, 30}, parsed.a)

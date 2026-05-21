@@ -344,21 +344,18 @@ LazyObject.__newindex = function(t, k, v)
             end
         end
     else
-        -- Encode the new value (we need both encoded and lua_value)
-        local encoded = encode(v)
-
-        -- Update or add patch
+        -- Update or add patch (re-encode lua_value at emit time for correctness
+        -- against mutable post-assignment mutations like t.a = {}; t.a.x = 1).
         local found = false
         for _, p in ipairs(patches) do
             if p.key == k then
-                p.encoded_value = encoded
                 p.lua_value = v
                 found = true
                 break
             end
         end
         if not found then
-            patches[#patches + 1] = { key = k, encoded_value = encoded, lua_value = v }
+            patches[#patches + 1] = { key = k, lua_value = v }
         end
 
         -- Remove from deleted if previously deleted
@@ -602,8 +599,8 @@ local function encode_lazy_object_walking_with_patches(t, patches, deleted)
             local v
             local patch = patched_keys[k]
             if patch then
-                -- Use patched value (already encoded)
-                parts[#parts + 1] = encode_string(k) .. ":" .. patch.encoded_value
+                -- Re-encode at emit time so mutations after assignment are reflected.
+                parts[#parts + 1] = encode_string(k) .. ":" .. encode(patch.lua_value)
             else
                 -- Use original or cached value
                 local cached = rawget(t, k)
@@ -622,7 +619,7 @@ local function encode_lazy_object_walking_with_patches(t, patches, deleted)
     for _, p in ipairs(patches) do
         local rc = C.qjson_cursor_field_bytes(t._cur, p.key, #p.key, sz_a, sz_b)
         if rc == QJSON_NOT_FOUND then
-            parts[#parts + 1] = encode_string(p.key) .. ":" .. p.encoded_value
+            parts[#parts + 1] = encode_string(p.key) .. ":" .. encode(p.lua_value)
         elseif rc ~= QJSON_OK then
             check(rc)  -- propagate unexpected errors
         end
@@ -649,7 +646,7 @@ local function encode_with_patches(t)
             replacements[#replacements + 1] = {
                 start = tonumber(sz_a[0]),
                 end_ = tonumber(sz_b[0]),
-                value = p.encoded_value,
+                value = encode(p.lua_value),  -- re-encode at emit time
             }
         elseif rc == QJSON_NOT_FOUND then
             has_new_field = true
