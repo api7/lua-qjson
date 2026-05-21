@@ -38,6 +38,9 @@ int qjson_cursor_get_bool(const qjson_cursor*, const char*, size_t, int*);
 int qjson_cursor_typeof  (const qjson_cursor*, const char*, size_t, int*);
 int qjson_cursor_len     (const qjson_cursor*, const char*, size_t, size_t*);
 int qjson_cursor_bytes(const qjson_cursor*, size_t* byte_start, size_t* byte_end);
+int qjson_cursor_field_bytes(const qjson_cursor*, const char* key, size_t key_len,
+                             qjson_cursor* value_out,
+                             size_t* value_bs, size_t* value_be);
 int qjson_cursor_object_entry_at(const qjson_cursor*, size_t i,
                                 const uint8_t** key_ptr, size_t* key_len,
                                 qjson_cursor* value_out);
@@ -69,6 +72,7 @@ local required_symbols = {
     "qjson_cursor_typeof",
     "qjson_cursor_len",
     "qjson_cursor_bytes",
+    "qjson_cursor_field_bytes",
     "qjson_cursor_object_entry_at",
 }
 

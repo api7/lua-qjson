@@ -760,6 +760,78 @@ pub unsafe extern "C" fn qjson_cursor_bytes(
     })
 }
 
+/// Fused field lookup + byte-range query — equivalent to calling
+/// [`qjson_cursor_field`] followed by [`qjson_cursor_bytes`], saving one
+/// FFI crossing on the patch-write hot path.
+///
+/// Looks up `key` in the object at `*c`. On success writes the value's
+/// syntactic byte range `[*value_bs, *value_be)` into the input buffer and,
+/// when `value_out` is non-NULL, the resolved value cursor.
+///
+/// Returns `QJSON_NOT_FOUND` when the key is absent, `QJSON_TYPE_MISMATCH`
+/// when the cursor is not an object, and other `qjson_err` codes from the
+/// underlying calls unchanged. `value_bs` / `value_be` are only required
+/// to be valid on `QJSON_OK`.
+///
+/// # Safety
+///
+/// See the module-level [shared safety contract](self#shared-safety-contract).
+/// `c` must point to a cursor produced by an earlier `qjson_*` call whose
+/// document is still alive; `key` must point to `key_len` bytes or be NULL
+/// with `key_len == 0`; `value_bs` and `value_be` must be non-NULL and
+/// writable. `value_out` may be NULL — when non-NULL it must be writable.
+#[no_mangle]
+pub unsafe extern "C" fn qjson_cursor_field_bytes(
+    c: *const qjson_cursor,
+    key: *const c_char,
+    key_len: usize,
+    value_out: *mut qjson_cursor,
+    value_bs: *mut usize,
+    value_be: *mut usize,
+) -> c_int {
+    ffi_catch!({
+        if value_bs.is_null() || value_be.is_null() || (key.is_null() && key_len != 0) {
+            return qjson_err::QJSON_INVALID_ARG as c_int;
+        }
+        let (d, cur) = match cursor_to_internal(c) {
+            Ok(x) => x, Err(e) => return e as c_int,
+        };
+        let k = if key.is_null() {
+            &[][..]
+        } else {
+            std::slice::from_raw_parts(key as *const u8, key_len)
+        };
+        let child = match crate::cursor::resolve_single_key(d, cur, k) {
+            Ok(x) => x, Err(e) => return e as c_int,
+        };
+        // Compute the syntactic byte span — same logic as qjson_cursor_bytes.
+        let pos = d.indices[child.idx_start as usize] as usize;
+        let lead = match d.buf.get(pos) {
+            Some(b) => *b,
+            None => return qjson_err::QJSON_PARSE_ERROR as c_int,
+        };
+        let (bs, be) = match lead {
+            b'{' | b'[' | b'"' => {
+                let end = d.indices[child.idx_end as usize] as usize;
+                if end >= d.buf.len() {
+                    return qjson_err::QJSON_PARSE_ERROR as c_int;
+                }
+                (pos, end + 1)
+            }
+            _ => match scalar_byte_range(d, child) {
+                Ok(x) => x,
+                Err(e) => return e as c_int,
+            },
+        };
+        *value_bs = bs;
+        *value_be = be;
+        if !value_out.is_null() {
+            *value_out = internal_to_cursor((*c).doc, child);
+        }
+        qjson_err::QJSON_OK as c_int
+    })
+}
+
 /// Write the i-th object entry's key (decoded into the doc's scratch
 /// buffer) and value cursor into the out parameters.
 ///

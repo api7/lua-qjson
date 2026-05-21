@@ -1,4 +1,3 @@
-#[cfg(all(target_arch = "x86_64", feature = "avx2"))]
 use proptest::prelude::*;
 
 #[cfg(all(target_arch = "x86_64", feature = "avx2"))]
@@ -57,10 +56,78 @@ fn valid_jsonish() -> impl Strategy<Value = String> {
 #[cfg(not(all(target_arch = "x86_64", feature = "avx2")))]
 #[test] fn skip_avx2() {}
 
-// ── NEON cross-check ──────────────────────────────────────────────────────────
+// ── FFI cross-check: qjson_cursor_field_bytes ─────────────────────────────────
+//
+// The above proptest already guarantees ScalarScanner and Avx2Scanner emit
+// bit-identical indices for any input both accept. Since `qjson_cursor_field_bytes`
+// reads only `doc.buf` and `doc.indices`, identical indices ⇒ identical FFI
+// output. CI gates "cargo test --release" (default features, AVX2-on-x86)
+// and "cargo test --release --no-default-features" (scalar) exercise both
+// dispatch paths against the same proptest, so any backend drift surfaces
+// as a failure on one but not the other.
 
-#[cfg(target_arch = "aarch64")]
-use proptest::prelude::*;
+use qjson::ffi::{
+    qjson_cursor, qjson_cursor_field_bytes, qjson_free, qjson_open, qjson_parse,
+};
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(512))]
+
+    #[test]
+    fn cursor_field_bytes_matches_source_span(
+        kvs in proptest::collection::vec(
+            ("[a-z]{1,4}", -100i64..100i64),
+            1..6usize,
+        ),
+    ) {
+        // Build a small valid JSON object {"k1":n1,"k2":n2,...}. Duplicate
+        // keys collapse to the first occurrence in our expectation map below
+        // (matches qjson_cursor_field_bytes semantics).
+        let mut json = String::from("{");
+        let mut expected: Vec<(String, String)> = Vec::new();
+        let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+        for (i, (k, v)) in kvs.iter().enumerate() {
+            if i > 0 { json.push(','); }
+            json.push('"'); json.push_str(k); json.push_str("\":");
+            let vs = v.to_string();
+            json.push_str(&vs);
+            if seen.insert(k.clone()) {
+                expected.push((k.clone(), vs));
+            }
+        }
+        json.push('}');
+
+        unsafe {
+            let mut err: std::os::raw::c_int = -1;
+            let doc = qjson_parse(json.as_ptr(), json.len(), &mut err);
+            prop_assert!(!doc.is_null());
+
+            let mut root: qjson_cursor = std::mem::zeroed();
+            let rc = qjson_open(doc, std::ptr::null(), 0, &mut root);
+            prop_assert_eq!(rc, 0);
+
+            for (k, want) in &expected {
+                let mut child: qjson_cursor = std::mem::zeroed();
+                let mut bs: usize = 0;
+                let mut be: usize = 0;
+                let rc = qjson_cursor_field_bytes(
+                    &root,
+                    k.as_ptr() as *const i8,
+                    k.len(),
+                    &mut child,
+                    &mut bs,
+                    &mut be,
+                );
+                prop_assert_eq!(rc, 0, "lookup of {:?} in {:?} failed rc={}", k, json, rc);
+                prop_assert_eq!(&json.as_bytes()[bs..be], want.as_bytes());
+            }
+
+            qjson_free(doc);
+        }
+    }
+}
+
+// ── NEON cross-check ──────────────────────────────────────────────────────────
 
 #[cfg(target_arch = "aarch64")]
 use qjson::__test_api::{Scanner, ScalarScanner, NeonScanner};
