@@ -239,11 +239,25 @@ local function github_table_access(t)
     local _ = t[1] and t[1].user and t[1].user.login
 end
 
+-- Mutate 5 shallow scalar fields on the first issue. All target keys
+-- already exist in the source JSON, so __newindex records patch entries
+-- and qjson.encode goes through the splice fast path.
+local function github_modify_5_scalars(t)
+    local issue = t[1]
+    if not issue then return end
+    issue.id      = 1234567
+    issue.number  = 9999
+    issue.comments = 42
+    issue.state   = "closed"
+    issue.locked  = true
+end
+
 local scenarios = {
     {name = "small",  iters = 5000, payload = read_file("benches/fixtures/small_api.json")},
     {name = "medium", iters = 500,  payload = read_file("benches/fixtures/medium_resp.json")},
     {name = "github-100k", iters = 100, payload = make_github_issues_payload(100 * 1024),
-     cjson_access = github_cjson_access, qjson_access = github_qjson_access, table_access = github_table_access},
+     cjson_access = github_cjson_access, qjson_access = github_qjson_access, table_access = github_table_access,
+     modify_scalars = github_modify_5_scalars},
     {name = "100k",   iters = 100,  payload = make_payload(100 * 1024)},
     {name = "200k",   iters = 50,   payload = make_payload(200 * 1024)},
     {name = "500k",   iters = 20,   payload = make_payload(500 * 1024)},
@@ -309,6 +323,14 @@ for _, s in ipairs(scenarios) do
         local t = qjson.decode(s.payload)
         local _ = qjson.encode(t)
     end)
+
+    if s.modify_scalars then
+        bench("qjson.decode + modify-5-scalars + qjson.encode", s.iters, function()
+            local t = qjson.decode(s.payload)
+            s.modify_scalars(t)
+            local _ = qjson.encode(t)
+        end)
+    end
 end
 
 -- Interleaved scenario: cycle through several payloads of different sizes
