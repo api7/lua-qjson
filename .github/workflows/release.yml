@@ -1,0 +1,131 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version, for example 0.1.0 or v0.1.0"
+        required: true
+  push:
+    branches:
+      - "main"
+    paths:
+      - "rockspec/**"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Install Lua
+        uses: leafo/gh-actions-lua@v10
+        with:
+          luaVersion: "5.1.5"
+
+      - name: Install LuaRocks
+        uses: leafo/gh-actions-luarocks@v4
+        with:
+          luarocksVersion: "3.11.1"
+
+      - name: Install upload dependency
+        run: luarocks install dkjson
+
+      - name: Extract release name
+        id: release_env
+        shell: bash
+        env:
+          HEAD_COMMIT_MESSAGE: ${{ github.event.head_commit.message }}
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: |
+          semver_re="^v?([0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?)$"
+          if [ -n "$RELEASE_VERSION" ]; then
+              if [[ $RELEASE_VERSION =~ $semver_re ]]; then
+                  version="${BASH_REMATCH[1]}"
+              else
+                  echo "version input is not correct (expected: X.Y.Z[-prerelease])"
+                  exit 1
+              fi
+          else
+              title="${HEAD_COMMIT_MESSAGE%%$'\n'*}"
+              if [[ $title =~ ^(.*)\ \(#[0-9]+\)$ ]]; then
+                  title="${BASH_REMATCH[1]}"
+              fi
+              title_re="^feat: release v?([0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?)$"
+              if [[ $title =~ $title_re ]]; then
+                  version="${BASH_REMATCH[1]}"
+              else
+                  echo "commit format is not correct (expected: feat: release vX.Y.Z[-prerelease])"
+                  exit 1
+              fi
+          fi
+
+          echo "version=v${version}" >> $GITHUB_OUTPUT
+          echo "version_without_v=${version}" >> $GITHUB_OUTPUT
+          if [[ $version == *-* ]]; then
+              echo "is_prerelease=true" >> $GITHUB_OUTPUT
+          else
+              echo "is_prerelease=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Verify rockspec exists
+        id: verify_rockspec
+        shell: bash
+        env:
+          VERSION_WITHOUT_V: ${{ steps.release_env.outputs.version_without_v }}
+        run: |
+          rockspec_file="$(python3 - <<'PY'
+          import os
+          import re
+          from pathlib import Path
+
+          version = os.environ["VERSION_WITHOUT_V"]
+          pattern = re.compile(r"^lua-qjson-" + re.escape(version) + r"-(\d+)\.rockspec$")
+          matches = []
+          for path in Path("rockspec").glob("lua-qjson-" + version + "-*.rockspec"):
+              match = pattern.match(path.name)
+              if match:
+                  matches.append((int(match.group(1)), str(path)))
+          if not matches:
+              raise SystemExit("rockspec file not found for version " + version)
+          print(max(matches)[1])
+          PY
+          )"
+          echo "rockspec_file=${rockspec_file}" >> $GITHUB_OUTPUT
+
+      - name: Validate LuaRocks token
+        shell: bash
+        env:
+          LUAROCKS_TOKEN: ${{ secrets.LUAROCKS_TOKEN }}
+        run: |
+          if [ -z "$LUAROCKS_TOKEN" ]; then
+              echo "LUAROCKS_TOKEN secret is not configured"
+              exit 1
+          fi
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.release_env.outputs.version }}
+          name: ${{ steps.release_env.outputs.version }}
+          draft: false
+          prerelease: ${{ steps.release_env.outputs.is_prerelease }}
+
+      - name: Upload to LuaRocks
+        env:
+          LUAROCKS_TOKEN: ${{ secrets.LUAROCKS_TOKEN }}
+          ROCKSPEC_FILE: ${{ steps.verify_rockspec.outputs.rockspec_file }}
+        shell: bash
+        run: |
+          mkdir -p "$HOME/.luarocks"
+          chmod 700 "$HOME/.luarocks"
+          lua -e 'local token = os.getenv("LUAROCKS_TOKEN"); assert(token and token ~= "", "missing LUAROCKS_TOKEN"); local f = assert(io.open(os.getenv("HOME") .. "/.luarocks/upload_config.lua", "w")); f:write(("key = %q\n"):format(token)); f:write("server = \"https://luarocks.org\"\nversion = \"1.0\"\n"); f:close()'
+          chmod 600 "$HOME/.luarocks/upload_config.lua"
+          luarocks upload "$ROCKSPEC_FILE"
