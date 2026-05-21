@@ -56,6 +56,12 @@ end
 local LazyObject = {}
 local LazyArray  = {}
 
+-- Reserved bookkeeping keys; rawget-cache and iteration checks skip these.
+local INTERNAL_KEYS = {
+    _doc = true, _cur_box = true, _cur = true, _bs = true, _be = true,
+    _patches = true,
+}
+
 -- Build a new lazy view for a child container cursor.
 -- src_box is an FFI cdata `qjson_cursor[1]`; src_box[0] is the cursor whose
 -- data we copy into a fresh per-view allocation so the new view's _cur
@@ -102,6 +108,12 @@ local function decode_cursor(parent_view, src_box)
     return nil
 end
 
+local function find_patch(patches, key)
+    for i = 1, #patches do
+        if patches[i].k == key then return patches[i] end
+    end
+end
+
 -- Resolve a child cursor at `key` (object) and decode it into a Lua value.
 -- Returns nil for missing keys (cjson semantics).
 -- Container results (lazy proxies) are rawset-cached into `self` so that
@@ -111,6 +123,11 @@ end
 -- raw table rather than creating a fresh proxy.
 local function read_object_field(self, key)
     if type(key) ~= "string" then return nil end
+    local patches = rawget(self, "_patches")
+    if patches ~= nil then
+        local hit = find_patch(patches, key)
+        if hit ~= nil then return hit.v end
+    end
     -- Use child_box so the lookup result does not alias self._cur (which is
     -- itself stored in root_box's backing memory in the decode caller).
     local rc = C.qjson_cursor_field(self._cur, key, #key, child_box)
@@ -153,7 +170,17 @@ local function lazy_object_iter(state, _prev_key)
     if rc == QJSON_NOT_FOUND then return nil end
     check(rc)
     local k = ffi.string(strp_box[0], size_box[0])
-    local v = decode_cursor(state.view, child_box)
+    local view = state.view
+    -- Prefer a raw-slot override (cached child proxy, or a scalar from a
+    -- direct raw-table overwrite that bypassed __newindex).
+    local cached = rawget(view, k)
+    local v = (cached ~= nil and not INTERNAL_KEYS[k]) and cached
+        or decode_cursor(view, child_box)
+    local patches = rawget(view, "_patches")
+    if patches ~= nil then
+        local hit = find_patch(patches, k)
+        if hit ~= nil then v = hit.v end
+    end
     return k, v
 end
 
@@ -247,20 +274,43 @@ local function materialize_array_contents(view)
     return out
 end
 
--- The set of keys reserved by the lazy view bookkeeping; user-supplied JSON
--- keys with these names would collide (minor, deferred). Centralized here so
--- the dirty check and __newindex can share the list.
-local INTERNAL_KEYS = {
-    _doc = true, _cur_box = true, _cur = true, _bs = true, _be = true,
-}
+-- Try to record a scalar patch on an existing key. Returns true if recorded.
+local function try_record_patch(t, k, v)
+    if type(k) ~= "string" then return false end
+    local is_scalar = rawequal(v, _M.null) or type(v) == "string"
+        or type(v) == "number" or type(v) == "boolean"
+    if not is_scalar then return false end
+    local rc = C.qjson_cursor_field_bytes(t._cur, k, #k, nil, sz_a, sz_b)
+    if rc == QJSON_NOT_FOUND then return false end
+    check(rc)
+    local patches = rawget(t, "_patches")
+    if patches == nil then patches = {}; rawset(t, "_patches", patches) end
+    local hit = find_patch(patches, k)
+    if hit ~= nil then
+        hit.v = v
+    else
+        patches[#patches + 1] = { k = k, v = v,
+            bs = tonumber(sz_a[0]), be = tonumber(sz_b[0]) }
+    end
+    rawset(t, k, nil)  -- drop cached child proxy so reads see the patch
+    return true
+end
 
--- On first write, walk all existing key/value pairs into a plain table,
--- strip the lazy metatable, then apply the new assignment. Any FFI error
--- during the walk leaves `t` in its original lazy state.
--- Existing rawget-cached entries (e.g. previously returned child proxies)
--- are preserved so callers' references remain valid.
+-- On write: first try the scalar-patch fast path. Otherwise materialize all
+-- existing key/value pairs (applying any pending patches), strip the lazy
+-- metatable, then apply the new assignment. FFI errors during the walk leave
+-- `t` in its original lazy state. Existing rawget-cached entries are
+-- preserved so callers' references remain valid.
 LazyObject.__newindex = function(t, k, v)
+    if try_record_patch(t, k, v) then return end
+    local patches = rawget(t, "_patches")
     local contents = materialize_object_contents(t)
+    if patches ~= nil then
+        for _, kv in ipairs(contents) do
+            local hit = find_patch(patches, kv[1])
+            if hit ~= nil then kv[2] = hit.v end
+        end
+    end
     -- Snapshot user-key cache BEFORE nilling internals.
     -- Use next() for raw iteration: pairs() invokes __pairs on lazy tables,
     -- walking the full JSON via FFI instead of the Lua-side rawget cache.
@@ -273,6 +323,7 @@ LazyObject.__newindex = function(t, k, v)
         ck, cv = next(t, ck)
     end
     t._doc, t._cur_box, t._cur, t._bs, t._be = nil, nil, nil, nil, nil
+    rawset(t, "_patches", nil)
     setmetatable(t, nil)
     for _, kv in ipairs(contents) do
         rawset(t, kv[1], cache[kv[1]] or kv[2])
@@ -347,8 +398,9 @@ local function materialize(v)
     local mt = (type(v) == "table") and getmetatable(v) or nil
     if mt == LazyObject then
         local out = {}
-        for _, kv in ipairs(materialize_object_contents(v)) do
-            out[kv[1]] = materialize(kv[2])
+        -- Iterate through __pairs so any recorded _patches substitute correctly.
+        for k, child in _M.pairs(v) do
+            out[k] = materialize(child)
         end
         return out
     elseif mt == LazyArray then
@@ -400,21 +452,38 @@ local function encode_number(n)
     return string_format("%.14g", n)
 end
 
--- A lazy subtree is "dirty" if any cached descendant has been materialized
--- (no longer carries Lazy* metatable). Non-cached descendants are guaranteed
--- untouched, so we only need to walk the rawget-cached entries.
+-- True if v is itself materialized, has its own scalar patches, or has any
+-- dirty descendant — i.e., a PARENT must walk to encode v. The top-level
+-- encode_proxy uses descendant_is_dirty so a view with only its own patches
+-- can still go through splice.
 local function is_dirty(v)
     if type(v) ~= "table" then return false end
     local mt = getmetatable(v)
     if mt ~= LazyObject and mt ~= LazyArray then
         return true  -- materialized
     end
+    if rawget(v, "_patches") ~= nil then return true end
     -- Use next() for raw table iteration: pairs() would invoke __pairs on
     -- lazy tables, walking the full JSON via FFI instead of the Lua cache.
     local k, child = next(v)
     while k ~= nil do
         if not INTERNAL_KEYS[k] then
             if is_dirty(child) then return true end
+        end
+        k, child = next(v, k)
+    end
+    return false
+end
+
+-- True if any cached descendant of v is dirty, OR a user-key raw slot holds
+-- a non-table value (indicating a direct raw overwrite that bypassed
+-- __newindex). v's own _patches does NOT count — splice handles those.
+local function descendant_is_dirty(v)
+    local k, child = next(v)
+    while k ~= nil do
+        if not INTERNAL_KEYS[k] then
+            if is_dirty(child) then return true end
+            if type(child) ~= "table" then return true end
         end
         k, child = next(v, k)
     end
@@ -429,8 +498,10 @@ local encode
 -- Walk a dirty LazyObject and emit JSON, preferring cached children (which
 -- may be materialized) over freshly resolved cursors. Non-cached children
 -- emit through a fresh proxy and naturally fast-path their unmodified subtree.
+-- If `_patches` is present, a patched scalar replaces the FFI-decoded value.
 local function encode_lazy_object_walking(t)
     local parts = {}
+    local patches = rawget(t, "_patches")
     local i = 0
     while true do
         local rc = C.qjson_cursor_object_entry_at(t._cur, i, strp_box, size_box, child_box)
@@ -438,16 +509,37 @@ local function encode_lazy_object_walking(t)
         check(rc)
         local k = ffi.string(strp_box[0], size_box[0])
         local v
-        local cached = rawget(t, k)
-        if cached ~= nil and not INTERNAL_KEYS[k] then
-            v = cached
+        local hit = patches and find_patch(patches, k) or nil
+        if hit ~= nil then
+            v = hit.v
         else
-            v = decode_cursor(t, child_box)
+            local cached = rawget(t, k)
+            if cached ~= nil and not INTERNAL_KEYS[k] then
+                v = cached
+            else
+                v = decode_cursor(t, child_box)
+            end
         end
         parts[#parts + 1] = encode_string(k) .. ":" .. encode(v)
         i = i + 1
     end
     return "{" .. table.concat(parts, ",") .. "}"
+end
+
+-- Splice patched scalars into the original JSON buffer. Patches sorted by
+-- byte-start ascending; preserves whitespace outside patched value spans.
+local function encode_lazy_object_splice(t)
+    local patches = rawget(t, "_patches")
+    table.sort(patches, function(a, b) return a.bs < b.bs end)
+    local buf, cursor, parts = t._doc._hold, t._bs, {}
+    for i = 1, #patches do
+        local p = patches[i]
+        parts[#parts + 1] = buf:sub(cursor + 1, p.bs)
+        parts[#parts + 1] = encode(p.v)
+        cursor = p.be
+    end
+    parts[#parts + 1] = buf:sub(cursor + 1, t._be)
+    return table.concat(parts)
 end
 
 local function encode_lazy_array_walking(t)
@@ -471,14 +563,17 @@ local function encode_lazy_array_walking(t)
 end
 
 local function encode_proxy(t)
-    if not is_dirty(t) then
-        -- Fast path: no mutations — slice the original buffer bytes.
-        return t._doc._hold:sub(t._bs + 1, t._be)
+    if descendant_is_dirty(t) then
+        if getmetatable(t) == LazyObject then
+            return encode_lazy_object_walking(t)
+        end
+        return encode_lazy_array_walking(t)
     end
-    if getmetatable(t) == LazyObject then
-        return encode_lazy_object_walking(t)
+    if getmetatable(t) == LazyObject and rawget(t, "_patches") ~= nil then
+        return encode_lazy_object_splice(t)
     end
-    return encode_lazy_array_walking(t)
+    -- Fast path: no mutations — slice the original buffer bytes.
+    return t._doc._hold:sub(t._bs + 1, t._be)
 end
 
 local function is_array(t)
