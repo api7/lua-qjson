@@ -327,3 +327,84 @@ describe("Lazy Patch - metatable preservation", function()
         assert.are.equal(3, t.c)
     end)
 end)
+
+describe("Lazy Patch - read-then-write does not bypass __newindex", function()
+    -- Regression: container reads used to rawset-cache onto the view, which
+    -- made a subsequent assignment to that key skip __newindex entirely (Lua
+    -- only fires __newindex when the raw key is absent). Patches went
+    -- unrecorded and encode silently returned the original bytes.
+    it("read-then-replace-with-scalar updates the field", function()
+        local obj = qjson.decode('{"foo":{"x":1}}')
+        local _ = obj.foo
+        obj.foo = "replaced"
+        assert.are.equal("replaced", obj.foo)
+        local cjson = require("cjson")
+        local parsed = cjson.decode(qjson.encode(obj))
+        assert.are.equal("replaced", parsed.foo)
+    end)
+
+    it("read-then-delete actually deletes", function()
+        local obj = qjson.decode('{"foo":{"x":1},"bar":2}')
+        local _ = obj.foo
+        obj.foo = nil
+        assert.is_nil(obj.foo)
+        local cjson = require("cjson")
+        local parsed = cjson.decode(qjson.encode(obj))
+        assert.is_nil(parsed.foo)
+        assert.are.equal(2, parsed.bar)
+    end)
+
+    it("read-then-replace-with-table also updates", function()
+        local obj = qjson.decode('{"foo":{"x":1}}')
+        local _ = obj.foo
+        obj.foo = { y = 2 }
+        local cjson = require("cjson")
+        local parsed = cjson.decode(qjson.encode(obj))
+        assert.is_nil(parsed.foo.x)
+        assert.are.equal(2, parsed.foo.y)
+    end)
+
+    it("array: read-then-replace-with-scalar updates the slot", function()
+        local arr = qjson.decode('[{"x":1},"b"]')
+        local _ = arr[1]
+        arr[1] = "replaced"
+        local cjson = require("cjson")
+        local parsed = cjson.decode(qjson.encode(arr))
+        assert.are.equal("replaced", parsed[1])
+        assert.are.equal("b", parsed[2])
+    end)
+end)
+
+describe("Lazy Patch - mutable patch values re-encode at emit time", function()
+    -- Regression: patches used to cache the encoded JSON string at write time,
+    -- so a subsequent mutation of the assigned Lua table was lost.
+    it("mutates a patched table after assignment", function()
+        local t = qjson.decode('{"a":1}')
+        t.a = { x = 1 }
+        t.a.x = 2
+        local cjson = require("cjson")
+        local parsed = cjson.decode(qjson.encode(t))
+        assert.are.equal(2, parsed.a.x)
+    end)
+
+    it("mutates a patched table after assignment (existing key replace)", function()
+        local t = qjson.decode('{"a":{"old":1},"b":2}')
+        t.a = { x = 1 }
+        t.a.x = 99
+        local cjson = require("cjson")
+        local parsed = cjson.decode(qjson.encode(t))
+        assert.are.equal(99, parsed.a.x)
+        assert.is_nil(parsed.a.old)
+        assert.are.equal(2, parsed.b)
+    end)
+
+    it("mutates a patched table after assignment (new key)", function()
+        local t = qjson.decode('{"a":1}')
+        t.newkey = { z = 0 }
+        t.newkey.z = 42
+        local cjson = require("cjson")
+        local parsed = cjson.decode(qjson.encode(t))
+        assert.are.equal(42, parsed.newkey.z)
+        assert.are.equal(1, parsed.a)
+    end)
+end)

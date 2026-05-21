@@ -104,11 +104,11 @@ end
 
 -- Resolve a child cursor at `key` (object) and decode it into a Lua value.
 -- Returns nil for missing keys (cjson semantics).
--- Container results (lazy proxies) are rawset-cached into `self` so that
--- subsequent accesses return the same Lua table object. This is required for
--- `t.a.x = v` to propagate back: __newindex materializes `t.a` in-place, and
--- the next `t.a` lookup retrieves the already-materialized table from the
--- raw table rather than creating a fresh proxy.
+-- Container results (lazy proxies) are cached in a private `_child_cache`
+-- sidecar (not directly on `self`) so that `__newindex` always fires on a
+-- subsequent `self[key] = ...` write. Raw-table caching of the child would
+-- silently bypass `__newindex` (Lua only invokes it when the raw key is
+-- absent) and lose patch / delete bookkeeping.
 local function read_object_field(self, key)
     if type(key) ~= "string" then return nil end
 
@@ -128,13 +128,25 @@ local function read_object_field(self, key)
         return nil
     end
 
+    -- Check sidecar cache for previously-materialized child container.
+    local cache = rawget(self, "_child_cache")
+    if cache then
+        local cached = cache[key]
+        if cached ~= nil then return cached end
+    end
+
     -- Use child_box so the lookup result does not alias self._cur (which is
     -- itself stored in root_box's backing memory in the decode caller).
     local rc = C.qjson_cursor_field(self._cur, key, #key, child_box)
     if not check(rc) then return nil end
     local v = decode_cursor(self, child_box)
-    -- Cache containers so identity is stable and materialization sticks.
-    if type(v) == "table" then rawset(self, key, v) end
+    if type(v) == "table" then
+        if not cache then
+            cache = {}
+            rawset(self, "_child_cache", cache)
+        end
+        cache[key] = v
+    end
     return v
 end
 
@@ -142,18 +154,29 @@ LazyObject.__index = read_object_field
 
 -- Resolve a child cursor at integer index `key` (1-based) and decode it.
 -- Returns nil for missing/out-of-range indices and non-integer keys.
--- Container results are rawset-cached for the same identity-stability reason
--- as read_object_field.
+-- Container results are sidecar-cached in `_child_cache` for the same
+-- identity-stability reason as read_object_field, and for the same reason —
+-- raw-table caching would let user writes bypass `LazyArray.__newindex`.
 local function read_array_index(self, key)
     if type(key) ~= "number" then return nil end
     -- 1-based external, 0-based internal
     local i = key - 1
     if i < 0 or i ~= math.floor(i) then return nil end
+    local cache = rawget(self, "_child_cache")
+    if cache then
+        local cached = cache[key]
+        if cached ~= nil then return cached end
+    end
     local rc = C.qjson_cursor_index(self._cur, i, child_box)
     if not check(rc) then return nil end
     local v = decode_cursor(self, child_box)
-    -- Cache containers so identity is stable and materialization sticks.
-    if type(v) == "table" then rawset(self, key, v) end
+    if type(v) == "table" then
+        if not cache then
+            cache = {}
+            rawset(self, "_child_cache", cache)
+        end
+        cache[key] = v
+    end
     return v
 end
 
@@ -312,14 +335,20 @@ end
 -- the dirty check and __newindex can share the list.
 local INTERNAL_KEYS = {
     _doc = true, _cur_box = true, _cur = true, _bs = true, _be = true,
-    _patches = true, _deleted = true,
+    _patches = true, _deleted = true, _child_cache = true,
 }
 
--- Forward declaration for encode (needed by __newindex to encode patch values)
+-- Forward declaration for encode (used by the patch-aware encoders below)
 local encode
 
 -- On write, record a patch instead of materializing the entire object.
 -- This allows encode to splice the original buffer with patched values.
+--
+-- The patch record only stores `lua_value`. We deliberately do NOT cache an
+-- `encoded_value` snapshot at write time: callers commonly do
+-- `t.a = {x = 1}; t.a.x = 2` and expect the mutation to be visible in the
+-- final encode. Re-encoding `lua_value` at emit time costs one extra encode
+-- per patch (typical workload is 1–3) and avoids the stale-snapshot bug.
 LazyObject.__newindex = function(t, k, v)
     if type(k) ~= "string" then
         error("qjson: LazyObject key must be a string, got " .. type(k))
@@ -344,21 +373,17 @@ LazyObject.__newindex = function(t, k, v)
             end
         end
     else
-        -- Encode the new value (we need both encoded and lua_value)
-        local encoded = encode(v)
-
-        -- Update or add patch
+        -- Update or add patch (lua_value only; encoded at emit time)
         local found = false
         for _, p in ipairs(patches) do
             if p.key == k then
-                p.encoded_value = encoded
                 p.lua_value = v
                 found = true
                 break
             end
         end
         if not found then
-            patches[#patches + 1] = { key = k, encoded_value = encoded, lua_value = v }
+            patches[#patches + 1] = { key = k, lua_value = v }
         end
 
         -- Remove from deleted if previously deleted
@@ -368,24 +393,23 @@ end
 
 -- On first write, walk all existing elements into a plain sequence,
 -- switch to empty_array_mt (no lazy machinery), then apply the assignment.
--- Existing rawget-cached entries are preserved so callers' references remain valid.
+-- Sidecar-cached entries (`_child_cache`) are preserved so callers' references
+-- remain valid.
 LazyArray.__newindex = function(t, k, v)
     local contents = materialize_array_contents(t)
-    -- Snapshot integer-key cache BEFORE nilling internals.
-    -- Use next() for raw iteration: pairs() would invoke __pairs on lazy arrays,
-    -- walking the full JSON via FFI instead of the Lua-side rawget cache.
-    local cache = {}
-    local ck, cv = next(t)
-    while ck ~= nil do
-        if type(ck) == "number" then
-            cache[ck] = cv
+    -- Snapshot the sidecar cache BEFORE nilling internals.
+    local prev_cache = rawget(t, "_child_cache")
+    local snapshot = {}
+    if prev_cache then
+        for ck, cv in pairs(prev_cache) do
+            if type(ck) == "number" then snapshot[ck] = cv end
         end
-        ck, cv = next(t, ck)
     end
     t._doc, t._cur_box, t._cur, t._bs, t._be = nil, nil, nil, nil, nil
+    rawset(t, "_child_cache", nil)
     setmetatable(t, _M.empty_array_mt)
     for i, x in ipairs(contents) do
-        rawset(t, i, cache[i] or x)
+        rawset(t, i, snapshot[i] or x)
     end
     rawset(t, k, v)
 end
@@ -503,14 +527,14 @@ local function is_dirty(v)
     if deleted then
         for _ in pairs(deleted) do return true end
     end
-    -- Use next() for raw table iteration: pairs() would invoke __pairs on
-    -- lazy tables, walking the full JSON via FFI instead of the Lua cache.
-    local k, child = next(v)
-    while k ~= nil do
-        if not INTERNAL_KEYS[k] then
+    -- Walk the sidecar cache rather than `next(v)`: container children are
+    -- never raw-stored on the view itself (see read_object_field /
+    -- read_array_index), so the sidecar is the only place to find them.
+    local cache = rawget(v, "_child_cache")
+    if cache then
+        for _, child in pairs(cache) do
             if is_dirty(child) then return true end
         end
-        k, child = next(v, k)
     end
     return false
 end
@@ -520,6 +544,7 @@ end
 -- emit through a fresh proxy and naturally fast-path their unmodified subtree.
 local function encode_lazy_object_walking(t)
     local parts = {}
+    local cache = rawget(t, "_child_cache")
     local i = 0
     while true do
         local rc = C.qjson_cursor_object_entry_at(t._cur, i, strp_box, size_box, child_box)
@@ -527,8 +552,8 @@ local function encode_lazy_object_walking(t)
         check(rc)
         local k = ffi.string(strp_box[0], size_box[0])
         local v
-        local cached = rawget(t, k)
-        if cached ~= nil and not INTERNAL_KEYS[k] then
+        local cached = cache and cache[k] or nil
+        if cached ~= nil then
             v = cached
         else
             v = decode_cursor(t, child_box)
@@ -541,13 +566,14 @@ end
 
 local function encode_lazy_array_walking(t)
     local parts = {}
+    local cache = rawget(t, "_child_cache")
     local rc = C.qjson_cursor_len(t._cur, "", 0, size_box)
     check(rc)
     local n = tonumber(size_box[0])
     for i = 0, n - 1 do
         local irc = C.qjson_cursor_index(t._cur, i, child_box)
         check(irc)
-        local cached = rawget(t, i + 1)
+        local cached = cache and cache[i + 1] or nil
         local v
         if cached ~= nil then
             v = cached
@@ -559,22 +585,22 @@ local function encode_lazy_array_walking(t)
     return "[" .. table.concat(parts, ",") .. "]"
 end
 
--- Check if any cached child is dirty (materialized or has patches)
+-- Check if any sidecar-cached child is dirty (materialized or has patches).
+-- Container children live in `_child_cache`, not on the view itself, so the
+-- raw-table walk is unnecessary here.
 local function has_dirty_children(t)
-    local k, child = next(t)
-    while k ~= nil do
-        if not INTERNAL_KEYS[k] then
-            if type(child) == "table" then
-                local mt = getmetatable(child)
-                if mt ~= LazyObject and mt ~= LazyArray then
-                    return true  -- materialized child
-                end
-                if is_dirty(child) then
-                    return true
-                end
+    local cache = rawget(t, "_child_cache")
+    if not cache then return false end
+    for _, child in pairs(cache) do
+        if type(child) == "table" then
+            local mt = getmetatable(child)
+            if mt ~= LazyObject and mt ~= LazyArray then
+                return true  -- materialized child
+            end
+            if is_dirty(child) then
+                return true
             end
         end
-        k, child = next(t, k)
     end
     return false
 end
@@ -582,6 +608,7 @@ end
 -- Walk a LazyObject with patches, handling deletions and new fields
 local function encode_lazy_object_walking_with_patches(t, patches, deleted)
     local parts = {}
+    local cache = rawget(t, "_child_cache")
 
     -- Build a set of patched keys for quick lookup
     local patched_keys = {}
@@ -602,12 +629,13 @@ local function encode_lazy_object_walking_with_patches(t, patches, deleted)
             local v
             local patch = patched_keys[k]
             if patch then
-                -- Use patched value (already encoded)
-                parts[#parts + 1] = encode_string(k) .. ":" .. patch.encoded_value
+                -- Re-encode at emit time so post-assignment mutations to
+                -- patch.lua_value are visible (see __newindex comment).
+                parts[#parts + 1] = encode_string(k) .. ":" .. encode(patch.lua_value)
             else
-                -- Use original or cached value
-                local cached = rawget(t, k)
-                if cached ~= nil and not INTERNAL_KEYS[k] then
+                -- Use original or sidecar-cached value
+                local cached = cache and cache[k] or nil
+                if cached ~= nil then
                     v = cached
                 else
                     v = decode_cursor(t, child_box)
@@ -622,7 +650,7 @@ local function encode_lazy_object_walking_with_patches(t, patches, deleted)
     for _, p in ipairs(patches) do
         local rc = C.qjson_cursor_field_bytes(t._cur, p.key, #p.key, sz_a, sz_b)
         if rc == QJSON_NOT_FOUND then
-            parts[#parts + 1] = encode_string(p.key) .. ":" .. p.encoded_value
+            parts[#parts + 1] = encode_string(p.key) .. ":" .. encode(p.lua_value)
         elseif rc ~= QJSON_OK then
             check(rc)  -- propagate unexpected errors
         end
@@ -640,7 +668,9 @@ local function encode_with_patches(t)
 
     -- Classify each patch into a replacement (existing field) or a new field
     -- in a single FFI pass. Replacements carry the byte span; presence of any
-    -- new field forces the walking fallback.
+    -- new field forces the walking fallback. Re-encode `lua_value` at emit
+    -- time so any post-assignment mutation (e.g. `t.a = {x=1}; t.a.x = 2`) is
+    -- visible — we deliberately do not cache the encoded form on the patch.
     local replacements = {}
     local has_new_field = false
     for _, p in ipairs(patches) do
@@ -649,7 +679,7 @@ local function encode_with_patches(t)
             replacements[#replacements + 1] = {
                 start = tonumber(sz_a[0]),
                 end_ = tonumber(sz_b[0]),
-                value = p.encoded_value,
+                value = encode(p.lua_value),
             }
         elseif rc == QJSON_NOT_FOUND then
             has_new_field = true

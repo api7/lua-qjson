@@ -16,7 +16,7 @@ tab.model = "gpt4o"                 -- Triggers __newindex → materializes enti
 local out = qjson.encode(tab)       -- Walks materialized table + lazy subtrees
 ```
 
-The `__newindex` handler (`lua/qjson/table.lua:266-285`) calls `materialize_object_contents()` which:
+The `LazyObject.__newindex` handler called `materialize_object_contents()` (still in `lua/qjson/table.lua` today; see `materialize_object_contents` and the array-side `LazyArray.__newindex` for the analogous path) which:
 1. Iterates all key/value pairs via FFI
 2. Clears the metatable
 3. Copies all values into the plain table
@@ -469,7 +469,7 @@ Splicing byte offsets is error-prone.
 
 ### Current Implementation Profile
 
-```
+```text
 decode:   5.97 μs (20%)
 modify:   0.37 μs (1%)   -- triggers materialization
 encode:  12.55 μs (41%)  -- walks materialized root
@@ -484,7 +484,7 @@ Breakdown of encode:
 
 ### Projected Optimized Profile
 
-```
+```text
 decode:   5.97 μs (55%)
 modify:   0.10 μs (1%)   -- just records patch
 encode:   4.80 μs (44%)  -- splices original buffer
