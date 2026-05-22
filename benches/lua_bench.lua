@@ -140,7 +140,7 @@ local function make_payload(target_bytes)
         .. table.concat(messages, ",") .. ']}'
 end
 
-local ROUNDS = 5
+local ROUNDS = 10
 
 local function bench(name, iters, fn)
     -- Warmup pass: lets JIT compile hot traces and any one-time pools fill
