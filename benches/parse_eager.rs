@@ -11,11 +11,15 @@ use qjson::options::{
 };
 use std::fs;
 
-const ASCII_PATH: &str = "benches/fixtures/medium_resp.json";
-const CJK_PATH:   &str = "benches/fixtures/medium_resp_cjk.json";
+const FIXTURES: &[(&str, &str)] = &[
+    ("ascii", "benches/fixtures/medium_resp.json"),
+    ("cjk",   "benches/fixtures/medium_resp_cjk.json"),
+    ("mixed", "benches/fixtures/medium_resp_mixed.json"),
+    ("emoji", "benches/fixtures/medium_resp_emoji.json"),
+];
 
 fn run(c: &mut Criterion) {
-    for (name, path) in &[("ascii", ASCII_PATH), ("cjk", CJK_PATH)] {
+    for (name, path) in FIXTURES {
         let buf = fs::read(path)
             .unwrap_or_else(|e| panic!("read {}: {}", path, e));
         let mut group = c.benchmark_group(format!("parse/{}", name));
