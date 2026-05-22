@@ -32,8 +32,7 @@ impl<'a> Document<'a> {
         indices.push(u32::MAX);
 
         if opts.is_eager() {
-            crate::validate::validate_trailing(buf, &indices)?;
-            crate::validate::validate_eager_values(buf, &indices, max_depth)?;
+            crate::validate::validate_eager_fused(buf, &indices, max_depth)?;
         } else {
             crate::validate::validate_depth(buf, &indices, max_depth)?;
         }

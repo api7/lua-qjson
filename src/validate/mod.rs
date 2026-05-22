@@ -126,6 +126,171 @@ pub(crate) fn validate_trailing(
     Ok(())
 }
 
+/// Fused eager validator: depth, trailing-content, and grammar/value
+/// checks in a single O(indices) traversal. Equivalent to calling
+/// `validate_depth` + `validate_trailing` + `validate_eager_values`
+/// but avoids three separate walks.
+pub(crate) fn validate_eager_fused(
+    buf: &[u8],
+    indices: &[u32],
+    max_depth: u32,
+) -> Result<(), qjson_err> {
+    let mut depth: u32 = 0;
+
+    let mut stack: Vec<CtxKind> = Vec::with_capacity(16);
+    stack.push(CtxKind::Top);
+
+    let mut prev_end: usize = 0;
+
+    let mut i: usize = 0;
+    while i < indices.len() {
+        let idx = indices[i];
+        if idx == u32::MAX { break; }
+        let pos = idx as usize;
+        let b = buf[pos];
+
+        consume_scalar_gap(buf, prev_end, pos, stack.last_mut().unwrap())?;
+
+        match b {
+            b'{' | b'[' => {
+                let cur = stack.last_mut().unwrap();
+                match *cur {
+                    CtxKind::Top
+                    | CtxKind::ArrAfterOpen
+                    | CtxKind::ArrAfterComma
+                    | CtxKind::ObjAfterColon => {
+                        *cur = parent_after_value(*cur);
+                        stack.push(if b == b'{' {
+                            CtxKind::ObjAfterOpen
+                        } else {
+                            CtxKind::ArrAfterOpen
+                        });
+                    }
+                    _ => return Err(qjson_err::QJSON_PARSE_ERROR),
+                }
+                depth += 1;
+                if depth > max_depth {
+                    return Err(qjson_err::QJSON_NESTING_TOO_DEEP);
+                }
+                prev_end = pos + 1;
+                i += 1;
+            }
+            b'}' => {
+                let top = stack.pop().ok_or(qjson_err::QJSON_PARSE_ERROR)?;
+                if !matches!(top, CtxKind::ObjAfterOpen | CtxKind::ObjAfterValue) {
+                    return Err(qjson_err::QJSON_PARSE_ERROR);
+                }
+                if stack.is_empty() { return Err(qjson_err::QJSON_PARSE_ERROR); }
+                depth -= 1;
+                if depth == 0 && stack.len() == 1 && stack[0] == CtxKind::TopDone {
+                    let mut p = pos + 1;
+                    while p < buf.len() && is_ws(buf[p]) { p += 1; }
+                    if p < buf.len() {
+                        return Err(qjson_err::QJSON_TRAILING_CONTENT);
+                    }
+                }
+                prev_end = pos + 1;
+                i += 1;
+            }
+            b']' => {
+                let top = stack.pop().ok_or(qjson_err::QJSON_PARSE_ERROR)?;
+                if !matches!(top, CtxKind::ArrAfterOpen | CtxKind::ArrAfterValue) {
+                    return Err(qjson_err::QJSON_PARSE_ERROR);
+                }
+                if stack.is_empty() { return Err(qjson_err::QJSON_PARSE_ERROR); }
+                depth -= 1;
+                if depth == 0 && stack.len() == 1 && stack[0] == CtxKind::TopDone {
+                    let mut p = pos + 1;
+                    while p < buf.len() && is_ws(buf[p]) { p += 1; }
+                    if p < buf.len() {
+                        return Err(qjson_err::QJSON_TRAILING_CONTENT);
+                    }
+                }
+                prev_end = pos + 1;
+                i += 1;
+            }
+            b',' => {
+                let cur = stack.last_mut().ok_or(qjson_err::QJSON_PARSE_ERROR)?;
+                match *cur {
+                    CtxKind::ArrAfterValue => *cur = CtxKind::ArrAfterComma,
+                    CtxKind::ObjAfterValue => *cur = CtxKind::ObjAfterComma,
+                    _ => return Err(qjson_err::QJSON_PARSE_ERROR),
+                }
+                prev_end = pos + 1;
+                i += 1;
+            }
+            b':' => {
+                let cur = stack.last_mut().ok_or(qjson_err::QJSON_PARSE_ERROR)?;
+                match *cur {
+                    CtxKind::ObjAfterKey => *cur = CtxKind::ObjAfterColon,
+                    _ => return Err(qjson_err::QJSON_PARSE_ERROR),
+                }
+                prev_end = pos + 1;
+                i += 1;
+            }
+            b'"' => {
+                if i + 1 >= indices.len() { return Err(qjson_err::QJSON_PARSE_ERROR); }
+                let close = indices[i + 1] as usize;
+                if close <= pos || close >= buf.len() || buf[close] != b'"' {
+                    return Err(qjson_err::QJSON_PARSE_ERROR);
+                }
+                strings::validate_string_span(&buf[pos + 1 .. close])?;
+
+                let cur = stack.last_mut().ok_or(qjson_err::QJSON_PARSE_ERROR)?;
+                match *cur {
+                    CtxKind::ObjAfterOpen | CtxKind::ObjAfterComma => {
+                        *cur = CtxKind::ObjAfterKey;
+                    }
+                    CtxKind::Top
+                    | CtxKind::ArrAfterOpen
+                    | CtxKind::ArrAfterComma
+                    | CtxKind::ObjAfterColon => {
+                        *cur = parent_after_value(*cur);
+                        if depth == 0 && stack.len() == 1 && stack[0] == CtxKind::TopDone {
+                            let mut p = close + 1;
+                            while p < buf.len() && is_ws(buf[p]) { p += 1; }
+                            if p < buf.len() {
+                                return Err(qjson_err::QJSON_TRAILING_CONTENT);
+                            }
+                        }
+                    }
+                    _ => return Err(qjson_err::QJSON_PARSE_ERROR),
+                }
+                prev_end = close + 1;
+                i += 2;
+            }
+            _ => return Err(qjson_err::QJSON_PARSE_ERROR),
+        }
+    }
+
+    // Tail: handle any remaining content.
+    // For scalar roots (depth == 0, still in Top), find the first
+    // token, validate it, then check for trailing content beyond it.
+    if matches!(*stack.last().unwrap(), CtxKind::Top) && depth == 0 {
+        let mut scan = prev_end;
+        while scan < buf.len() && is_ws(buf[scan]) { scan += 1; }
+        if scan < buf.len() {
+            let mut end = scan;
+            while end < buf.len() && !is_ws(buf[end]) { end += 1; }
+            validate_scalar(&buf[scan..end])?;
+            *stack.last_mut().unwrap() = CtxKind::TopDone;
+
+            let mut p = end;
+            while p < buf.len() && is_ws(buf[p]) { p += 1; }
+            if p < buf.len() {
+                return Err(qjson_err::QJSON_TRAILING_CONTENT);
+            }
+        }
+    } else {
+        consume_scalar_gap(buf, prev_end, buf.len(), stack.last_mut().unwrap())?;
+    }
+
+    if stack.len() != 1 || stack[0] != CtxKind::TopDone {
+        return Err(qjson_err::QJSON_PARSE_ERROR);
+    }
+    Ok(())
+}
+
 /// Grammar-aware eager pass: walk `indices` once and validate every
 /// structural transition, key/value string, and scalar value.
 ///
@@ -513,6 +678,78 @@ mod tests {
         for _ in 0..1025 { buf.push(b']'); }
         assert_eq!(
             validate_eager_values(&buf, &ix(&buf), 1024), Err(qjson_err::QJSON_NESTING_TOO_DEEP),
+        );
+    }
+
+    // ── fused validator tests ────────────────────────────────────────
+
+    #[test]
+    fn fused_accepts_clean_input() {
+        for buf in [
+            &b"{}"[..], &b"[]"[..], &b"{\"a\":1}"[..],
+            &b"[1,2,3]"[..], &b"42"[..], &b"\"hi\""[..],
+            &b"[true,false,null]"[..],
+        ] {
+            assert!(validate_eager_fused(buf, &ix(buf), 1024).is_ok(),
+                "fused should accept {:?}", std::str::from_utf8(buf).unwrap_or("(non-utf8)"));
+        }
+    }
+
+    #[test]
+    fn fused_rejects_trailing_content() {
+        assert_eq!(
+            validate_eager_fused(b"{}garbage", &ix(b"{}garbage"), 1024),
+            Err(qjson_err::QJSON_TRAILING_CONTENT),
+        );
+    }
+
+    #[test]
+    fn fused_rejects_excessive_depth() {
+        assert_eq!(
+            validate_eager_fused(b"[[[1]]]", &ix(b"[[[1]]]"), 2),
+            Err(qjson_err::QJSON_NESTING_TOO_DEEP),
+        );
+    }
+
+    #[test]
+    fn fused_depth_ok_at_limit() {
+        assert!(validate_eager_fused(b"[[1]]", &ix(b"[[1]]"), 2).is_ok());
+    }
+
+    #[test]
+    fn fused_trailing_whitespace_accepted() {
+        assert!(validate_eager_fused(b"{}   \n\t", &ix(b"{}   \n\t"), 1024).is_ok());
+    }
+
+    #[test]
+    fn fused_two_root_scalars_rejected() {
+        assert_eq!(
+            validate_eager_fused(b"1 2", &ix(b"1 2"), 1024),
+            Err(qjson_err::QJSON_TRAILING_CONTENT),
+        );
+    }
+
+    #[test]
+    fn fused_trailing_in_nested_container_detected() {
+        assert_eq!(
+            validate_eager_fused(b"[1] x", &ix(b"[1] x"), 1024),
+            Err(qjson_err::QJSON_TRAILING_CONTENT),
+        );
+    }
+
+    #[test]
+    fn fused_grammar_rejects_missing_colon() {
+        assert_eq!(
+            validate_eager_fused(b"{\"a\"}", &ix(b"{\"a\"}"), 1024),
+            Err(qjson_err::QJSON_PARSE_ERROR),
+        );
+    }
+
+    #[test]
+    fn fused_grammar_rejects_trailing_garbage_inside_object() {
+        assert_eq!(
+            validate_eager_fused(b"{\"a\":\"a\" 123}", &ix(b"{\"a\":\"a\" 123}"), 1024),
+            Err(qjson_err::QJSON_PARSE_ERROR),
         );
     }
 }
