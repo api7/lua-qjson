@@ -238,33 +238,40 @@ unsafe fn validate_span_avx2_impl(span: &[u8]) -> Result<(), qjson_err> {
     while i + 32 <= n {
         let chunk = _mm256_loadu_si256(span.as_ptr().add(i) as *const __m256i);
 
-        let high  = _mm256_movemask_epi8(chunk) as u32;
-        let ctrl  = _mm256_movemask_epi8(_mm256_cmpgt_epi8(
-                        _mm256_set1_epi8(0x20),
-                        chunk,
-                    )) as u32;
-        let bs    = _mm256_movemask_epi8(_mm256_cmpeq_epi8(
-                        chunk,
-                        _mm256_set1_epi8(b'\\' as i8),
-                    )) as u32;
+        // Build ctrl|bs vector; ORing with chunk raw lets one movemask capture
+        // high | ctrl | bs in a single shot (high-bit bytes are negative i8,
+        // so their top bit is already set in chunk).
+        let ctrl_v = _mm256_cmpgt_epi8(_mm256_set1_epi8(0x20), chunk);
+        let bs_v   = _mm256_cmpeq_epi8(chunk, _mm256_set1_epi8(b'\\' as i8));
+        let cb_v   = _mm256_or_si256(ctrl_v, bs_v);
+
+        // combined top bits: 1 iff byte is ctrl, backslash, OR ≥ 0x80.
+        // Single movemask extracts `high | ctrl | bs` for the Tier 1 fast check.
+        let combined        = _mm256_or_si256(cb_v, chunk);
+        let any_interesting = _mm256_movemask_epi8(combined) as u32;
 
         // prev_ended_ascii: last byte of prior chunk had high bit clear, so no
         // cross-chunk multi-byte carry is pending. Without this guard, a lead
         // byte ending chunk N could cause lookup4 to miss its continuations in
         // chunk N+1.
         // Tier 1: pure printable ASCII, and previous chunk also ended ASCII-safe.
-        if (high | ctrl | bs) == 0 && prev_ended_ascii {
+        if any_interesting == 0 && prev_ended_ascii {
             prev_input = chunk;
             // prev_ended_ascii stays true (all bytes < 0x80)
             i += 32;
             continue;
         }
 
+        // Slow path: compute ctrl_bs_mask to distinguish Tier 2 from Tier 3.
+        // This second movemask is only reached when any_interesting != 0, so
+        // it does not appear on the ASCII hot path.
+        let ctrl_bs_mask = _mm256_movemask_epi8(cb_v) as u32;
+
         // Tier 3: control byte or backslash → do NOT run lookup4 on this
         // chunk (the scalar path handles it correctly). First flush any UTF-8
         // errors accumulated from prior Tier 2 chunks, then hand off to
         // scalar starting at the appropriate byte.
-        if (ctrl | bs) != 0 {
+        if ctrl_bs_mask != 0 {
             if _mm256_testz_si256(err_acc, err_acc) == 0 {
                 return Err(qjson_err::QJSON_INVALID_UTF8);
             }
@@ -279,19 +286,23 @@ unsafe fn validate_span_avx2_impl(span: &[u8]) -> Result<(), qjson_err> {
                     return super::scalar::validate_span_scalar(&combined);
                 }
             }
+            // high = any_interesting & ~ctrl_bs_mask (but we only need to know
+            // if any high-bit byte is present to decide the scalar start offset).
+            let high = any_interesting & !ctrl_bs_mask;
             // If there are no high-bit bytes in this chunk, bytes before the
             // first ctrl/bs are pure ASCII and need no validation — skip them.
             // If there ARE high-bit bytes, scalar must start from the beginning
             // of the chunk to correctly validate UTF-8 sequences.
             let start = if high == 0 {
-                i + (ctrl | bs).trailing_zeros() as usize
+                i + ctrl_bs_mask.trailing_zeros() as usize
             } else {
                 i
             };
             return super::scalar::validate_span_scalar(&span[start..]);
         }
 
-        // Tier 2: pure UTF-8 (no control, no backslash) → run lookup4.
+        // Tier 2: pure UTF-8 (no control, no backslash; high != 0 since
+        // any_interesting != 0) → run lookup4.
         err_acc = _mm256_or_si256(
             err_acc,
             lookup4_chunk(chunk, &mut prev_input, byte1_high_tbl, byte1_low_tbl, byte2_high_tbl),
