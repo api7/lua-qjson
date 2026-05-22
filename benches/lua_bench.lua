@@ -220,6 +220,52 @@ local function default_table_access(t)
     end
 end
 
+-- CJK+emoji payload: array of objects with Chinese text, emoji, and
+-- mixed ASCII/CJK field names. Each object has ~1 KB of string content,
+-- roughly 50% multi-byte UTF-8. Stresses the PSHUFB byte classifier
+-- (high-bit bytes) and UTF-8 validation path.
+local function make_cjk_payload(target_bytes)
+    local items = {}
+    local current = 2  -- "["
+    local n = 1
+    local cjk_text = "这是一段中文测试文本包含各种常用汉字以及标点符号用于模拟真实的中文API返回数据"
+        .. "😀🎉💡✨🚀🌟🔥🎊💯👍❤️🌍📱🎵🏆🍕🎮📚💻🔑🎁"
+    -- Build a pool of short tags from the text
+    local tag_chars = { "标签1", "标签2", "中文", "测试", "数据", "API", "返回", "响应" }
+    while current < target_bytes do
+        local name = string.format("用户%d", n)
+        local bio = "简介：" .. cjk_text
+        local tag = tag_chars[(n - 1) % #tag_chars + 1]
+        local item = string.format(
+            [[{"id":%d,"name":"%s","bio":"%s","tags":["%s","中文","emoji"],"score":%d}]],
+            n, name, bio, tag, n * 13 % 100)
+        if current + #item + 3 > target_bytes then break end
+        if n > 1 then items[#items + 1] = "," end
+        items[#items + 1] = item
+        current = current + #item + 1
+        n = n + 1
+    end
+    return "[" .. table.concat(items) .. "]"
+end
+
+local function cjk_qjson_access(d)
+    local _ = d:get_str("[0].name")
+    local _ = d:get_str("[0].bio")
+    local _ = d:get_str("[0].tags[0]")
+end
+
+local function cjk_table_access(t)
+    local _ = t[1] and t[1].name
+    local _ = t[1] and t[1].bio
+    local _ = t[1] and t[1].tags and t[1].tags[1]
+end
+
+local function cjk_cjson_access(obj)
+    local _ = obj[1] and obj[1].name
+    local _ = obj[1] and obj[1].bio
+    local _ = obj[1] and obj[1].tags and obj[1].tags[1]
+end
+
 -- GitHub issues accessors: array of issues, access first issue's fields
 local function github_cjson_access(obj)
     local _ = obj[1] and obj[1].id
@@ -242,8 +288,10 @@ end
 local scenarios = {
     {name = "small",  iters = 5000, payload = read_file("benches/fixtures/small_api.json")},
     {name = "medium", iters = 500,  payload = read_file("benches/fixtures/medium_resp.json")},
-    {name = "github-100k", iters = 100, payload = make_github_issues_payload(100 * 1024),
+    {name = "github-100k",  iters = 100, payload = make_github_issues_payload(100 * 1024),
      cjson_access = github_cjson_access, qjson_access = github_qjson_access, table_access = github_table_access},
+    {name = "cjk-100k",     iters = 100, payload = make_cjk_payload(100 * 1024),
+     cjson_access = cjk_cjson_access, qjson_access = cjk_qjson_access, table_access = cjk_table_access},
     {name = "100k",   iters = 100,  payload = make_payload(100 * 1024)},
     {name = "200k",   iters = 50,   payload = make_payload(200 * 1024)},
     {name = "500k",   iters = 20,   payload = make_payload(500 * 1024)},
