@@ -117,6 +117,11 @@ with similar throughput. Memory retention for `qjson` is essentially
 flat in payload size (a few KB for the reusable buffers), while `cjson`
 and `simdjson` retain more Lua heap because they materialize the table tree.
 
+The eager validation path (fused single-pass grammar + PSHUFB string
+classifier) yields **13–15% throughput improvement** on 1 MB payloads
+measured at the Rust level. See [`docs/benchmarks.md`](docs/benchmarks.md)
+for the micro-benchmark data and the full size ladder.
+
 See [`docs/benchmarks.md`](docs/benchmarks.md) for the full size ladder,
 memory numbers, an "encode round-trip" row (passthrough emit via
 `memcpy`), exact environment, and the reproduction command. `make bench`

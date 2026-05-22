@@ -170,8 +170,9 @@ key into the Lua table heap.
 The eager validation path was optimized by fusing three separate post-scan
 passes (`validate_depth`, `validate_trailing`, `validate_eager_values`) into a
 single `validate_eager_fused` traversal, and replacing the AVX2 string validator
-with a PSHUFB nibble-LUT byte classifier. On 1 MB payloads (10-run avg, AMD
-EPYC Rome Zen 2):
+with a PSHUFB nibble-LUT byte classifier. The Lua bench numbers above already
+include this improvement. On 1 MB payloads measured at the Rust level (10-run
+avg, AMD EPYC Rome Zen 2):
 
 | Payload | Before | After | Improvement |
 |---------|--------|-------|-------------|
