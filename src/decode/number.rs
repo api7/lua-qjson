@@ -12,6 +12,12 @@ pub(crate) fn parse_i64(bytes: &[u8], skip_validation: bool) -> Result<i64, qjso
         return Err(qjson_err::QJSON_INVALID_NUMBER);
     }
 
+    // Fast guard: first byte must plausibly start a number, otherwise
+    // the caller passed skip_validation=true on non-number input.
+    if skip_validation && !matches!(bytes[0], b'-' | b'0'..=b'9') {
+        return Err(qjson_err::QJSON_INVALID_NUMBER);
+    }
+
     // After ABNF validation, integer-only inputs have no `.`/`e`/`E`.
     if bytes.iter().any(|&b| b == b'.' || b == b'e' || b == b'E') {
         return Err(qjson_err::QJSON_TYPE_MISMATCH);
@@ -38,6 +44,16 @@ pub(crate) fn parse_f64(bytes: &[u8], skip_validation: bool) -> Result<f64, qjso
     if !skip_validation {
         crate::validate::validate_number(bytes)?;
     }
+
+    // When validation is skipped, do a cheap precheck to avoid returning
+    // a mode-dependent error code for non-number input.  The leading
+    // byte must plausibly start a JSON number: `-`, `.`, or digit.
+    if skip_validation {
+        if bytes.is_empty() || !matches!(bytes[0], b'-' | b'.' | b'0'..=b'9') {
+            return Err(qjson_err::QJSON_INVALID_NUMBER);
+        }
+    }
+
     let s = std::str::from_utf8(bytes).map_err(|_| qjson_err::QJSON_DECODE_FAILED)?;
     match s.parse::<f64>() {
         Ok(v) if v.is_finite() => Ok(v),
@@ -99,12 +115,27 @@ mod tests {
     }
 
     #[test]
+    fn i64_skip_validation_non_digit_returns_invalid_number() {
+        assert_eq!(parse_i64(b"true", true), Err(qjson_err::QJSON_INVALID_NUMBER));
+    }
+
+    #[test]
     fn f64_skip_validation_valid_input() {
         assert_eq!(parse_f64(b"3.14", true).unwrap(), 3.14);
     }
 
     #[test]
     fn f64_skip_validation_garbage_fails_at_parse() {
-        assert_eq!(parse_f64(b"hello", true), Err(qjson_err::QJSON_DECODE_FAILED));
+        assert_eq!(parse_f64(b"hello", true), Err(qjson_err::QJSON_INVALID_NUMBER));
+    }
+
+    #[test]
+    fn f64_skip_validation_empty_returns_invalid_number() {
+        assert_eq!(parse_f64(b"", true), Err(qjson_err::QJSON_INVALID_NUMBER));
+    }
+
+    #[test]
+    fn f64_skip_validation_non_number_returns_invalid_number() {
+        assert_eq!(parse_f64(b"null", true), Err(qjson_err::QJSON_INVALID_NUMBER));
     }
 }
