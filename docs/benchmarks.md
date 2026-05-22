@@ -33,8 +33,7 @@ The harness lives at `benches/lua_bench.lua`. For each scenario:
 3. 10 rounds × N iterations of the workload (warmup excluded); report the
    **mean** ops/s across rounds (median + range also shown in output).
 4. Final `collectgarbage("count")` to capture the post-run memory delta in
-   KB. The harness does not force a final collection after timing, so
-   short-lived garbage from the last round may still be included.
+   KB.
 
 The payload is a synthetic multimodal chat-completion request with one or more
 historical messages. Each message contains one small text part and one
@@ -75,12 +74,12 @@ harness prints a skip message and omits the simdjson rows.
 
 Numbers below come from one such run.
 
-## Results — throughput (median ops/s)
+## Results — throughput (mean ops/s)
 
 Each row is "parse + access request fields" on the named payload.
 
 | Scenario | Size | cjson | simdjson | `qjson.parse` | `qjson.decode + access content` | `qjson.decode + qjson.encode` |
-|---|---|---:|---:|---:|---:|---:|---:|
+|---|---:|---:|---:|---:|---:|---:|
 | small      |   2.1 KB | 100,127 | 109,588 | 130,867 | 105,038 | 210,886 |
 | medium     |  60.4 KB |   8,701 |  77,936 | 135,700 | 177,650 | 164,142 |
 | github-100k |   100 KB |   2,106 |   2,247 |   5,964 |   5,900 |   6,321 |
@@ -97,7 +96,7 @@ Each row is "parse + access request fields" on the named payload.
 ### Speed-up vs. baselines
 
 | Scenario | `qjson.parse` / cjson | `qjson.parse` / simdjson | `qjson.decode + access content` / cjson | `qjson.decode + access content` / simdjson |
-|---|---|---:|---:|---:|---:|
+|---|---:|---:|---:|---:|
 | small  |  1.3× |  1.2× |  1.0× |  1.0× |
 | medium | 15.6× |  1.7× | 20.4× |  2.3× |
 | github-100k | 2.8× |  2.7× | 2.8× |  2.6× |
@@ -110,14 +109,14 @@ Each row is "parse + access request fields" on the named payload.
 | 5m     | 31.4× |  4.9× | 31.5× |  4.9× |
 | 10m    | 29.5× |  3.8× | 31.0× |  4.0× |
 
-## Results — memory delta (KB retained after 5 rounds)
+## Results — memory delta (KB retained after 10 rounds)
 
 Post-run `collectgarbage("count")` minus baseline. Captures heap usage after
 the timing rounds without forcing a final collection, so short-lived garbage
 from the last round may still be included.
 
 | Scenario | cjson | simdjson | `qjson.parse` | `qjson.decode + access content` | `qjson.decode + qjson.encode` |
-|---|---|---:|---:|---:|---:|---:|
+|---|---:|---:|---:|---:|---:|
 | small      | -2,359 |  +8,055 |  +8,159 |  +8,643 |  +2,701 |
 | medium     |  +3,850 |  +5,259 |    +124 |  +2,228 |  +2,234 |
 | github-100k | +19,936 | +15,164 |     +32 |  +1,072 |    +452 |

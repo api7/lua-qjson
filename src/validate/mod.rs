@@ -152,6 +152,14 @@ pub(crate) fn validate_eager_fused(
 
         consume_scalar_gap(buf, prev_end, pos, stack.last_mut().unwrap())?;
 
+        // After consuming the gap, if the root has already been fully
+        // consumed (depth==0, TopDone), any subsequent structural token
+        // is trailing content. This matches the old validate_trailing
+        // precedence: e.g. `42 {}` → QJSON_TRAILING_CONTENT, not PARSE_ERROR.
+        if depth == 0 && stack.len() == 1 && stack[0] == CtxKind::TopDone {
+            return Err(qjson_err::QJSON_TRAILING_CONTENT);
+        }
+
         match b {
             b'{' | b'[' => {
                 let cur = stack.last_mut().unwrap();
@@ -235,6 +243,20 @@ pub(crate) fn validate_eager_fused(
                 if close <= pos || close >= buf.len() || buf[close] != b'"' {
                     return Err(qjson_err::QJSON_PARSE_ERROR);
                 }
+
+                let cur = stack.last().copied().unwrap();
+                // For a top-level string root, check trailing content BEFORE
+                // validating the string. This preserves the old validate_trailing
+                // error-code precedence: `"\\q" x` → QJSON_TRAILING_CONTENT, not
+                // QJSON_INVALID_STRING.
+                if matches!(cur, CtxKind::Top) && depth == 0 {
+                    let mut p = close + 1;
+                    while p < buf.len() && is_ws(buf[p]) { p += 1; }
+                    if p < buf.len() {
+                        return Err(qjson_err::QJSON_TRAILING_CONTENT);
+                    }
+                }
+
                 strings::validate_string_span(&buf[pos + 1 .. close])?;
 
                 let cur = stack.last_mut().ok_or(qjson_err::QJSON_PARSE_ERROR)?;
@@ -247,13 +269,6 @@ pub(crate) fn validate_eager_fused(
                     | CtxKind::ArrAfterComma
                     | CtxKind::ObjAfterColon => {
                         *cur = parent_after_value(*cur);
-                        if depth == 0 && stack.len() == 1 && stack[0] == CtxKind::TopDone {
-                            let mut p = close + 1;
-                            while p < buf.len() && is_ws(buf[p]) { p += 1; }
-                            if p < buf.len() {
-                                return Err(qjson_err::QJSON_TRAILING_CONTENT);
-                            }
-                        }
                     }
                     _ => return Err(qjson_err::QJSON_PARSE_ERROR),
                 }
@@ -273,14 +288,15 @@ pub(crate) fn validate_eager_fused(
         if scan < buf.len() {
             let mut end = scan;
             while end < buf.len() && !is_ws(buf[end]) { end += 1; }
-            validate_scalar(&buf[scan..end])?;
-            *stack.last_mut().unwrap() = CtxKind::TopDone;
-
+            // Check for trailing content BEFORE validating the scalar.
+            // Preserves old validate_trailing precedence: `1a 2` → QJSON_TRAILING_CONTENT.
             let mut p = end;
             while p < buf.len() && is_ws(buf[p]) { p += 1; }
             if p < buf.len() {
                 return Err(qjson_err::QJSON_TRAILING_CONTENT);
             }
+            validate_scalar(&buf[scan..end])?;
+            *stack.last_mut().unwrap() = CtxKind::TopDone;
         }
     } else {
         consume_scalar_gap(buf, prev_end, buf.len(), stack.last_mut().unwrap())?;
@@ -749,6 +765,35 @@ mod tests {
         assert_eq!(
             validate_eager_fused(b"{\"a\":\"a\" 123}", &ix(b"{\"a\":\"a\" 123}"), 1024),
             Err(qjson_err::QJSON_PARSE_ERROR),
+        );
+    }
+
+    // ── error-code precedence regression tests ──────────────────────
+
+    #[test]
+    fn fused_string_root_trailing_before_validation() {
+        // Old validate_trailing ran before validate_eager_values.
+        // `"\\q" x` → QJSON_TRAILING_CONTENT, not QJSON_INVALID_STRING.
+        assert_eq!(
+            validate_eager_fused(b"\"\\q\" x", &ix(b"\"\\q\" x"), 1024),
+            Err(qjson_err::QJSON_TRAILING_CONTENT),
+        );
+    }
+
+    #[test]
+    fn fused_scalar_then_structural_is_trailing() {
+        // `42 {}` — scalar root followed by container must be trailing.
+        assert_eq!(
+            validate_eager_fused(b"42 {}", &ix(b"42 {}"), 1024),
+            Err(qjson_err::QJSON_TRAILING_CONTENT),
+        );
+    }
+
+    #[test]
+    fn fused_scalar_then_array_is_trailing() {
+        assert_eq!(
+            validate_eager_fused(b"42[]", &ix(b"42[]"), 1024),
+            Err(qjson_err::QJSON_TRAILING_CONTENT),
         );
     }
 }

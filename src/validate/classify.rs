@@ -169,12 +169,57 @@ pub(crate) unsafe fn classify_str_chunk(chunk: __m256i) -> u32 {
     classify_str_mask(chunk)
 }
 
+/// Precomputed 32-byte LUT vectors (16-entry nibble table duplicated
+/// into both 128-bit lanes), loaded via `_mm256_load_si256`. Avoids
+/// rebuilding the vector on every call.
+#[cfg(all(target_arch = "x86_64", feature = "avx2"))]
+#[repr(align(32))]
+struct AlignedLut([u8; 32]);
+
+#[cfg(all(target_arch = "x86_64", feature = "avx2"))]
+static STR_LO_LUT_VEC: AlignedLut = build_aligned_lut(&STR_LO_TABLE);
+#[cfg(all(target_arch = "x86_64", feature = "avx2"))]
+static STR_HI_LUT_VEC: AlignedLut = build_aligned_lut(&STR_HI_TABLE);
+#[cfg(all(target_arch = "x86_64", feature = "avx2"))]
+static NUM_LO_LUT_VEC: AlignedLut = build_aligned_lut(&NUM_LO_TABLE);
+#[cfg(all(target_arch = "x86_64", feature = "avx2"))]
+static NUM_HI_LUT_VEC: AlignedLut = build_aligned_lut(&NUM_HI_TABLE);
+
+#[cfg(all(target_arch = "x86_64", feature = "avx2"))]
+const fn build_aligned_lut(table: &[u8; 16]) -> AlignedLut {
+    let mut a = [0u8; 32];
+    let mut i = 0usize;
+    while i < 16 {
+        a[i] = table[i];
+        a[i + 16] = table[i];
+        i += 1;
+    }
+    AlignedLut(a)
+}
+
+#[cfg(all(target_arch = "x86_64", feature = "avx2"))]
+#[inline(always)]
+unsafe fn load_str_luts() -> (__m256i, __m256i) {
+    (
+        _mm256_load_si256(STR_LO_LUT_VEC.0.as_ptr() as *const __m256i),
+        _mm256_load_si256(STR_HI_LUT_VEC.0.as_ptr() as *const __m256i),
+    )
+}
+
+#[cfg(all(target_arch = "x86_64", feature = "avx2"))]
+#[inline(always)]
+unsafe fn load_num_luts() -> (__m256i, __m256i) {
+    (
+        _mm256_load_si256(NUM_LO_LUT_VEC.0.as_ptr() as *const __m256i),
+        _mm256_load_si256(NUM_HI_LUT_VEC.0.as_ptr() as *const __m256i),
+    )
+}
+
 /// Returns a bitmask of bytes that match CTRL | BS | HIGH.
 #[cfg(all(target_arch = "x86_64", feature = "avx2"))]
 #[target_feature(enable = "avx2")]
 pub(crate) unsafe fn classify_str_mask(chunk: __m256i) -> u32 {
-    let lo_lut     = make_lut(&STR_LO_TABLE);
-    let hi_lut     = make_lut(&STR_HI_TABLE);
+    let (lo_lut, hi_lut) = load_str_luts();
     let classes    = classify_chunk(chunk, lo_lut, hi_lut);
     let zero       = _mm256_cmpeq_epi8(classes, _mm256_setzero_si256());
     let zero_mask  = _mm256_movemask_epi8(zero) as u32;
@@ -189,8 +234,7 @@ pub(crate) unsafe fn classify_str_mask(chunk: __m256i) -> u32 {
 #[cfg(all(target_arch = "x86_64", feature = "avx2"))]
 #[target_feature(enable = "avx2")]
 pub(crate) unsafe fn classify_num_chunk(chunk: __m256i) -> (__m256i, u32) {
-    let lo_lut     = make_lut(&NUM_LO_TABLE);
-    let hi_lut     = make_lut(&NUM_HI_TABLE);
+    let (lo_lut, hi_lut) = load_num_luts();
     let classes    = classify_chunk(chunk, lo_lut, hi_lut);
 
     // bad = bytes where CTRL | BS | HIGH is set.
