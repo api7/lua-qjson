@@ -17,7 +17,7 @@ else
 LUA_ENV := LD_LIBRARY_PATH=$(LIB_DIR) LUA_PATH='$(LUA_PATH)' LUA_CPATH='$(LUA_CPATH)'
 endif
 
-.PHONY: help build test lint bench clean
+.PHONY: help build test lint bench bench-rust bench-lua clean
 
 help: ## Show this help
 	@# FS uses [^#]* (not .*) so a description containing `##` isn't truncated.
@@ -34,7 +34,12 @@ test: build ## Run cargo tests + busted Lua tests
 lint: ## Run clippy with -D warnings
 	cargo clippy --release --all-targets -- -D warnings
 
-bench: build vendor/lua-cjson/cjson.so ## Run the OpenResty LuaJIT benchmark
+bench: bench-rust bench-lua ## Run all benchmarks (Rust criterion + Lua vs cjson)
+
+bench-rust: build ## Rust criterion microbench (parse path, MB/s + statistical CI)
+	cargo bench --bench parse_eager
+
+bench-lua: build vendor/lua-cjson/cjson.so ## Lua bench: qjson vs cjson vs simdjson
 	$(LUA_ENV) $(RESTY) benches/lua_bench.lua
 
 vendor/lua-cjson/cjson.so: | vendor/lua-cjson/Makefile
