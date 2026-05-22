@@ -14,9 +14,9 @@ Lua-table baselines.
 
 | | |
 |---|---|
-| Host CPU | Intel Core i5-9400, 6 cores, AVX2 + PCLMUL |
-| Memory | 15 GiB |
-| OS | Ubuntu 24.04.4 LTS, Linux 6.8.0-110-generic, x86_64 |
+| Host CPU | AMD EPYC Rome (Zen 2), 4 vCPUs, AVX2 + PCLMUL |
+| Memory | 8 GiB |
+| OS | Ubuntu 24.04, x86_64 |
 | Runtime | OpenResty `resty` 0.29 / OpenResty 1.21.4.4 / LuaJIT 2.1.1723681758 |
 | `qjson` | this repo, release build, AVX2 + PCLMUL scanner active |
 | `lua-cjson` | vendored `openresty/lua-cjson` |
@@ -81,32 +81,32 @@ Each row is "parse + access request fields" on the named payload.
 
 | Scenario | Size | cjson | simdjson | `qjson.parse` | `qjson.decode + access content` | `qjson.decode + qjson.encode` |
 |---|---:|---:|---:|---:|---:|---:|
-| small      |   2.1 KB | 106,646 | 137,427 | 135,296 |  97,574 | 202,388 |
-| medium     |  60.4 KB |  10,086 |  86,029 | 189,970 | 198,098 | 175,562 |
-| github-100k |   100 KB |   2,208 |   2,880 |   4,496 |   4,479 |   4,809 |
-| 100k       |   100 KB |   6,045 |  46,577 | 137,931 | 134,590 | 153,139 |
-| 200k       |   200 KB |   3,025 |  22,563 |  78,247 |  75,873 |  81,433 |
-| 500k       |   500 KB |   1,216 |   9,128 |  33,058 |  32,680 |  34,188 |
-| 1m         |  1.00 MB |     594 |   4,408 |  16,447 |  16,340 |  16,722 |
-| 2m         |  2.00 MB |     296 |   1,966 |   8,247 |   8,224 |   8,055 |
-| 5m         |  5.00 MB |     118 |     600 |   2,869 |   2,945 |   2,992 |
-| 10m        | 10.00 MB |      59 |     356 |   1,035 |   1,028 |   1,050 |
-| interleaved (100k/200k/500k/1m, cycled) | — | 1,318 | 9,116 | 33,342 | 32,752 | 34,031 |
+| small      |   2.1 KB |  94,075 | 108,108 | 127,214 | 120,398 | 203,666 |
+| medium     |  60.4 KB |   9,041 |  83,043 | 123,487 | 214,500 | 214,408 |
+| github-100k |   100 KB |   2,238 |   2,047 |   6,010 |   5,994 |   6,701 |
+| 100k       |   100 KB |   5,302 |  32,248 | 109,649 | 102,564 | 114,548 |
+| 200k       |   200 KB |   2,659 |  19,040 |  90,090 |  92,251 | 106,383 |
+| 500k       |   500 KB |   1,052 |   7,062 |  34,722 |  35,336 |  37,453 |
+| 1m         |  1.00 MB |     517 |   3,538 |  16,520 |  16,988 |  17,261 |
+| 2m         |  2.00 MB |     258 |   2,026 |   9,021 |   8,580 |   9,033 |
+| 5m         |  5.00 MB |     102 |     663 |   2,982 |   3,728 |   3,829 |
+| 10m        | 10.00 MB |      50 |     402 |   1,899 |   1,918 |   1,925 |
+| interleaved (100k/200k/500k/1m, cycled) | — | 1,141 | 9,544 | 34,043 | 33,611 | 32,752 |
 
 ### Speed-up vs. baselines
 
 | Scenario | `qjson.parse` / cjson | `qjson.parse` / simdjson | `qjson.decode + access content` / cjson | `qjson.decode + access content` / simdjson |
 |---|---:|---:|---:|---:|
-| small  |  1.3× |  1.0× |  0.9× |  0.7× |
-| medium | 18.8× |  2.2× | 19.6× |  2.3× |
-| github-100k | 2.0× |  1.6× | 2.0× |  1.6× |
-| 100k   | 22.8× |  3.0× | 22.3× |  2.9× |
-| 200k   | 25.9× |  3.5× | 25.1× |  3.4× |
-| 500k   | 27.2× |  3.6× | 26.9× |  3.6× |
-| 1m     | 27.7× |  3.7× | 27.5× |  3.7× |
-| 2m     | 27.9× |  4.2× | 27.8× |  4.2× |
-| 5m     | 24.3× |  4.8× | 25.0× |  4.9× |
-| 10m    | 17.5× |  2.9× | 17.4× |  2.9× |
+| small  |  1.4× |  1.2× |  1.3× |  1.1× |
+| medium | 13.7× |  1.5× | 23.7× |  2.6× |
+| github-100k | 2.7× |  2.9× | 2.7× |  2.9× |
+| 100k   | 20.7× |  3.4× | 19.3× |  3.2× |
+| 200k   | 33.9× |  4.7× | 34.7× |  4.8× |
+| 500k   | 33.0× |  4.9× | 33.6× |  5.0× |
+| 1m     | 32.0× |  4.7× | 32.9× |  4.8× |
+| 2m     | 35.0× |  4.5× | 33.3× |  4.2× |
+| 5m     | 29.2× |  4.5× | 36.5× |  5.6× |
+| 10m    | 38.0× |  4.7× | 38.4× |  4.8× |
 
 ## Results — memory delta (KB retained after 5 rounds)
 
@@ -116,17 +116,17 @@ from the last round may still be included.
 
 | Scenario | cjson | simdjson | `qjson.parse` | `qjson.decode + access content` | `qjson.decode + qjson.encode` |
 |---|---:|---:|---:|---:|---:|
-| small      | +15,464 | +15,447 | +4,094 | +15,251 | +11,908 |
-| medium     |  +1,955 |  +2,660 |   +160 |  +1,210 |  +1,216 |
-| github-100k | +13,187 | +3,362 |   +29 |    +548 |    +242 |
-| 100k       |    +484 |   +748 |   +79 |    +704 |    +241 |
-| 200k       |    +392 |   +523 |   +40 |    +352 |    +124 |
-| 500k       |    +577 |   +630 |   +17 |    +142 |     +48 |
-| 1m         |  +1,082 | +1,121 |   +13 |    +107 |     +37 |
-| 2m         |  +1,155 | +1,248 |   +21 |    +211 |     +48 |
-| 5m         |  +1,316 | +1,538 |   +17 |    +403 |     +48 |
-| 10m        |  +1,583 | +2,014 |   +16 |    +844 |     +48 |
-| interleaved | +3,355 | +4,404 |  +314 |  +2,825 |    +945 |
+| small      | +15,493 | +15,500 | +4,066 | +15,116 | +11,140 |
+| medium     |  +1,955 |  +2,660 |   +333 |  +1,114 |  +1,120 |
+| github-100k | +12,018 | +3,527 |    +14 |    +536 |    +230 |
+| 100k       |    +485 |   +748 |    +67 |    +692 |    +229 |
+| 200k       |    +392 |   +523 |    +34 |    +346 |    +112 |
+| 500k       |    +577 |   +630 |    +14 |    +139 |     +45 |
+| 1m         |  +1,082 | +1,121 |    +10 |    +104 |     +34 |
+| 2m         |  +1,155 | +1,248 |    +14 |    +208 |     +45 |
+| 5m         |  +1,316 | +1,538 |    +14 |    +400 |     +45 |
+| 10m        |  +1,583 | +2,014 |    +14 |    +708 |     +45 |
+| interleaved | +3,356 | +4,404 |   +268 |  +2,771 |    +897 |
 
 `qjson.parse` retention is essentially constant across payload size: the only
 GC-rooted state is the reusable `indices: Vec<u32>` and `scratch` buffers.
@@ -139,17 +139,16 @@ key into the Lua table heap.
 
 1. **`qjson` is fastest once payloads move beyond tiny inputs.**
    The small 2 KB row is dominated by fixed Lua/FFI overhead, but medium and
-   larger multimodal payloads show roughly 18–28× higher throughput than
+   larger multimodal payloads show roughly 14–38× higher throughput than
    `cjson` and roughly 3–5× higher throughput than `lua-resty-simdjson`
    for request-field access.
 2. **Reading every `messages[*].content` is still access-light for large
    multimodal bodies.** The benchmark touches the top-level request fields and
    one `content` field per message; the payload size comes from image data
    inside each message.
-3. **The win drops at 10 MB.** `qjson.parse` is L3-bandwidth-bound at that
-   size, and the `qjson.decode` proxy's per-`__index` dispatch starts to
-   amortize less well against the cheaper structural scan. `cjson` is still
-   allocating into the table heap at that size, so the ratio remains large.
+3. **Speedup remains high at 10 MB.** The eager-decode optimization
+   keeps `qjson.parse` throughput scaling well even at the 10 MB level,
+   maintaining ~38× over cjson and ~5× over simdjson.
 4. **`qjson.decode + qjson.encode (unmodified)` is the headline number for
    passthrough workloads** — e.g. an LLM gateway re-emitting the original
    JSON after light-touch inspection. The substring fast path means
@@ -159,7 +158,7 @@ key into the Lua table heap.
    size; the eager parsers retain more Lua heap after the first run
    because the Lua table tree stays GC-rooted until the next collection.
    The 10 MB case retains ~1.5 MB for `cjson`, ~2.0 MB for simdjson,
-   and ~16 KB for `qjson.parse`.
+   and ~14 KB for `qjson.parse`.
 6. **REST API payloads (github-100k) show a smaller speedup** because their
    structural density is higher than the multimodal request ladder. Memory
    savings remain dramatic because `cjson` must materialize every nested

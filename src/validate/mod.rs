@@ -143,6 +143,7 @@ pub(crate) fn validate_trailing(
 pub(crate) fn validate_eager_values(
     buf: &[u8],
     indices: &[u32],
+    max_depth: u32,
 ) -> Result<(), qjson_err> {
     // Stack of container contexts; the top is the current state.
     // We use a single seed entry `CtxKind::Top` for the root value.
@@ -177,6 +178,9 @@ pub(crate) fn validate_eager_values(
                         // Transition parent to AfterValue ahead of the
                         // descent; the inner container's close pops back.
                         *cur = parent_after_value(*cur);
+                        if stack.len() > max_depth as usize {
+                            return Err(qjson_err::QJSON_NESTING_TOO_DEEP);
+                        }
                         stack.push(if b == b'{' {
                             CtxKind::ObjAfterOpen
                         } else {
@@ -427,7 +431,7 @@ mod tests {
     #[test]
     fn grammar_accepts_empty_containers() {
         for buf in [&b"{}"[..], &b"[]"[..]] {
-            assert!(validate_eager_values(buf, &ix(buf)).is_ok(),
+            assert!(validate_eager_values(buf, &ix(buf), 1024).is_ok(),
                 "grammar should accept {:?}", buf);
         }
     }
@@ -439,7 +443,7 @@ mod tests {
             &b"[true,false,null]"[..], &b"\"hi\""[..], &b"42"[..],
             &b"{\"a\":[1,{\"b\":2}]}"[..],
         ] {
-            assert!(validate_eager_values(buf, &ix(buf)).is_ok(),
+            assert!(validate_eager_values(buf, &ix(buf), 1024).is_ok(),
                 "grammar should accept {:?}", buf);
         }
     }
@@ -447,42 +451,67 @@ mod tests {
     #[test]
     fn grammar_rejects_missing_colon() {
         let buf = b"{\"a\"}";
-        assert_eq!(validate_eager_values(buf, &ix(buf)), Err(qjson_err::QJSON_PARSE_ERROR));
+        assert_eq!(validate_eager_values(buf, &ix(buf), 1024), Err(qjson_err::QJSON_PARSE_ERROR));
     }
 
     #[test]
     fn grammar_rejects_leading_comma_with_value() {
         let buf = b"[,1]";
-        assert_eq!(validate_eager_values(buf, &ix(buf)), Err(qjson_err::QJSON_PARSE_ERROR));
+        assert_eq!(validate_eager_values(buf, &ix(buf), 1024), Err(qjson_err::QJSON_PARSE_ERROR));
     }
 
     #[test]
     fn grammar_rejects_missing_comma_in_object() {
         let buf = b"{\"a\":1\"b\":2}";
-        assert_eq!(validate_eager_values(buf, &ix(buf)), Err(qjson_err::QJSON_PARSE_ERROR));
+        assert_eq!(validate_eager_values(buf, &ix(buf), 1024), Err(qjson_err::QJSON_PARSE_ERROR));
     }
 
     #[test]
     fn grammar_rejects_non_string_object_key() {
         let buf = b"{1:1}";
-        assert_eq!(validate_eager_values(buf, &ix(buf)), Err(qjson_err::QJSON_PARSE_ERROR));
+        assert_eq!(validate_eager_values(buf, &ix(buf), 1024), Err(qjson_err::QJSON_PARSE_ERROR));
     }
 
     #[test]
     fn grammar_rejects_colon_in_array() {
         let buf = b"[1:2]";
-        assert_eq!(validate_eager_values(buf, &ix(buf)), Err(qjson_err::QJSON_PARSE_ERROR));
+        assert_eq!(validate_eager_values(buf, &ix(buf), 1024), Err(qjson_err::QJSON_PARSE_ERROR));
     }
 
     #[test]
     fn grammar_rejects_missing_comma_between_arrays() {
         let buf = b"[3[4]]";
-        assert_eq!(validate_eager_values(buf, &ix(buf)), Err(qjson_err::QJSON_PARSE_ERROR));
+        assert_eq!(validate_eager_values(buf, &ix(buf), 1024), Err(qjson_err::QJSON_PARSE_ERROR));
     }
 
     #[test]
     fn grammar_rejects_trailing_garbage_inside_object() {
         let buf = b"{\"a\":\"a\" 123}";
-        assert_eq!(validate_eager_values(buf, &ix(buf)), Err(qjson_err::QJSON_PARSE_ERROR));
+        assert_eq!(validate_eager_values(buf, &ix(buf), 1024), Err(qjson_err::QJSON_PARSE_ERROR));
+    }
+
+    // ── depth enforcement via validate_eager_values ─────────────────
+
+    #[test]
+    fn grammar_accepts_at_max_depth() {
+        // 1024 nested arrays at the default max_depth limit.
+        let mut buf = Vec::new();
+        for _ in 0..1024 { buf.push(b'['); }
+        for _ in 0..1024 { buf.push(b']'); }
+        assert!(
+            validate_eager_values(&buf, &ix(&buf), 1024).is_ok(),
+            "should accept exactly at max_depth"
+        );
+    }
+
+    #[test]
+    fn grammar_rejects_over_max_depth() {
+        // 1025 nested arrays — one past the default max_depth limit.
+        let mut buf = Vec::new();
+        for _ in 0..1025 { buf.push(b'['); }
+        for _ in 0..1025 { buf.push(b']'); }
+        assert_eq!(
+            validate_eager_values(&buf, &ix(&buf), 1024), Err(qjson_err::QJSON_NESTING_TOO_DEEP),
+        );
     }
 }

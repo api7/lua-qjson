@@ -285,7 +285,7 @@ pub unsafe extern "C" fn qjson_get_str(
         let close = d.indices[(cur.idx_start + 1) as usize] as usize;
 
         let mut scratch = d.scratch.borrow_mut();
-        match string::decode_string(d.buf, pos + 1, close, &mut scratch) {
+        match string::decode_string(d.buf, pos + 1, close, &mut scratch, d.eager_validated) {
             Ok((p, n)) => { *out_ptr = p; *out_len = n; qjson_err::QJSON_OK as c_int }
             Err(e) => e as c_int,
         }
@@ -312,7 +312,7 @@ pub unsafe extern "C" fn qjson_get_i64(
         let bytes = match scalar_bytes(d, cur) {
             Ok(b) => b, Err(e) => return e as c_int,
         };
-        match number::parse_i64(bytes) {
+        match number::parse_i64(bytes, d.eager_validated) {
             Ok(v) => { *out = v; qjson_err::QJSON_OK as c_int }
             Err(e) => e as c_int,
         }
@@ -338,7 +338,7 @@ pub unsafe extern "C" fn qjson_get_f64(
         let bytes = match scalar_bytes(d, cur) {
             Ok(b) => b, Err(e) => return e as c_int,
         };
-        match number::parse_f64(bytes) {
+        match number::parse_f64(bytes, d.eager_validated) {
             Ok(v) => { *out = v; qjson_err::QJSON_OK as c_int }
             Err(e) => e as c_int,
         }
@@ -563,7 +563,7 @@ pub unsafe extern "C" fn qjson_cursor_get_str(
         let close = d.indices[(cur.idx_start + 1) as usize] as usize;
 
         let mut scratch = d.scratch.borrow_mut();
-        match string::decode_string(d.buf, pos + 1, close, &mut scratch) {
+        match string::decode_string(d.buf, pos + 1, close, &mut scratch, d.eager_validated) {
             Ok((p, n)) => { *out_ptr = p; *out_len = n; qjson_err::QJSON_OK as c_int }
             Err(e) => e as c_int,
         }
@@ -591,7 +591,7 @@ pub unsafe extern "C" fn qjson_cursor_get_i64(
         };
         let cur = match cur.resolve(d, p) { Ok(x) => x, Err(e) => return e as c_int };
         let bytes = match scalar_bytes(d, cur) { Ok(b) => b, Err(e) => return e as c_int };
-        match number::parse_i64(bytes) {
+        match number::parse_i64(bytes, d.eager_validated) {
             Ok(v) => { *out = v; qjson_err::QJSON_OK as c_int }
             Err(e) => e as c_int,
         }
@@ -618,7 +618,7 @@ pub unsafe extern "C" fn qjson_cursor_get_f64(
         };
         let cur = match cur.resolve(d, p) { Ok(x) => x, Err(e) => return e as c_int };
         let bytes = match scalar_bytes(d, cur) { Ok(b) => b, Err(e) => return e as c_int };
-        match number::parse_f64(bytes) {
+        match number::parse_f64(bytes, d.eager_validated) {
             Ok(v) => { *out = v; qjson_err::QJSON_OK as c_int }
             Err(e) => e as c_int,
         }
@@ -794,7 +794,7 @@ pub unsafe extern "C" fn qjson_cursor_object_entry_at(
         let open_pos = d.indices[key_idx_start as usize] as usize;
         let close_pos = d.indices[(key_idx_start + 1) as usize] as usize;
         let mut scratch = d.scratch.borrow_mut();
-        match string::decode_string(d.buf, open_pos + 1, close_pos, &mut scratch) {
+        match string::decode_string(d.buf, open_pos + 1, close_pos, &mut scratch, d.eager_validated) {
             Ok((p, n)) => {
                 *key_ptr = p;
                 *key_len = n;
