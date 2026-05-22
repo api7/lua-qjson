@@ -105,11 +105,11 @@ AMD EPYC Rome (Zen 2, 4 vCPUs); 5 rounds, deterministic payload):
 
 | Size | cjson | simdjson | `qjson.parse` | `qjson.decode + access content` | speedup vs. cjson |
 |---:|---:|---:|---:|---:|---:|
-|   2 KB |  94,075 | 108,108 | 127,214 | 120,398 |  1.4× /  1.3× |
-|  60 KB |   9,041 |  83,043 | 123,487 | 214,500 | 13.7× / 23.7× |
-| 100 KB |   5,302 |  32,248 | 109,649 | 102,564 | 20.7× / 19.3× |
-|   1 MB |     517 |   3,538 |  16,520 |  16,988 | 32.0× / 32.9× |
-|  10 MB |      50 |     402 |   1,899 |   1,918 | 38.0× / 38.4× |
+|   2 KB |  90,851 | 108,762 | 127,966 | 142,361 |  1.4× /  1.6× |
+|  60 KB |   8,941 |  81,050 | 117,151 | 203,252 | 13.1× / 22.7× |
+| 100 KB |   5,346 |  44,366 | 122,249 | 130,208 | 22.9× / 24.4× |
+|   1 MB |     513 |   3,610 |  14,124 |  15,167 | 27.5× / 29.6× |
+|  10 MB |      50 |     389 |   1,576 |   1,599 | 31.5× / 32.0× |
 
 `qjson.parse` wins because it skips building a Lua table for the parts you
 never read; `qjson.decode + t.field` adds a cjson-shaped table proxy on top
