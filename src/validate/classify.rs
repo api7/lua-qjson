@@ -9,6 +9,11 @@
 //! This replaces the three-comparison approach (`high || bs || ctrl`)
 //! used by the old string validation fast-path and extends the same
 //! LUT infrastructure to number validation.
+//!
+//! Some items (number LUTs, constants) are kept for planned number
+//! validation SIMD path.
+
+#![allow(dead_code)]
 
 pub(crate) const CLS_CTRL:  u8 = 0x01;
 pub(crate) const CLS_BS:    u8 = 0x02;
@@ -180,8 +185,7 @@ pub(crate) unsafe fn classify_str_mask(chunk: __m256i) -> u32 {
 ///
 /// Returns `(class_vector, bad_mask)`:
 ///   - `class_vector`: per-byte class bitmask (DIGIT | NUMS | CTRL | …)
-///   - `bad_mask`:     bits set for bytes with CTRL | BS | HIGH
-///                     (bytes that are unconditionally invalid in a number).
+///   - `bad_mask`:     bits set for bytes with CTRL | BS | HIGH (unconditionally invalid in a number).
 #[cfg(all(target_arch = "x86_64", feature = "avx2"))]
 #[target_feature(enable = "avx2")]
 pub(crate) unsafe fn classify_num_chunk(chunk: __m256i) -> (__m256i, u32) {

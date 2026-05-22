@@ -49,6 +49,7 @@ pub(crate) fn validate_depth(
 /// bracket where nesting depth returns to zero — that is the actual root
 /// end, regardless of how many additional structural chars the buffer has.
 /// For scalar roots (no opening bracket), we scan the raw bytes.
+#[allow(dead_code)]
 pub(crate) fn validate_trailing(
     buf: &[u8],
     indices: &[u32],
@@ -306,6 +307,7 @@ pub(crate) fn validate_eager_fused(
 /// `validate_number` or matched against the three literal keywords;
 /// the error-code precedence matches the previous heuristic-based
 /// `check_gap` so existing tests keep their current error codes.
+#[allow(dead_code)]
 pub(crate) fn validate_eager_values(
     buf: &[u8],
     indices: &[u32],
