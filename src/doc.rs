@@ -6,6 +6,7 @@ use crate::skip_cache::SkipCache;
 pub struct Document<'a> {
     pub(crate) buf:     &'a [u8],
     pub(crate) indices: Vec<u32>,
+    pub(crate) eager_validated: bool,
     pub(crate) scratch: RefCell<Vec<u8>>,
     pub(crate) skip:    RefCell<SkipCache>,
 }
@@ -30,16 +31,17 @@ impl<'a> Document<'a> {
         crate::scan::scan(buf, &mut indices).map_err(|_| qjson_err::QJSON_PARSE_ERROR)?;
         indices.push(u32::MAX);
 
-        crate::validate::validate_depth(buf, &indices, max_depth)?;
-
         if opts.is_eager() {
             crate::validate::validate_trailing(buf, &indices)?;
-            crate::validate::validate_eager_values(buf, &indices)?;
+            crate::validate::validate_eager_values(buf, &indices, max_depth)?;
+        } else {
+            crate::validate::validate_depth(buf, &indices, max_depth)?;
         }
 
         Ok(Self {
             buf,
             indices,
+            eager_validated: opts.is_eager(),
             scratch: RefCell::new(Vec::new()),
             skip:    RefCell::new(SkipCache::new()),
         })

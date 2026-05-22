@@ -5,9 +5,12 @@ use crate::error::qjson_err;
 /// (ptr, len) pointing into either `buf` (no escapes) or `scratch`.
 pub(crate) fn decode_string(
     buf: &[u8], start: usize, end: usize, scratch: &mut Vec<u8>,
+    skip_validation: bool,
 ) -> Result<(*const u8, usize), qjson_err> {
     let slice = &buf[start..end];
-    crate::validate::validate_string_span(slice)?;
+    if !skip_validation {
+        crate::validate::validate_string_span(slice)?;
+    }
     if memchr::memchr(b'\\', slice).is_none() {
         return Ok((slice.as_ptr(), slice.len()));
     }
@@ -101,7 +104,7 @@ mod tests {
 
     fn d(s: &[u8]) -> Result<Vec<u8>, qjson_err> {
         let mut scratch = Vec::new();
-        let (p, n) = decode_string(s, 0, s.len(), &mut scratch)?;
+        let (p, n) = decode_string(s, 0, s.len(), &mut scratch, false)?;
         Ok(unsafe { std::slice::from_raw_parts(p, n) }.to_vec())
     }
 

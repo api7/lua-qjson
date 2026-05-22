@@ -1,7 +1,9 @@
 use crate::error::qjson_err;
 
-pub(crate) fn parse_i64(bytes: &[u8]) -> Result<i64, qjson_err> {
-    crate::validate::validate_number(bytes)?;
+pub(crate) fn parse_i64(bytes: &[u8], skip_validation: bool) -> Result<i64, qjson_err> {
+    if !skip_validation {
+        crate::validate::validate_number(bytes)?;
+    }
     // After ABNF validation, integer-only inputs have no `.`/`e`/`E`.
     if bytes.iter().any(|&b| b == b'.' || b == b'e' || b == b'E') {
         return Err(qjson_err::QJSON_TYPE_MISMATCH);
@@ -24,8 +26,10 @@ pub(crate) fn parse_i64(bytes: &[u8]) -> Result<i64, qjson_err> {
     Ok(v)
 }
 
-pub(crate) fn parse_f64(bytes: &[u8]) -> Result<f64, qjson_err> {
-    crate::validate::validate_number(bytes)?;
+pub(crate) fn parse_f64(bytes: &[u8], skip_validation: bool) -> Result<f64, qjson_err> {
+    if !skip_validation {
+        crate::validate::validate_number(bytes)?;
+    }
     let s = std::str::from_utf8(bytes).map_err(|_| qjson_err::QJSON_DECODE_FAILED)?;
     match s.parse::<f64>() {
         Ok(v) if v.is_finite() => Ok(v),
@@ -38,39 +42,39 @@ pub(crate) fn parse_f64(bytes: &[u8]) -> Result<f64, qjson_err> {
 mod tests {
     use super::*;
 
-    #[test] fn i64_zero()       { assert_eq!(parse_i64(b"0"),  Ok(0)); }
-    #[test] fn i64_positive()   { assert_eq!(parse_i64(b"42"), Ok(42)); }
-    #[test] fn i64_negative()   { assert_eq!(parse_i64(b"-7"), Ok(-7)); }
-    #[test] fn i64_max() { assert_eq!(parse_i64(b"9223372036854775807"), Ok(i64::MAX)); }
-    #[test] fn i64_min() { assert_eq!(parse_i64(b"-9223372036854775808"), Ok(i64::MIN)); }
+    #[test] fn i64_zero()       { assert_eq!(parse_i64(b"0", false),  Ok(0)); }
+    #[test] fn i64_positive()   { assert_eq!(parse_i64(b"42", false), Ok(42)); }
+    #[test] fn i64_negative()   { assert_eq!(parse_i64(b"-7", false), Ok(-7)); }
+    #[test] fn i64_max() { assert_eq!(parse_i64(b"9223372036854775807", false), Ok(i64::MAX)); }
+    #[test] fn i64_min() { assert_eq!(parse_i64(b"-9223372036854775808", false), Ok(i64::MIN)); }
 
     #[test]
     fn i64_overflow() {
-        assert_eq!(parse_i64(b"9223372036854775808"), Err(qjson_err::QJSON_OUT_OF_RANGE));
+        assert_eq!(parse_i64(b"9223372036854775808", false), Err(qjson_err::QJSON_OUT_OF_RANGE));
     }
 
     #[test]
     fn i64_rejects_decimal() {
-        assert_eq!(parse_i64(b"1.5"), Err(qjson_err::QJSON_TYPE_MISMATCH));
+        assert_eq!(parse_i64(b"1.5", false), Err(qjson_err::QJSON_TYPE_MISMATCH));
     }
 
     #[test]
     fn i64_rejects_exponent() {
-        assert_eq!(parse_i64(b"1e5"), Err(qjson_err::QJSON_TYPE_MISMATCH));
+        assert_eq!(parse_i64(b"1e5", false), Err(qjson_err::QJSON_TYPE_MISMATCH));
     }
 
     #[test]
     fn i64_rejects_empty() {
-        assert_eq!(parse_i64(b""), Err(qjson_err::QJSON_INVALID_NUMBER));
+        assert_eq!(parse_i64(b"", false), Err(qjson_err::QJSON_INVALID_NUMBER));
     }
 
-    #[test] fn f64_zero()    { assert_eq!(parse_f64(b"0.0").unwrap(),  0.0); }
-    #[test] fn f64_inexact_decimal() { assert!((parse_f64(b"1.7").unwrap() - 1.7).abs() < 1e-12); }
-    #[test] fn f64_negative(){ assert_eq!(parse_f64(b"-1.5").unwrap(), -1.5); }
-    #[test] fn f64_exponent(){ assert_eq!(parse_f64(b"1e2").unwrap(),  100.0); }
+    #[test] fn f64_zero()    { assert_eq!(parse_f64(b"0.0", false).unwrap(),  0.0); }
+    #[test] fn f64_inexact_decimal() { assert!((parse_f64(b"1.7", false).unwrap() - 1.7).abs() < 1e-12); }
+    #[test] fn f64_negative(){ assert_eq!(parse_f64(b"-1.5", false).unwrap(), -1.5); }
+    #[test] fn f64_exponent(){ assert_eq!(parse_f64(b"1e2", false).unwrap(),  100.0); }
 
     #[test]
     fn f64_rejects_garbage() {
-        assert_eq!(parse_f64(b"hello"), Err(qjson_err::QJSON_INVALID_NUMBER));
+        assert_eq!(parse_f64(b"hello", false), Err(qjson_err::QJSON_INVALID_NUMBER));
     }
 }
