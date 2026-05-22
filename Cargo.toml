@@ -22,7 +22,12 @@ rustc-hash = "2"
 once_cell = "1"
 
 [dev-dependencies]
-proptest = "1"
+proptest  = "1"
+criterion = { version = "0.5", features = ["html_reports"] }
+
+[[bench]]
+name = "parse_eager"
+harness = false
 
 [profile.release]
 opt-level = 3
