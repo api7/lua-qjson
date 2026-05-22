@@ -220,50 +220,103 @@ local function default_table_access(t)
     end
 end
 
--- CJK+emoji payload: array of objects with Chinese text, emoji, and
--- mixed ASCII/CJK field names. Each object has ~1 KB of string content,
--- roughly 50% multi-byte UTF-8. Stresses the PSHUFB byte classifier
--- (high-bit bytes) and UTF-8 validation path.
+-- Safe UTF-8 truncation: backs up past incomplete multi-byte sequences.
+local function safe_sub(s, len)
+    if #s <= len then return s end
+    local pos = len
+    while pos > 0 and s:byte(pos) >= 0x80 and s:byte(pos) < 0xC0 do pos = pos - 1 end
+    if pos > 0 then
+        local lead = s:byte(pos)
+        local need = 0
+        if lead >= 0xF0 then need = 3
+        elseif lead >= 0xE0 then need = 2
+        elseif lead >= 0xC2 then need = 1
+        end
+        if len - pos < need then pos = pos - 1 end
+        while pos > 0 and s:byte(pos) >= 0x80 and s:byte(pos) < 0xC0 do pos = pos - 1 end
+    end
+    return s:sub(1, pos)
+end
+
+-- CJK GitHub-issues payload: same 20-field structure as github-100k but
+-- with Chinese text and emoji in body/title/labels. Directly comparable
+-- to github-100k — isolates the UTF-8 / high-bit byte impact.
 local function make_cjk_payload(target_bytes)
-    local items = {}
-    local current = 2  -- "["
+    local issues = {}
+    local current = 2
     local n = 1
-    local cjk_text = "这是一段中文测试文本包含各种常用汉字以及标点符号用于模拟真实的中文API返回数据"
+    local cjk_body = "这是一段用于模拟GitHub Issues中文描述的测试文本包含常见的开发术语问题报告功能请求以及Bug修复记录"
         .. "😀🎉💡✨🚀🌟🔥🎊💯👍❤️🌍📱🎵🏆🍕🎮📚💻🔑🎁"
-    -- Build a pool of short tags from the text
-    local tag_chars = { "标签1", "标签2", "中文", "测试", "数据", "API", "返回", "响应" }
+    local cjk_title = "修复用户登录页面在移动端的显示问题并优化响应式布局"
     while current < target_bytes do
-        local name = string.format("用户%d", n)
-        local bio = "简介：" .. cjk_text
-        local tag = tag_chars[(n - 1) % #tag_chars + 1]
-        local item = string.format(
-            [[{"id":%d,"name":"%s","bio":"%s","tags":["%s","中文","emoji"],"score":%d}]],
-            n, name, bio, tag, n * 13 % 100)
-        if current + #item + 3 > target_bytes then break end
-        if n > 1 then items[#items + 1] = "," end
-        items[#items + 1] = item
-        current = current + #item + 1
+        local labels = {}
+        local label_count = (n % 4)
+        local label_names = { "缺陷bug", "功能增强", "文档优化", "性能改进" }
+        for i = 1, label_count do
+            labels[#labels + 1] = string.format(
+                [[{"id":%d,"name":"%s","color":"%06x","description":"标签分类描述"}]],
+                10000 + n * 10 + i, label_names[i], (n * 12345 + i) % 0xFFFFFF)
+        end
+        -- Use whole multiples of cjk_body to avoid UTF-8 truncation
+        local reps = 1 + (n % 3)
+        local body = string.rep(cjk_body, reps)
+        local issue = string.format([[{
+"id":%d,
+"number":%d,
+"title":"%s #%d",
+"body":"%s",
+"state":"%s",
+"locked":%s,
+"comments":%d,
+"user":{"login":"用户%d","id":%d,"avatar_url":"https://avatars.githubusercontent.com/u/%d?v=4","type":"用户","site_admin":false},
+"labels":[%s],
+"assignees":[],
+"milestone":null,
+"created_at":"2024-%02d-%02dT%02d:%02d:%02dZ",
+"updated_at":"2024-%02d-%02dT%02d:%02d:%02dZ",
+"closed_at":null,
+"author_association":"贡献者",
+"html_url":"https://github.com/example/中文仓库/issues/%d",
+"url":"https://api.github.com/repos/example/中文仓库/issues/%d",
+"repository_url":"https://api.github.com/repos/example/中文仓库",
+"labels_url":"https://api.github.com/repos/example/中文仓库/issues/%d/labels{/名称}",
+"comments_url":"https://api.github.com/repos/example/中文仓库/issues/%d/评论",
+"events_url":"https://api.github.com/repos/example/中文仓库/issues/%d/事件"
+}]],
+            1000000 + n, n, cjk_title, n, body,
+            n % 3 == 0 and "已关闭" or "进行中",
+            n % 7 == 0 and "true" or "false",
+            n % 50, n % 100, 100000 + n, 100000 + n,
+            table.concat(labels, ","),
+            (n % 12) + 1, (n % 28) + 1, n % 24, n % 60, n % 60,
+            (n % 12) + 1, (n % 28) + 1, (n + 1) % 24, (n + 5) % 60, (n + 10) % 60,
+            n, n, n, n, n)
+        issue = issue:gsub("\n", "")
+        if current + #issue + 3 > target_bytes then break end
+        issues[#issues + 1] = issue
+        current = current + #issue + 1
         n = n + 1
     end
-    return "[" .. table.concat(items) .. "]"
+    return "[" .. table.concat(issues, ",") .. "]"
 end
 
 local function cjk_qjson_access(d)
-    local _ = d:get_str("[0].name")
-    local _ = d:get_str("[0].bio")
-    local _ = d:get_str("[0].tags[0]")
+    if not d then return end
+    local _ = d:get_i64("[0].id")
+    local _ = d:get_str("[0].title")
+    local _ = d:get_str("[0].user.login")
 end
 
 local function cjk_table_access(t)
-    local _ = t[1] and t[1].name
-    local _ = t[1] and t[1].bio
-    local _ = t[1] and t[1].tags and t[1].tags[1]
+    local _ = t[1] and t[1].id
+    local _ = t[1] and t[1].title
+    local _ = t[1] and t[1].user and t[1].user.login
 end
 
 local function cjk_cjson_access(obj)
-    local _ = obj[1] and obj[1].name
-    local _ = obj[1] and obj[1].bio
-    local _ = obj[1] and obj[1].tags and obj[1].tags[1]
+    local _ = obj[1] and obj[1].id
+    local _ = obj[1] and obj[1].title
+    local _ = obj[1] and obj[1].user and obj[1].user.login
 end
 
 -- GitHub issues accessors: array of issues, access first issue's fields
@@ -291,7 +344,8 @@ local scenarios = {
     {name = "github-100k",  iters = 100, payload = make_github_issues_payload(100 * 1024),
      cjson_access = github_cjson_access, qjson_access = github_qjson_access, table_access = github_table_access},
     {name = "cjk-100k",     iters = 100, payload = make_cjk_payload(100 * 1024),
-     cjson_access = cjk_cjson_access, qjson_access = cjk_qjson_access, table_access = cjk_table_access},
+     cjson_access = cjk_cjson_access, qjson_access = cjk_qjson_access, table_access = cjk_table_access,
+     no_simdjson = true},
     {name = "100k",   iters = 100,  payload = make_payload(100 * 1024)},
     {name = "200k",   iters = 50,   payload = make_payload(200 * 1024)},
     {name = "500k",   iters = 20,   payload = make_payload(500 * 1024)},
@@ -323,7 +377,7 @@ for _, s in ipairs(scenarios) do
         cjson_access(obj)
     end)
 
-    if simdjson then
+    if simdjson and not s.no_simdjson then
         bench("simdjson.decode + access fields", s.iters, function()
             local obj = simdjson:decode(s.payload)
             cjson_access(obj)
