@@ -45,10 +45,14 @@ cargo test --features test-panic --release
 
 ### Two-phase parse
 
-**Phase 1** (`src/scan/`, called from `Document::parse_with_options`): a structural scanner walks the input once and writes the byte offset of every non-string-interior `{ } [ ] : , "` into `doc.indices`. Then `validate_depth` is run unconditionally; in EAGER mode, `validate_trailing` and `validate_eager_values` (number ABNF + string content + UTF-8) follow. In LAZY mode, value-level checks are skipped and rely on the lazy decode path at field-access time. A `u32::MAX` sentinel is appended. The scanner is selected at first use via `OnceCell` in `src/scan/mod.rs`:
+**Phase 1** (`src/scan/`, called from `Document::parse_with_options`): a structural scanner walks the input once and writes the byte offset of every non-string-interior `{ } [ ] : , "` into `doc.indices`. In LAZY mode, only `validate_depth` is run. In EAGER mode, `validate_eager_fused` runs — a single O(indices) pass that combines depth checking, trailing-content detection, and grammar/value validation (number ABNF + string content + UTF-8). String validation uses a PSHUFB nibble-LUT byte classifier (`src/validate/classify.rs`) for per-byte class bitmasks in ~3 SIMD ops per 32-byte chunk. A `u32::MAX` sentinel is appended. The scanner and string validator are selected at first use via `OnceCell`:
 
-- `Avx2Scanner` (gated by the `avx2` cargo feature, default-on) when both `avx2` and `pclmulqdq` are detected at runtime.
-- `ScalarScanner` otherwise.
+- **Scanner** (`src/scan/mod.rs`):
+  - `Avx2Scanner` (gated by the `avx2` cargo feature, default-on) when both `avx2` and `pclmulqdq` are detected at runtime.
+  - `ScalarScanner` otherwise.
+- **String validator** (`src/validate/strings/mod.rs`):
+  - AVX2 PSHUFB classifier when `avx2` is detected.
+  - Scalar state machine otherwise.
 
 Validation level depends on `qjson_options.mode`. **EAGER** (default): a post-scan pass walks `indices` and validates RFC 8259 number ABNF, string content (no unescaped control chars), and UTF-8 — parse fails on any value-level violation. **LAZY** (opt-in): bracket/quote balance + max-depth only; value-level errors surface when the offending field is accessed (lua-cjson-equivalent behavior). Trailing-content rejection and value-level validation are eager-only; max-depth (default 1024, configurable up to 4096) is enforced in both modes.
 
@@ -72,6 +76,7 @@ src/
   cursor.rs       Cursor + path resolution + skip-cache walk
   path.rs         zero-alloc path-string iterator
   decode/         lazy string / number decode
+  validate/       post-scan validators: validate_eager_fused, depth, strings, numbers
   scan/           ScalarScanner, Avx2Scanner, runtime dispatch
   skip_cache.rs   Phase 2 sibling-skip cache
   error.rs        qjson_err + qjson_type enums (must stay in sync with include/qjson.h and lua/qjson.lua)

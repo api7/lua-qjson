@@ -146,8 +146,9 @@ key into the Lua table heap.
    multimodal bodies.** The benchmark touches the top-level request fields and
    one `content` field per message; the payload size comes from image data
    inside each message.
-3. **Speedup remains high at 10 MB.** The eager-decode optimization
-   keeps `qjson.parse` throughput scaling well even at the 10 MB level,
+3. **Speedup remains high at 10 MB.** The eager decode deduplication
+   (skip re-validation when eagerly validated) and fused eager validation
+   passes keep `qjson.parse` throughput scaling well even at the 10 MB level,
    maintaining ~38× over cjson and ~5× over simdjson.
 4. **`qjson.decode + qjson.encode (unmodified)` is the headline number for
    passthrough workloads** — e.g. an LLM gateway re-emitting the original
@@ -163,6 +164,19 @@ key into the Lua table heap.
    structural density is higher than the multimodal request ladder. Memory
    savings remain dramatic because `cjson` must materialize every nested
    object and string into the Lua heap.
+
+## Eager validation micro-benchmark (Rust)
+
+The eager validation path was optimized by fusing three separate post-scan
+passes (`validate_depth`, `validate_trailing`, `validate_eager_values`) into a
+single `validate_eager_fused` traversal, and replacing the AVX2 string validator
+with a PSHUFB nibble-LUT byte classifier. On 1 MB payloads (10-run avg, AMD
+EPYC Rome Zen 2):
+
+| Payload | Before | After | Improvement |
+|---------|--------|-------|-------------|
+| GitHub-style REST API (pure ASCII) | 1,688 ± 97 us | 1,462 ± 39 us | **13.4%** |
+| Escape-heavy (\n \t \\ \uXXXX) | 912 ± 77 us | 776 ± 30 us | **14.9%** |
 
 ## When to pick which
 
