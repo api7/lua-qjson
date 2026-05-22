@@ -61,17 +61,17 @@ parsing workloads with ~3-5% structural density.
 
 ## Reproducing
 
-Run the full comparison with one command:
+Run the Lua-vs-cjson comparison (the table on this page) with:
 
 ```sh
-make bench
+make bench-lua
 ```
 
 This builds `qjson`, builds the vendored `lua-cjson` against OpenResty's
 LuaJIT, then invokes `benches/lua_bench.lua` through OpenResty's `resty` so
-`lua-resty-simdjson` runs in its normal `ngx` environment.
-If `resty.simdjson` is not available on `package.path` / `package.cpath`, the
-harness prints a skip message and omits the simdjson rows.
+`lua-resty-simdjson` runs in its normal `ngx` environment. `make bench`
+runs this plus the Rust criterion microbenchmark used for internal
+optimization tracking.
 
 Numbers below come from one such run.
 

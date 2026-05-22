@@ -118,12 +118,14 @@ and `simdjson` retain more Lua heap because they materialize the table tree.
 
 See [`docs/benchmarks.md`](docs/benchmarks.md) for the full size ladder,
 memory numbers, an "encode round-trip" row (passthrough emit via
-`memcpy`), exact environment, and the reproduction command. `make bench`
+`memcpy`), exact environment, and the reproduction command. `make bench-lua`
 uses `lua-resty-simdjson` when `resty.simdjson` is available in the
 OpenResty environment; otherwise it skips the simdjson rows.
 
 ```sh
-make bench       # qjson vs cjson and lua-resty-simdjson
+make bench       # full suite: Rust criterion + Lua vs cjson/simdjson
+make bench-lua   # Lua bench only (the table above)
+make bench-rust  # Rust criterion only (internal SIMD tuning)
 ```
 
 ## RFC 8259 conformance
