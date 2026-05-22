@@ -20,7 +20,7 @@ Lua-table baselines.
 | Runtime | OpenResty `resty` 0.29 / OpenResty 1.21.4.4 / LuaJIT 2.1.1723681758 |
 | `qjson` | this repo, release build, AVX2 + PCLMUL scanner active |
 | `lua-cjson` | vendored `openresty/lua-cjson` |
-| `lua-resty-simdjson` | built from `../lua-resty-simdjson`, `simdjson` C++ lib (single-header) |
+| `lua-resty-simdjson` | `Kong/lua-resty-simdjson` commit `77322db640927c14968f1314a9fb1bb2bc084015`, installed under OpenResty lualib |
 
 ## Methodology
 
