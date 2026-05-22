@@ -2,7 +2,6 @@
 /target/
 **/*.rs.bk
 .worktrees/
-docs/superpowers/specs/
 
 # Cargo lock — uncomment to commit (recommended for binary crates, optional for cdylib/rlib).
 # Currently left untracked; remove this comment block and the line below to start tracking.
