@@ -14,7 +14,9 @@ The `Makefile` is the canonical entry point; `make help` lists targets.
 make build              # cargo build --release  → target/release/libqjson.so
 make test               # cargo test --release + busted Lua tests
 make lint               # cargo clippy --release --all-targets -- -D warnings
-make bench              # OpenResty LuaJIT benchmark vs lua-cjson and simdjson
+make bench              # Rust criterion (parse_eager) + OpenResty LuaJIT bench vs lua-cjson/simdjson
+make bench-rust         # Rust criterion only (fast inner loop for SIMD tuning)
+make bench-lua          # Lua bench only (qjson vs lua-cjson and simdjson)
 ```
 
 Under the hood / for narrower invocations:
@@ -79,7 +81,7 @@ src/
 lua/qjson.lua    LuaJIT wrapper (ffi.cdef + Doc/Cursor metatables)
 include/qjson.h  public C header
 tests/                Rust integration tests + tests/lua/ busted suite
-benches/              lua_bench.lua vs lua-cjson/simdjson; fixtures/ has small_api.json + medium_resp.json
+benches/              parse_eager.rs (criterion) + lua_bench.lua vs lua-cjson/simdjson; fixtures/ has small_api.json + medium_resp.json + medium_resp_cjk.json
 ```
 
 The enum values in `src/error.rs` are duplicated in `include/qjson.h` and `lua/qjson.lua` (the latter only encodes the `T_*` type tags and `NOT_FOUND = 2`). Keep all three in sync when adding/renumbering codes.
