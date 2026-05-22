@@ -103,17 +103,13 @@ chat-completion payloads, "parse + access model, temperature, and all
 messages[*].content paths" workload (median ops/s under OpenResty LuaJIT 2.1,
 AMD EPYC Rome (Zen 2, 4 vCPUs); 5 rounds, deterministic payload):
 
-| Size | cjson | `qjson.parse` | `qjson.decode + access content` | speedup vs. cjson |
-|---:|---:|---:|---:|---:|
-|   2 KB |  96,665 | 128,218 |  89,259 | 1.3× / 0.9× |
-|  60 KB |   8,668 | 186,289 | 197,316 | 21.5× / 22.8× |
-| 100 KB |   4,587 | 150,602 | 144,300 | 32.8× / 31.5× |
-| 200 KB |   2,581 |  87,719 |  84,746 | 34.0× / 32.8× |
-| 500 KB |   1,025 |  32,310 |  33,898 | 31.5× / 33.1× |
-|   1 MB |     507 |  16,722 |  15,448 | 33.0× / 30.5× |
-|   2 MB |     249 |   7,567 |   8,258 | 30.4× / 33.2× |
-|   5 MB |      99 |   3,549 |   3,660 | 35.8× / 37.0× |
-|  10 MB |      48 |   1,531 |   1,615 | 31.9× / 33.6× |
+| Size | cjson | simdjson | `qjson.parse` | `qjson.decode + access content` | speedup vs. cjson |
+|---:|---:|---:|---:|---:|---:|
+|   2 KB |  94,075 | 108,108 | 127,214 | 120,398 |  1.4× /  1.3× |
+|  60 KB |   9,041 |  83,043 | 123,487 | 214,500 | 13.7× / 23.7× |
+| 100 KB |   5,302 |  32,248 | 109,649 | 102,564 | 20.7× / 19.3× |
+|   1 MB |     517 |   3,538 |  16,520 |  16,988 | 32.0× / 32.9× |
+|  10 MB |      50 |     402 |   1,899 |   1,918 | 38.0× / 38.4× |
 
 `qjson.parse` wins because it skips building a Lua table for the parts you
 never read; `qjson.decode + t.field` adds a cjson-shaped table proxy on top
