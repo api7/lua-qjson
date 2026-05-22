@@ -22,7 +22,8 @@ use crate::error::qjson_err;
 /// Validate `span` byte-by-byte. The caller passes the unescaped string
 /// interior (between the JSON `"…"` quotes) — `\` therefore introduces an
 /// RFC 8259 escape sequence, not a literal backslash byte.
-pub(crate) fn validate_span_scalar(span: &[u8]) -> Result<(), qjson_err> {
+#[doc(hidden)]
+pub fn validate_span_scalar(span: &[u8]) -> Result<(), qjson_err> {
     let mut i: usize = 0;
     let n = span.len();
     while i < n {

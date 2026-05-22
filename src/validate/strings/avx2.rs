@@ -18,7 +18,8 @@ use core::arch::x86_64::*;
 use super::scalar::validate_span_scalar;
 
 /// Validate `span` using AVX2 to bulk-skip pure-ASCII 32-byte chunks.
-pub(crate) fn validate_span_avx2(span: &[u8]) -> Result<(), qjson_err> {
+#[doc(hidden)]
+pub fn validate_span_avx2(span: &[u8]) -> Result<(), qjson_err> {
     // SAFETY: dispatcher has verified the AVX2 feature is present.
     unsafe { validate_span_avx2_impl(span) }
 }

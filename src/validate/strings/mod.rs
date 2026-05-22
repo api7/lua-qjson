@@ -11,11 +11,11 @@
 //! All paths return identical error codes for any input; the SIMD layers
 //! only accelerate the "this chunk is pure printable ASCII" common case.
 
-mod scalar;
+pub(crate) mod scalar;
 #[cfg(all(target_arch = "x86_64", feature = "avx2"))]
-mod avx2;
+pub(crate) mod avx2;
 #[cfg(target_arch = "aarch64")]
-mod neon;
+pub(crate) mod neon;
 
 use crate::error::qjson_err;
 use once_cell::sync::OnceCell;

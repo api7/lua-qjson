@@ -18,4 +18,9 @@ pub mod __test_api {
     pub use crate::scan::avx2::Avx2Scanner;
     #[cfg(target_arch = "aarch64")]
     pub use crate::scan::neon::NeonScanner;
+
+    // String validator backends for cross-backend property testing.
+    pub use crate::validate::strings::scalar::validate_span_scalar;
+    #[cfg(all(target_arch = "x86_64", feature = "avx2"))]
+    pub use crate::validate::strings::avx2::validate_span_avx2;
 }
