@@ -7,6 +7,7 @@
 pub(crate) mod number;
 pub(crate) use number::validate_number;
 
+pub(crate) mod classify;
 pub(crate) mod strings;
 pub(crate) use strings::validate_string_span;
 
