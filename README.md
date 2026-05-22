@@ -101,14 +101,19 @@ LD_LIBRARY_PATH="$PWD/target/release" \
 `qjson` vs. `lua-cjson` and `lua-resty-simdjson` on multimodal
 chat-completion payloads, "parse + access model, temperature, and all
 messages[*].content paths" workload (median ops/s under OpenResty LuaJIT 2.1,
-Intel Core i5-9400; 5 rounds, deterministic payload):
+AMD EPYC Rome (Zen 2, 4 vCPUs); 5 rounds, deterministic payload):
 
-| Size | cjson | simdjson | `qjson.parse` | `qjson.decode + access content` | speedup vs. cjson |
-|---:|---:|---:|---:|---:|---:|
-|   2 KB | 106,646 | 137,427 | 135,296 |  97,574 |  1.3× /  0.9× |
-| 100 KB |   6,045 |  46,577 | 137,931 | 134,590 | 22.8× / 22.3× |
-|   1 MB |     594 |   4,408 |  16,447 |  16,340 | 27.7× / 27.5× |
-|  10 MB |      59 |     356 |   1,035 |   1,028 | 17.5× / 17.4× |
+| Size | cjson | `qjson.parse` | `qjson.decode + access content` | speedup vs. cjson |
+|---:|---:|---:|---:|---:|
+|   2 KB |  96,665 | 128,218 |  89,259 | 1.3× / 0.9× |
+|  60 KB |   8,668 | 186,289 | 197,316 | 21.5× / 22.8× |
+| 100 KB |   4,587 | 150,602 | 144,300 | 32.8× / 31.5× |
+| 200 KB |   2,581 |  87,719 |  84,746 | 34.0× / 32.8× |
+| 500 KB |   1,025 |  32,310 |  33,898 | 31.5× / 33.1× |
+|   1 MB |     507 |  16,722 |  15,448 | 33.0× / 30.5× |
+|   2 MB |     249 |   7,567 |   8,258 | 30.4× / 33.2× |
+|   5 MB |      99 |   3,549 |   3,660 | 35.8× / 37.0× |
+|  10 MB |      48 |   1,531 |   1,615 | 31.9× / 33.6× |
 
 `qjson.parse` wins because it skips building a Lua table for the parts you
 never read; `qjson.decode + t.field` adds a cjson-shaped table proxy on top
