@@ -189,4 +189,30 @@ mod tests {
         assert_eq!(validate_string_span(&[0xF5, 0x80, 0x80, 0x80]).unwrap_err(), qjson_err::QJSON_INVALID_UTF8);
         assert_eq!(validate_string_span(&[0xFF]).unwrap_err(), qjson_err::QJSON_INVALID_UTF8);
     }
+
+    #[test]
+    fn three_byte_lead_at_chunk_boundary_then_ascii_chunk() {
+        // Reproduces the Tier 1 / Tier 2 / Tier 3 safety-interlock case
+        // documented in the spec's Risks section.
+        // Chunk 0: 31 ASCII bytes + 0xE4 (3-byte CJK lead).
+        // Chunk 1: 0xB8 0xAD (valid continuations) + ASCII content...
+        let mut s = vec![b'x'; 31];
+        s.push(0xE4);
+        s.extend_from_slice(&[0xB8, 0xAD]); // completes 中
+        s.extend_from_slice(b" rest of content");
+        assert!(validate_string_span(&s).is_ok());
+    }
+
+    #[test]
+    fn three_byte_lead_at_chunk_end_followed_by_pure_ascii_chunk() {
+        // Chunk 0 ends with 0xE4 (lead expecting 2 continuations).
+        // Chunk 1 is pure ASCII (no continuation). MUST reject as INVALID_UTF8.
+        let mut s = vec![b'x'; 31];
+        s.push(0xE4); // 32 bytes total, last byte is unfinished lead
+        s.extend_from_slice(&[b'A'; 32]); // pure ASCII chunk follows
+        assert_eq!(
+            validate_string_span(&s).unwrap_err(),
+            qjson_err::QJSON_INVALID_UTF8
+        );
+    }
 }
