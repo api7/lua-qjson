@@ -117,16 +117,52 @@ const BYTE2_HIGH: [u8; 16] = [
     TOO_SHORT, TOO_SHORT, TOO_SHORT, TOO_SHORT,
 ];
 
+/// Returns the 1-3 byte carry prefix from `prev_input`'s tail, or `None`
+/// if the prior chunk ended on a complete sequence.
+///
+/// The range `0xC2..=0xF4` covers all valid UTF-8 lead bytes: 0xC2 is the
+/// first non-overlong 2-byte lead; 0xF4 is the last valid 4-byte lead.
+/// Any byte outside this range cannot start a multi-byte sequence whose
+/// continuation crosses the chunk boundary.
+#[inline]
+#[target_feature(enable = "avx2")]
+unsafe fn extract_carry_prefix(prev_input: __m256i) -> Option<Vec<u8>> {
+    let last3 = [
+        _mm256_extract_epi8::<29>(prev_input) as u8,
+        _mm256_extract_epi8::<30>(prev_input) as u8,
+        _mm256_extract_epi8::<31>(prev_input) as u8,
+    ];
+    let prefix_len = if (0xC2..=0xF4).contains(&last3[2]) {
+        1
+    } else if (0xC2..=0xF4).contains(&last3[1]) {
+        2
+    } else if (0xC2..=0xF4).contains(&last3[0]) {
+        3
+    } else {
+        return None;
+    };
+    Some(last3[3 - prefix_len..].to_vec())
+}
+
 /// Compute the lookup4 error mask for a 32-byte chunk.
 ///
 /// Implements `check_special_cases` XOR `check_multibyte_lengths & 0x80`
 /// from simdjson, adapted for AVX2 (256-bit = 2 × 128-bit lanes).
 ///
 /// `prev_input` is updated to the current chunk on return (carry for next call).
+/// The three broadcast table vectors (`byte1_high_tbl`, `byte1_low_tbl`,
+/// `byte2_high_tbl`) are computed once by the caller and passed in to avoid
+/// re-broadcasting on every call.
 /// Returns a 256-bit mask: any non-zero byte ⇒ UTF-8 error at that position.
 #[inline]
 #[target_feature(enable = "avx2")]
-unsafe fn lookup4_chunk(chunk: __m256i, prev_input: &mut __m256i) -> __m256i {
+unsafe fn lookup4_chunk(
+    chunk: __m256i,
+    prev_input: &mut __m256i,
+    byte1_high_tbl: __m256i,
+    byte1_low_tbl: __m256i,
+    byte2_high_tbl: __m256i,
+) -> __m256i {
     // ─── build prev1 / prev2 / prev3 ────────────────────────────────────────
     // `_mm256_permute2x128_si256::<0x21>(*prev_input, chunk)` splices the
     // upper 128-bit lane of prev_input with the lower lane of chunk, producing
@@ -147,13 +183,6 @@ unsafe fn lookup4_chunk(chunk: __m256i, prev_input: &mut __m256i) -> __m256i {
     let hi1 = _mm256_and_si256(_mm256_srli_epi16(prev1, 4), nibble_mask);
     let lo1 = _mm256_and_si256(prev1, nibble_mask);
     let hi2 = _mm256_and_si256(_mm256_srli_epi16(chunk, 4), nibble_mask);
-
-    let byte1_high_tbl = _mm256_broadcastsi128_si256(
-        _mm_loadu_si128(BYTE1_HIGH.as_ptr() as *const __m128i));
-    let byte1_low_tbl  = _mm256_broadcastsi128_si256(
-        _mm_loadu_si128(BYTE1_LOW.as_ptr() as *const __m128i));
-    let byte2_high_tbl = _mm256_broadcastsi128_si256(
-        _mm_loadu_si128(BYTE2_HIGH.as_ptr() as *const __m128i));
 
     let sc = _mm256_and_si256(
         _mm256_and_si256(
@@ -197,6 +226,15 @@ unsafe fn validate_span_avx2_impl(span: &[u8]) -> Result<(), qjson_err> {
     let mut err_acc    = _mm256_setzero_si256();
     let mut prev_ended_ascii = true;
 
+    // Hoist the three lookup4 broadcast table vectors out of the hot loop so
+    // they are computed once and reused across every lookup4_chunk call.
+    let byte1_high_tbl = _mm256_broadcastsi128_si256(
+        _mm_loadu_si128(BYTE1_HIGH.as_ptr() as *const __m128i));
+    let byte1_low_tbl  = _mm256_broadcastsi128_si256(
+        _mm_loadu_si128(BYTE1_LOW.as_ptr() as *const __m128i));
+    let byte2_high_tbl = _mm256_broadcastsi128_si256(
+        _mm_loadu_si128(BYTE2_HIGH.as_ptr() as *const __m128i));
+
     while i + 32 <= n {
         let chunk = _mm256_loadu_si256(span.as_ptr().add(i) as *const __m256i);
 
@@ -210,6 +248,10 @@ unsafe fn validate_span_avx2_impl(span: &[u8]) -> Result<(), qjson_err> {
                         _mm256_set1_epi8(b'\\' as i8),
                     )) as u32;
 
+        // prev_ended_ascii: last byte of prior chunk had high bit clear, so no
+        // cross-chunk multi-byte carry is pending. Without this guard, a lead
+        // byte ending chunk N could cause lookup4 to miss its continuations in
+        // chunk N+1.
         // Tier 1: pure printable ASCII, and previous chunk also ended ASCII-safe.
         if (high | ctrl | bs) == 0 && prev_ended_ascii {
             prev_input = chunk;
@@ -230,22 +272,9 @@ unsafe fn validate_span_avx2_impl(span: &[u8]) -> Result<(), qjson_err> {
             // include those unfinished bytes in the scalar input so it can
             // validate the full sequence (including the continuation/error).
             if !prev_ended_ascii {
-                let last3 = [
-                    _mm256_extract_epi8::<29>(prev_input) as u8,
-                    _mm256_extract_epi8::<30>(prev_input) as u8,
-                    _mm256_extract_epi8::<31>(prev_input) as u8,
-                ];
-                let mut prefix_len = 0usize;
-                if (0xC2..=0xF4).contains(&last3[2]) {
-                    prefix_len = 1;
-                } else if (0xC2..=0xF4).contains(&last3[1]) {
-                    prefix_len = 2;
-                } else if (0xC2..=0xF4).contains(&last3[0]) {
-                    prefix_len = 3;
-                }
-                if prefix_len > 0 {
-                    let mut combined = Vec::with_capacity(prefix_len + (n - i));
-                    combined.extend_from_slice(&last3[3 - prefix_len..]);
+                if let Some(carry) = extract_carry_prefix(prev_input) {
+                    let mut combined = Vec::with_capacity(carry.len() + (n - i));
+                    combined.extend_from_slice(&carry);
                     combined.extend_from_slice(&span[i..]);
                     return super::scalar::validate_span_scalar(&combined);
                 }
@@ -263,7 +292,10 @@ unsafe fn validate_span_avx2_impl(span: &[u8]) -> Result<(), qjson_err> {
         }
 
         // Tier 2: pure UTF-8 (no control, no backslash) → run lookup4.
-        err_acc = _mm256_or_si256(err_acc, lookup4_chunk(chunk, &mut prev_input));
+        err_acc = _mm256_or_si256(
+            err_acc,
+            lookup4_chunk(chunk, &mut prev_input, byte1_high_tbl, byte1_low_tbl, byte2_high_tbl),
+        );
         prev_ended_ascii = (span[i + 31] & 0x80) == 0;
         i += 32;
     }
@@ -278,22 +310,9 @@ unsafe fn validate_span_avx2_impl(span: &[u8]) -> Result<(), qjson_err> {
     // multi-byte lead; reconstruct a buffer containing those bytes plus the
     // tail and validate as a unit.
     if !prev_ended_ascii {
-        let last3 = [
-            _mm256_extract_epi8::<29>(prev_input) as u8,
-            _mm256_extract_epi8::<30>(prev_input) as u8,
-            _mm256_extract_epi8::<31>(prev_input) as u8,
-        ];
-        let mut prefix_len = 0usize;
-        if (0xC2..=0xF4).contains(&last3[2]) {
-            prefix_len = 1;
-        } else if (0xC2..=0xF4).contains(&last3[1]) {
-            prefix_len = 2;
-        } else if (0xC2..=0xF4).contains(&last3[0]) {
-            prefix_len = 3;
-        }
-        if prefix_len > 0 {
-            let mut combined = Vec::with_capacity(prefix_len + (n - i));
-            combined.extend_from_slice(&last3[3 - prefix_len..]);
+        if let Some(carry) = extract_carry_prefix(prev_input) {
+            let mut combined = Vec::with_capacity(carry.len() + (n - i));
+            combined.extend_from_slice(&carry);
             combined.extend_from_slice(&span[i..]);
             return super::scalar::validate_span_scalar(&combined);
         }
