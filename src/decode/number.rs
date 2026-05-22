@@ -4,6 +4,14 @@ pub(crate) fn parse_i64(bytes: &[u8], skip_validation: bool) -> Result<i64, qjso
     if !skip_validation {
         crate::validate::validate_number(bytes)?;
     }
+
+    // When validation is skipped the caller guarantees the input is a
+    // well-formed JSON number, but we still protect against empty input
+    // so a misuse of the skip-flag cannot panic on bytes[0].
+    if bytes.is_empty() {
+        return Err(qjson_err::QJSON_INVALID_NUMBER);
+    }
+
     // After ABNF validation, integer-only inputs have no `.`/`e`/`E`.
     if bytes.iter().any(|&b| b == b'.' || b == b'e' || b == b'E') {
         return Err(qjson_err::QJSON_TYPE_MISMATCH);
@@ -76,5 +84,27 @@ mod tests {
     #[test]
     fn f64_rejects_garbage() {
         assert_eq!(parse_f64(b"hello", false), Err(qjson_err::QJSON_INVALID_NUMBER));
+    }
+
+    // ── skip_validation=true branch ────────────────────────────────
+
+    #[test]
+    fn i64_skip_validation_valid_input() {
+        assert_eq!(parse_i64(b"42", true), Ok(42));
+    }
+
+    #[test]
+    fn i64_skip_validation_empty_fails_gracefully() {
+        assert_eq!(parse_i64(b"", true), Err(qjson_err::QJSON_INVALID_NUMBER));
+    }
+
+    #[test]
+    fn f64_skip_validation_valid_input() {
+        assert_eq!(parse_f64(b"3.14", true).unwrap(), 3.14);
+    }
+
+    #[test]
+    fn f64_skip_validation_garbage_fails_at_parse() {
+        assert_eq!(parse_f64(b"hello", true), Err(qjson_err::QJSON_DECODE_FAILED));
     }
 }

@@ -489,4 +489,29 @@ mod tests {
         let buf = b"{\"a\":\"a\" 123}";
         assert_eq!(validate_eager_values(buf, &ix(buf), 1024), Err(qjson_err::QJSON_PARSE_ERROR));
     }
+
+    // ── depth enforcement via validate_eager_values ─────────────────
+
+    #[test]
+    fn grammar_accepts_at_max_depth() {
+        // 1024 nested arrays at the default max_depth limit.
+        let mut buf = Vec::new();
+        for _ in 0..1024 { buf.push(b'['); }
+        for _ in 0..1024 { buf.push(b']'); }
+        assert!(
+            validate_eager_values(&buf, &ix(&buf), 1024).is_ok(),
+            "should accept exactly at max_depth"
+        );
+    }
+
+    #[test]
+    fn grammar_rejects_over_max_depth() {
+        // 1025 nested arrays — one past the default max_depth limit.
+        let mut buf = Vec::new();
+        for _ in 0..1025 { buf.push(b'['); }
+        for _ in 0..1025 { buf.push(b']'); }
+        assert_eq!(
+            validate_eager_values(&buf, &ix(&buf), 1024), Err(qjson_err::QJSON_NESTING_TOO_DEEP),
+        );
+    }
 }
