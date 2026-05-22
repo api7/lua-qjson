@@ -39,6 +39,9 @@ jobs:
       - name: Build (release)
         run: cargo build --release
 
+      - name: Build benches (compile only, do not run)
+        run: cargo build --release --benches
+
       - name: Test (release)
         run: cargo test --release
 
