@@ -114,12 +114,12 @@ AMD EPYC Rome, Zen 2, 4 vCPUs; 5 rounds, deterministic payload).
 
 ### Encode (unmodified) + modify-then-re-encode
 
-| Size | encode (unmodified) | modify top (cjson / qjson) | modify nested (cjson / qjson) |
-|---:|---:|---:|---:|
-|   2 KB | 219,925 | 59,761 /  56,909 | 61,685 /  49,798 |
-|  60 KB | 143,843 |  4,590 / **44,370** |  4,616 / **196,386** |
-| 100 KB | 119,617 |  2,645 / **32,712** |  5,263 /  **59,809** |
-|   1 MB |  16,269 |    241 /  **3,108** |    516 /  **14,134** |
+| Size | encode (unmodified) | modify top (cjson / qjson) | modify nested (cjson / qjson) | speedup vs. cjson |
+|---:|---:|---:|---:|---:|
+|   2 KB | 219,925 | 59,761 /  56,909 | 61,685 /  49,798 |  1.0× /  0.8× |
+|  60 KB | 143,843 |  4,590 / **44,370** |  4,616 / **196,386** |  9.7× / 42.5× |
+| 100 KB | 119,617 |  2,645 / **32,712** |  5,263 /  **59,809** | 12.4× / 11.4× |
+|   1 MB |  16,269 |    241 /  **3,108** |    516 /  **14,134** | 12.9× / 27.4× |
 
 > **qjson.encode(unmodified)** re-emits the original byte range via `memcpy` —
 > no fields touched means zero serializer work.
