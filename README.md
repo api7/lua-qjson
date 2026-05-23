@@ -111,17 +111,10 @@ AMD EPYC Rome (Zen 2, 4 vCPUs); 5 rounds, deterministic payload):
 |   1 MB |     517 |   3,538 |  16,520 |  16,988 | 32.0× / 32.9× |
 |  10 MB |      50 |     402 |   1,899 |   1,918 | 38.0× / 38.4× |
 
-`qjson.parse` wins because it skips building a Lua table for the parts you
-never read; `qjson.decode + t.field` adds a cjson-shaped table proxy on top
-with similar throughput. Memory retention for `qjson` is essentially
-flat in payload size (a few KB for the reusable buffers), while `cjson`
-and `simdjson` retain more Lua heap because they materialize the table tree.
-
-See [`docs/benchmarks.md`](docs/benchmarks.md) for the full size ladder,
-memory numbers, an "encode round-trip" row (passthrough emit via
-`memcpy`), exact environment, and the reproduction command. `make bench`
-uses `lua-resty-simdjson` when `resty.simdjson` is available in the
-OpenResty environment; otherwise it skips the simdjson rows.
+Modify-then-encode scenarios (PR #54) add decode → mutate field → re-encode
+workloads; small payload modify+encode reaches 48k–60k ops/s. See
+[`docs/benchmarks.md`](docs/benchmarks.md) for the full size ladder,
+modify+encode results, memory numbers, environment, and reproduction.
 
 ```sh
 make bench       # qjson vs cjson and lua-resty-simdjson

@@ -26,7 +26,7 @@ Lua-table baselines.
 
 The harness lives at `benches/lua_bench.lua`. For each scenario:
 
-1. Warmup pass (≥ 3 iterations, or `iters / 5`) to let LuaJIT compile hot
+1. Warmup pass (≥ 50 iterations, or `iters / 5`) to let LuaJIT compile hot
    traces and the `qjson` `indices` / `scratch` buffers grow to their
    working size. Warmup is excluded from timing and the memory delta.
 2. `collectgarbage("collect")` baseline.
@@ -35,6 +35,11 @@ The harness lives at `benches/lua_bench.lua`. For each scenario:
 4. Final `collectgarbage("count")` to capture the post-run memory delta in
    KB. The harness does not force a final collection after timing, so
    short-lived garbage from the last round may still be included.
+
+**Fresh-process isolation (post PR #54).** `make bench` now launches a
+separate `resty` process for each payload size (small, medium, 100k, …,
+interleaved). This avoids accumulated GC state and JIT trace-cache pressure
+from earlier payloads bleeding into later scenarios.
 
 The payload is a synthetic multimodal chat-completion request with one or more
 historical messages. Each message contains one small text part and one
@@ -58,6 +63,11 @@ parsing workloads with ~3-5% structural density.
 | `qjson.parse + access fields` | `qjson.parse(s)`, read `model` / `temperature`, then touch every `messages[*].content` path | Lazy structural scan; explicit path reads |
 | `qjson.decode + access content` | `qjson.decode(s)`, read `model` / `temperature`, then read every `messages[*].content` | Lazy table proxy; reads go through `__index` |
 | `qjson.decode + qjson.encode (unmodified)` | `qjson.decode(s)` then re-emit as JSON | Substring fast path — no fields touched, so the proxy re-emits the original byte range via `memcpy` |
+| `qjson.decode + modify top + encode` | `qjson.decode(s)`, mutate a top-level field, `qjson.encode()` | Triggers materialization of the root container + full re-encode |
+| `qjson.decode + add field + encode` | `qjson.decode(s)`, add a new top-level field, `qjson.encode()` | Same as modify-top, plus a new key shaping the encode output |
+| `qjson.decode + modify nested + encode` | `qjson.decode(s)`, mutate a deeply nested field, `qjson.encode()` | Only materializes the modified subtree branch; unmodified siblings stay on the fast path |
+
+The new modify+encode scenarios were added in [#54](https://github.com/api7/lua-qjson/pull/54) to exercise the decode → mutate → re-encode pipeline end-to-end.
 
 ## Reproducing
 
@@ -80,7 +90,7 @@ Numbers below come from one such run.
 Each row is "parse + access request fields" on the named payload.
 
 | Scenario | Size | cjson | simdjson | `qjson.parse` | `qjson.decode + access content` | `qjson.decode + qjson.encode` |
-|---|---:|---:|---:|---:|---:|---:|
+|---|---|---:|---:|---:|---:|---:|---:|
 | small      |   2.1 KB |  94,075 | 108,108 | 127,214 | 120,398 | 203,666 |
 | medium     |  60.4 KB |   9,041 |  83,043 | 123,487 | 214,500 | 214,408 |
 | github-100k |   100 KB |   2,238 |   2,047 |   6,010 |   5,994 |   6,701 |
@@ -92,6 +102,28 @@ Each row is "parse + access request fields" on the named payload.
 | 5m         |  5.00 MB |     102 |     663 |   2,982 |   3,728 |   3,829 |
 | 10m        | 10.00 MB |      50 |     402 |   1,899 |   1,918 |   1,925 |
 | interleaved (100k/200k/500k/1m, cycled) | — | 1,141 | 9,544 | 34,043 | 33,611 | 32,752 |
+
+### Modify + encode throughput (PR #54)
+
+One-shot modify-then-encode benchmarks. Exercises the decode → mutate →
+re-encode pipeline. Numbers below come from a 3-round per-scenario
+fresh-process run on x86_64 Linux (AMD EPYC Rome, Zen 2).
+
+| Scenario | modify top + encode | add field + encode | modify nested + encode |
+|---|---|---:|---:|---:|
+| small (2 KB)    | 59,835  | 56,655  | 47,541  |
+| medium (60 KB)  | 37,142  | 46,275  | 184,638 |
+| 100k (100 KB)   | 35,881  | 38,183  | 73,529  |
+| 200k (200 KB)   | 17,129  | 16,250  | 59,524  |
+| 500k (500 KB)   |  6,221  |  5,170  | 22,158  |
+| 1m              |  2,938  |  2,434  | 13,806  |
+| 2m              |  1,518  |  1,241  |  1,597  |
+| 5m              |    366  |    364  |    232  |
+| 10m             |    120  |    115  |     87  |
+| interleaved     |  7,176  |  5,645  | 26,824  |
+
+For a before/after comparison against the pre-#54 baseline, see the
+[PR #54 benchmark comment](https://github.com/api7/lua-qjson/pull/54#issuecomment-4525477361).
 
 ### Speed-up vs. baselines
 
@@ -163,6 +195,16 @@ key into the Lua table heap.
    structural density is higher than the multimodal request ladder. Memory
    savings remain dramatic because `cjson` must materialize every nested
    object and string into the Lua heap.
+7. **Modify + encode pipeline (PR #54)** shows the lazy-table API in
+   mutation mode. Small/medium payloads reach 47k–185k median ops/s.
+   The `_dirty` flag and `TABLE_TYPE_HINT` side-table eliminate
+   redundant tree walks and array/object re-scans inside the encoder.
+   Large payloads (≥5 MB) are dominated by the root-container
+   materialization cost, which copies all fields into a plain table.
+8. **Fresh-process isolation** removes accumulated GC and JIT trace-cache
+   interference between payload sizes. Each size now runs in its own
+   `resty` process, eliminating the systemic cross-scenario variance
+   observed in earlier benchmark runs.
 
 ## When to pick which
 

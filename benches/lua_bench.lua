@@ -293,12 +293,18 @@ local scenarios = {
 local has_pooled_api = type(qjson.new_decoder) == "function"
 local pooled_decoder = has_pooled_api and qjson.new_decoder() or nil
 
+-- Optional scenario filter: arg[1] = scenario name (e.g. "small").
+-- When set, only that single scenario runs in a fresh LuaJIT process,
+-- avoiding accumulated GC/JIT state from prior payloads.
+local filter = arg[1]
+
 if not simdjson then
     print("lua-resty-simdjson unavailable; skipping simdjson rows: "
         .. tostring(simdjson_or_err))
 end
 
 for _, s in ipairs(scenarios) do
+    if filter and s.name ~= filter then goto continue_scenario end
     print(string.format("=== %s (%d bytes) ===", s.name, #s.payload))
 
     local cjson_access = s.cjson_access or default_cjson_access
@@ -369,6 +375,7 @@ for _, s in ipairs(scenarios) do
         local _enc = qjson.encode(t)
         if #_enc < 2 then error("qjson.encode produced too-short result") end
     end)
+    ::continue_scenario::
 end
 
 -- Interleaved scenario: cycle through several payloads of different sizes
@@ -397,6 +404,8 @@ local function make_cycler(items)
         return items[((i - 1) % n) + 1]
     end
 end
+
+if not filter or filter == "interleaved" then
 
 print(string.format("=== interleaved %s ===", table.concat(interleaved_names, ",")))
 
@@ -475,3 +484,5 @@ do
         if #_enc < 2 then error("qjson.encode produced too-short result") end
     end)
 end
+
+end  -- filter == "interleaved"
