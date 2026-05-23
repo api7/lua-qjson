@@ -77,7 +77,7 @@ end
 -- can be freely reused afterwards.
 local function decode_cursor(parent_view, src_box)
     local rc = C.qjson_cursor_get_value(src_box[0], type_box,
-        strp_box, size_box, i64_box, f64_box, bool_box,
+        strp_box, size_box, f64_box, bool_box,
         sz_a, sz_b)
     if not check(rc) then return nil end
     local t = type_box[0]
@@ -313,7 +313,7 @@ function _M.decode(json_str)
     ffi.copy(root_box, cur_box, ffi.sizeof("qjson_cursor"))
     -- Determine root container kind (object/array) and byte span in one call.
     local grc = C.qjson_cursor_get_value(root_box[0], type_box,
-        strp_box, size_box, i64_box, f64_box, bool_box,
+        strp_box, size_box, f64_box, bool_box,
         sz_a, sz_b)
     if not check(grc) then
         error("qjson: root typeof failed")

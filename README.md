@@ -101,7 +101,7 @@ LD_LIBRARY_PATH="$PWD/target/release" \
 `qjson` vs. `lua-cjson` and `lua-resty-simdjson` on multimodal
 chat-completion payloads, "parse + access model, temperature, and all
 messages[*].content paths" workload (median ops/s under OpenResty LuaJIT 2.1,
-Intel Core i5-9400; 5 rounds, deterministic payload):
+AMD EPYC-Rome, 4 vCPUs; 5 rounds, deterministic payload):
 
 | Size | cjson | simdjson | `qjson.parse` | `qjson.decode + access content` | speedup vs. cjson |
 |---:|---:|---:|---:|---:|---:|

@@ -671,7 +671,8 @@ pub unsafe extern "C" fn qjson_cursor_get_bool(
 }
 
 /// Resolve type + decoded value of a cursor in one FFI call.
-/// Fills `*type_out` unconditionally. For strings, fills `(*str_ptr, *str_len)`;
+/// On success (`QJSON_OK`), fills `*type_out` unconditionally.
+/// For strings, fills `(*str_ptr, *str_len)`;
 /// for numbers, fills `*f64_out`; for bool, fills `*bool_out`;
 /// for containers, fills `(*byte_start, *byte_end)`.
 ///
@@ -685,12 +686,12 @@ pub unsafe extern "C" fn qjson_cursor_get_value(
     c: *const qjson_cursor,
     type_out: *mut c_int,
     str_ptr: *mut *const u8, str_len: *mut usize,
-    i64_out: *mut i64, f64_out: *mut f64, bool_out: *mut c_int,
+    f64_out: *mut f64, bool_out: *mut c_int,
     byte_start: *mut usize, byte_end: *mut usize,
 ) -> c_int {
     ffi_catch!({
         if type_out.is_null() || str_ptr.is_null() || str_len.is_null()
-            || i64_out.is_null() || f64_out.is_null() || bool_out.is_null()
+            || f64_out.is_null() || bool_out.is_null()
             || byte_start.is_null() || byte_end.is_null()
         {
             return qjson_err::QJSON_INVALID_ARG as c_int;

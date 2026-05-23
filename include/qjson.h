@@ -86,7 +86,7 @@ int qjson_cursor_object_entry_at(const qjson_cursor*, size_t i,
 int qjson_cursor_get_value(const qjson_cursor*,
                            int* type_out,
                            const uint8_t** str_ptr, size_t* str_len,
-                           int64_t* i64_out, double* f64_out, int* bool_out,
+                           double* f64_out, int* bool_out,
                            size_t* byte_start, size_t* byte_end);
 
 #ifdef __cplusplus
