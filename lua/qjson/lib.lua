@@ -41,6 +41,11 @@ int qjson_cursor_bytes(const qjson_cursor*, size_t* byte_start, size_t* byte_end
 int qjson_cursor_object_entry_at(const qjson_cursor*, size_t i,
                                 const uint8_t** key_ptr, size_t* key_len,
                                 qjson_cursor* value_out);
+int qjson_cursor_get_value(const qjson_cursor*,
+                           int* type_out,
+                           const uint8_t** str_ptr, size_t* str_len,
+                           int64_t* i64_out, double* f64_out, int* bool_out,
+                           size_t* byte_start, size_t* byte_end);
 ]]
 
 local tried = {}
@@ -70,6 +75,7 @@ local required_symbols = {
     "qjson_cursor_len",
     "qjson_cursor_bytes",
     "qjson_cursor_object_entry_at",
+    "qjson_cursor_get_value",
 }
 
 local function try_load(name)

@@ -4,11 +4,11 @@ use crate::error::qjson_err;
 use crate::skip_cache::SkipCache;
 
 pub struct Document<'a> {
-    pub(crate) buf:     &'a [u8],
-    pub(crate) indices: Vec<u32>,
-    pub(crate) eager_validated: bool,
-    pub(crate) scratch: RefCell<Vec<u8>>,
-    pub(crate) skip:    RefCell<SkipCache>,
+    pub(crate) buf:              &'a [u8],
+    pub(crate) indices:          Vec<u32>,
+    pub(crate) eager_validated:  bool,
+    pub(crate) scratch:          RefCell<Vec<u8>>,
+    pub(crate) skip:             RefCell<SkipCache>,
 }
 
 impl<'a> Document<'a> {

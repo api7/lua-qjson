@@ -57,11 +57,9 @@ local LazyObject = {}
 local LazyArray  = {}
 
 -- Build a new lazy view for a child container cursor.
--- src_box is an FFI cdata `qjson_cursor[1]`; src_box[0] is the cursor whose
--- data we copy into a fresh per-view allocation so the new view's _cur
--- survives later overwrites of src_box.
+-- src_box is an FFI cdata `qjson_cursor[1]`; the callers guarantee that sz_a/sz_b
+-- already hold the cursor's byte span (filled by qjson_cursor_get_value).
 local function wrap_child(parent_view, src_box)
-    C.qjson_cursor_bytes(src_box[0], sz_a, sz_b)
     local own_box = ffi.new("qjson_cursor[1]")
     ffi.copy(own_box, src_box, ffi.sizeof("qjson_cursor"))
     return {
@@ -74,23 +72,20 @@ local function wrap_child(parent_view, src_box)
 end
 
 -- Decode the value at src_box[0] into a Lua value.
--- src_box is a `qjson_cursor[1]`; for container types, a new view is created
--- via wrap_child so the caller's box can be freely reused afterwards.
+-- src_box is a `qjson_cursor[1]`; uses qjson_cursor_get_value for a single FFI call.
+-- For container types, a new view is created via wrap_child so the caller's box
+-- can be freely reused afterwards.
 local function decode_cursor(parent_view, src_box)
-    local trc = C.qjson_cursor_typeof(src_box[0], "", 0, type_box)
-    if not check(trc) then return nil end
+    local rc = C.qjson_cursor_get_value(src_box[0], type_box,
+        strp_box, size_box, i64_box, f64_box, bool_box,
+        sz_a, sz_b)
+    if not check(rc) then return nil end
     local t = type_box[0]
     if t == T_STR then
-        local rrc = C.qjson_cursor_get_str(src_box[0], "", 0, strp_box, size_box)
-        if not check(rrc) then return nil end
         return ffi.string(strp_box[0], size_box[0])
     elseif t == T_NUM then
-        local rrc = C.qjson_cursor_get_f64(src_box[0], "", 0, f64_box)
-        if not check(rrc) then return nil end
         return f64_box[0]
     elseif t == T_BOOL then
-        local rrc = C.qjson_cursor_get_bool(src_box[0], "", 0, bool_box)
-        if not check(rrc) then return nil end
         return bool_box[0] ~= 0
     elseif t == T_NULL then
         return _M.null
@@ -316,17 +311,14 @@ function _M.decode(json_str)
     end
     local root_box = ffi.new("qjson_cursor[1]")
     ffi.copy(root_box, cur_box, ffi.sizeof("qjson_cursor"))
-    -- Determine root container kind (object/array) and wrap accordingly.
-    -- Both have meaningful byte spans for encode.
-    local trc = C.qjson_cursor_typeof(root_box[0], "", 0, type_box)
-    if not check(trc) then
+    -- Determine root container kind (object/array) and byte span in one call.
+    local grc = C.qjson_cursor_get_value(root_box[0], type_box,
+        strp_box, size_box, i64_box, f64_box, bool_box,
+        sz_a, sz_b)
+    if not check(grc) then
         error("qjson: root typeof failed")
     end
     local rt = type_box[0]
-    local brc = C.qjson_cursor_bytes(root_box[0], sz_a, sz_b)
-    if not check(brc) then
-        error("qjson: root byte-span failed")
-    end
     local view = {
         _doc     = doc,
         _cur_box = root_box,   -- keep the box alive; _cur is a stable reference

@@ -283,6 +283,15 @@ pub unsafe extern "C" fn qjson_get_str(
         }
         // String ends at the close quote, whose indices position is idx_start + 1.
         let close = d.indices[(cur.idx_start + 1) as usize] as usize;
+        let slice = &d.buf[pos + 1..close];
+
+        // EAGER fast path: validation already passed; if no escapes, return
+        // the buffer slice directly without touching scratch.
+        if d.eager_validated && memchr::memchr(b'\\', slice).is_none() {
+            *out_ptr = slice.as_ptr();
+            *out_len = slice.len();
+            return qjson_err::QJSON_OK as c_int;
+        }
 
         let mut scratch = d.scratch.borrow_mut();
         match string::decode_string(d.buf, pos + 1, close, &mut scratch, d.eager_validated) {
@@ -561,6 +570,13 @@ pub unsafe extern "C" fn qjson_cursor_get_str(
             return qjson_err::QJSON_TYPE_MISMATCH as c_int;
         }
         let close = d.indices[(cur.idx_start + 1) as usize] as usize;
+        let slice = &d.buf[pos + 1..close];
+
+        if d.eager_validated && memchr::memchr(b'\\', slice).is_none() {
+            *out_ptr = slice.as_ptr();
+            *out_len = slice.len();
+            return qjson_err::QJSON_OK as c_int;
+        }
 
         let mut scratch = d.scratch.borrow_mut();
         match string::decode_string(d.buf, pos + 1, close, &mut scratch, d.eager_validated) {
@@ -651,6 +667,100 @@ pub unsafe extern "C" fn qjson_cursor_get_bool(
             b"false" => { *out = 0; qjson_err::QJSON_OK as c_int }
             _ => qjson_err::QJSON_TYPE_MISMATCH as c_int,
         }
+    })
+}
+
+/// Resolve type + decoded value of a cursor in one FFI call.
+/// Fills `*type_out` unconditionally. For strings, fills `(*str_ptr, *str_len)`;
+/// for numbers, fills `*f64_out`; for bool, fills `*bool_out`;
+/// for containers, fills `(*byte_start, *byte_end)`.
+///
+/// # Safety
+///
+/// See the module-level [shared safety contract](self#shared-safety-contract).
+/// `c` must point to a cursor produced by an earlier `qjson_*` call whose
+/// document is still alive. All out pointers must be non-NULL.
+#[no_mangle]
+pub unsafe extern "C" fn qjson_cursor_get_value(
+    c: *const qjson_cursor,
+    type_out: *mut c_int,
+    str_ptr: *mut *const u8, str_len: *mut usize,
+    i64_out: *mut i64, f64_out: *mut f64, bool_out: *mut c_int,
+    byte_start: *mut usize, byte_end: *mut usize,
+) -> c_int {
+    ffi_catch!({
+        if type_out.is_null() || str_ptr.is_null() || str_len.is_null()
+            || i64_out.is_null() || f64_out.is_null() || bool_out.is_null()
+            || byte_start.is_null() || byte_end.is_null()
+        {
+            return qjson_err::QJSON_INVALID_ARG as c_int;
+        }
+        let (d, cur) = match cursor_to_internal(c) {
+            Ok(x) => x, Err(e) => return e as c_int,
+        };
+        let pos = d.indices[cur.idx_start as usize] as usize;
+        let lead = match d.buf.get(pos).copied() {
+            Some(b) => b,
+            None => return qjson_err::QJSON_PARSE_ERROR as c_int,
+        };
+        match lead {
+            b'"' => {
+                *type_out = qjson_type::QJSON_T_STR as c_int;
+                let close = d.indices[(cur.idx_start + 1) as usize] as usize;
+                let slice = &d.buf[pos + 1..close];
+                if d.eager_validated && memchr::memchr(b'\\', slice).is_none() {
+                    *str_ptr = slice.as_ptr();
+                    *str_len = slice.len();
+                } else {
+                    let mut scratch = d.scratch.borrow_mut();
+                    match string::decode_string(d.buf, pos + 1, close, &mut scratch, d.eager_validated) {
+                        Ok((p, n)) => { *str_ptr = p; *str_len = n; }
+                        Err(e) => return e as c_int,
+                    }
+                }
+                *byte_start = pos;
+                *byte_end = close + 1;
+            }
+            b'{' | b'[' => {
+                *type_out = if lead == b'{' { qjson_type::QJSON_T_OBJ as c_int }
+                             else            { qjson_type::QJSON_T_ARR as c_int };
+                let end = d.indices[cur.idx_end as usize] as usize;
+                if end >= d.buf.len() { return qjson_err::QJSON_PARSE_ERROR as c_int; }
+                *byte_start = pos;
+                *byte_end = end + 1;
+            }
+            _ => {
+                let bytes = match scalar_bytes(d, cur) {
+                    Ok(b) => b, Err(e) => return e as c_int,
+                };
+                match bytes {
+                    b"true" => {
+                        *type_out = qjson_type::QJSON_T_BOOL as c_int;
+                        *bool_out = 1;
+                    }
+                    b"false" => {
+                        *type_out = qjson_type::QJSON_T_BOOL as c_int;
+                        *bool_out = 0;
+                    }
+                    b"null" => {
+                        *type_out = qjson_type::QJSON_T_NULL as c_int;
+                    }
+                    _ => {
+                        *type_out = qjson_type::QJSON_T_NUM as c_int;
+                        match number::parse_f64(bytes, d.eager_validated) {
+                            Ok(v) => { *f64_out = v; }
+                            Err(e) => return e as c_int,
+                        }
+                    }
+                }
+                let (s, e) = match scalar_byte_range(d, cur) {
+                    Ok(x) => x, Err(e) => return e as c_int,
+                };
+                *byte_start = s;
+                *byte_end = e;
+            }
+        }
+        qjson_err::QJSON_OK as c_int
     })
 }
 
