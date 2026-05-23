@@ -30,7 +30,7 @@ The harness lives at `benches/lua_bench.lua`. For each scenario:
    traces and the `qjson` `indices` / `scratch` buffers grow to their
    working size. Warmup is excluded from timing and the memory delta.
 2. `collectgarbage("collect")` baseline.
-3. 5 rounds × N iterations of the workload; report the **median** ops/s
+3. 10 rounds × N iterations of the workload; report the **median** ops/s
    across rounds (mean + range also reported in the raw output).
 4. Final `collectgarbage("count")` to capture the post-run memory delta in
    KB. The harness does not force a final collection after timing, so
@@ -81,32 +81,32 @@ Each row is "parse + access request fields" on the named payload.
 
 | Scenario | Size | cjson | simdjson | `qjson.parse` | `qjson.decode + access content` | `qjson.decode + qjson.encode` |
 |---|---|---:|---:|---:|---:|---:|---:|
-| small      |   2.1 KB |  99,920 | 113,317 | 123,567 | 135,792 | 205,187 |
-| medium     |  60.4 KB |   8,736 |  81,913 | 125,251 | 203,087 | 200,401 |
-| github-100k |   100 KB |   1,874 |   2,170 |   5,661 |   5,339 |   5,802 |
-| 100k       |   100 KB |   5,116 |  41,288 | 147,710 | 151,515 | 167,504 |
-| 200k       |   200 KB |   2,597 |  19,904 |  91,075 |  93,985 | 100,200 |
-| 500k       |   500 KB |   1,036 |   7,045 |  32,103 |  30,349 |  36,036 |
-| 1m         |  1.00 MB |     483 |   3,489 |  15,957 |  18,750 |  19,711 |
-| 2m         |  2.00 MB |     255 |   1,925 |   8,973 |   9,320 |   9,780 |
-| 5m         |  5.00 MB |     102 |     724 |   3,655 |   2,762 |   3,655 |
-| 10m        | 10.00 MB |      50 |     378 |   1,764 |   1,805 |   1,789 |
-| interleaved (100k/200k/500k/1m, cycled) | — | 1,095 | 9,611 | 32,454 | 32,425 | 33,492 |
+| small      |   2.1 KB |  94,701 | 108,921 | 128,103 |  89,294 | 187,631 |
+| medium     |  60.4 KB |   8,850 |  82,699 | 120,598 | 194,856 | 135,759 |
+| github-100k |   100 KB |   1,901 |   1,939 |   6,041 |   6,009 |   6,435 |
+| 100k       |   100 KB |   5,214 |  36,914 | 136,986 | 110,497 | 126,263 |
+| 200k       |   200 KB |   2,575 |  18,018 |  81,967 |  84,317 |  95,420 |
+| 500k       |   500 KB |   1,043 |   7,262 |  36,563 |  35,971 |  38,023 |
+| 1m         |  1.00 MB |     505 |   3,894 |  16,234 |  16,648 |  16,968 |
+| 2m         |  2.00 MB |     254 |   2,065 |   8,247 |   8,407 |   8,838 |
+| 5m         |  5.00 MB |     100 |     652 |   3,228 |   3,225 |   3,355 |
+| 10m        | 10.00 MB |      50 |     369 |   1,602 |   1,429 |   1,774 |
+| interleaved (100k/200k/500k/1m, cycled) | — | 1,121 | 9,142 | 28,854 | 33,088 | 32,568 |
 
 ### Speed-up vs. baselines
 
 | Scenario | `qjson.parse` / cjson | `qjson.parse` / simdjson | `qjson.decode + access content` / cjson | `qjson.decode + access content` / simdjson |
 |---|---|---:|---:|---:|---:|
-| small  |  1.2× |  1.1× |  1.4× |  1.2× |
-| medium | 14.3× |  1.5× | 23.2× |  2.5× |
-| github-100k | 3.0× |  2.6× | 2.8× |  2.5× |
-| 100k   | 28.9× |  3.6× | 29.6× |  3.7× |
-| 200k   | 35.1× |  4.6× | 36.2× |  4.7× |
-| 500k   | 31.0× |  4.6× | 29.3× |  4.3× |
-| 1m     | 33.0× |  4.6× | 38.8× |  5.4× |
-| 2m     | 35.2× |  4.7× | 36.5× |  4.8× |
-| 5m     | 35.8× |  5.0× | 27.1× |  3.8× |
-| 10m    | 35.3× |  4.7× | 36.1× |  4.8× |
+| small  |  1.4× |  1.2× |  0.9× |  0.8× |
+| medium | 13.6× |  1.5× | 22.0× |  2.4× |
+| github-100k | 3.2× |  3.1× | 3.2× |  3.1× |
+| 100k   | 26.3× |  3.7× | 21.2× |  3.0× |
+| 200k   | 31.8× |  4.5× | 32.7× |  4.7× |
+| 500k   | 35.1× |  5.0× | 34.5× |  5.0× |
+| 1m     | 32.1× |  4.2× | 32.9× |  4.3× |
+| 2m     | 32.5× |  4.0× | 33.1× |  4.1× |
+| 5m     | 32.3× |  5.0× | 32.3× |  4.9× |
+| 10m    | 32.0× |  4.3× | 28.6× |  3.9× |
 
 ## Results — memory delta (KB retained after 5 rounds)
 
@@ -116,17 +116,17 @@ from the last round may still be included.
 
 | Scenario | cjson | simdjson | `qjson.parse` | `qjson.decode + access content` | `qjson.decode + qjson.encode` |
 |---|---|---:|---:|---:|---:|---:|
-| small      | +15,492 | +15,507 | +4,069 | +15,131 | +11,139 |
-| medium     |  +1,956 |  +2,660 |    +65 |  +1,114 |  +1,120 |
-| github-100k | +12,018 | +3,373 |    +19 |    +536 |    +229 |
-| 100k       |    +485 |   +748 |    +71 |    +692 |    +229 |
-| 200k       |    +392 |   +523 |    +34 |    +346 |    +112 |
-| 500k       |    +577 |   +630 |    +15 |    +139 |     +45 |
-| 1m         |  +1,082 | +1,121 |    +10 |    +104 |     +34 |
-| 2m         |  +1,155 | +1,248 |    +18 |    +208 |     +45 |
-| 5m         |  +1,316 | +1,538 |    +14 |    +400 |     +45 |
-| 10m        |  +1,583 | +2,014 |    +14 |    +708 |     +45 |
-| interleaved | +3,357 | +4,404 |   +270 |  +2,776 |    +897 |
+| small      |  -2,472 | +12,360 | +8,159 |  +8,651 |  +2,698 |
+| medium     |  +3,850 |  +5,258 |   +124 |  +2,228 |  +2,234 |
+| github-100k | +20,255 | +18,823 |    +29 |  +1,072 |    +452 |
+| 100k       |    +867 |  +1,393 |   +138 |  +1,384 |    +452 |
+| 200k       |    +584 |    +846 |    +67 |    +692 |    +223 |
+| 500k       |    +654 |    +759 |    +27 |    +277 |     +89 |
+| 1m         |  +1,140 |  +1,218 |    +20 |    +208 |     +67 |
+| 2m         |  +1,284 |  +1,472 |    +31 |    +409 |     +89 |
+| 5m         |  +1,607 |  +2,051 |    +27 |    +855 |     +89 |
+| 10m        |  +2,143 |  +3,004 |    +27 |  +1,736 |     +89 |
+| interleaved | +4,888 | +6,983 |   +536 |  +5,537 |  +1,788 |
 
 `qjson.parse` retention is essentially constant across payload size: the only
 GC-rooted state is the reusable `indices: Vec<u32>` and `scratch` buffers.
