@@ -23,6 +23,10 @@ else
     _M.empty_array_mt  = { __jsontype = "array" }
 end
 
+-- Weak side-table for container type hints, avoiding collision with
+-- user-visible keys.  Maps materialized table → "object" | "array".
+local TABLE_TYPE_HINT = setmetatable({}, { __mode = "k" })
+
 -- Box scratch used for one-shot FFI returns. Reused across calls to avoid
 -- per-call allocation; safe because the parent Doc / lazy view holds the
 -- buffer alive and these are read-and-copy.
@@ -285,7 +289,7 @@ LazyObject.__newindex = function(t, k, v)
         rawset(t, f, nil)
     end
     setmetatable(t, nil)
-    rawset(t, "__qjson_type", "object")
+    TABLE_TYPE_HINT[t] = "object"
     for _, kv in ipairs(contents) do
         rawset(t, kv[1], cache[kv[1]] or kv[2])
     end
@@ -318,7 +322,7 @@ LazyArray.__newindex = function(t, k, v)
         rawset(t, f, nil)
     end
     setmetatable(t, _M.empty_array_mt)
-    rawset(t, "__qjson_type", "array")
+    TABLE_TYPE_HINT[t] = "array"
     for i, x in ipairs(contents) do
         rawset(t, i, cache[i] or x)
     end
@@ -529,9 +533,7 @@ local function encode_object(t)
         if type(k) ~= "string" then
             error("qjson.encode: object key must be a string, got " .. type(k))
         end
-        if k ~= "__qjson_type" then
-            parts[#parts+1] = encode_string(k) .. ":" .. encode(v)
-        end
+        parts[#parts+1] = encode_string(k) .. ":" .. encode(v)
     end
     return "{" .. table.concat(parts, ",") .. "}"
 end
@@ -555,10 +557,10 @@ encode = function(v)
         if mt == _M.empty_array_mt then
             return encode_array(v)
         end
-        if rawget(v, "__qjson_type") == "object" then
+        if TABLE_TYPE_HINT[v] == "object" then
             return encode_object(v)
         end
-        if rawget(v, "__qjson_type") == "array" then
+        if TABLE_TYPE_HINT[v] == "array" then
             return encode_array(v)
         end
         if is_array(v) then

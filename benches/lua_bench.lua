@@ -259,7 +259,9 @@ local function github_table_modify_top(t)
 end
 
 local function github_table_modify_add(t)
-    t.extra_field = true
+    if t[1] then
+        t[1].extra_field = true
+    end
 end
 
 local function github_table_modify_nested(t)
