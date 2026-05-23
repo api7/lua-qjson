@@ -65,6 +65,8 @@ local function wrap_child(parent_view, src_box)
     local own_box = ffi.new("qjson_cursor[1]")
     ffi.copy(own_box, src_box, ffi.sizeof("qjson_cursor"))
     return {
+        _parent  = parent_view,
+        _dirty   = false,
         _doc     = parent_view._doc,
         _cur_box = own_box,        -- keep cdata alive
         _cur     = own_box[0],     -- stable reference into own_box
@@ -252,6 +254,7 @@ end
 -- the dirty check and __newindex can share the list.
 local INTERNAL_KEYS = {
     _doc = true, _cur_box = true, _cur = true, _bs = true, _be = true,
+    _parent = true, _dirty = true,
 }
 
 -- On first write, walk all existing key/value pairs into a plain table,
@@ -260,10 +263,14 @@ local INTERNAL_KEYS = {
 -- Existing rawget-cached entries (e.g. previously returned child proxies)
 -- are preserved so callers' references remain valid.
 LazyObject.__newindex = function(t, k, v)
+    -- Mark dirty from this view up to the root.
+    local cur = t
+    while cur do
+        rawset(cur, "_dirty", true)
+        cur = rawget(cur, "_parent")
+    end
     local contents = materialize_object_contents(t)
     -- Snapshot user-key cache BEFORE nilling internals.
-    -- Use next() for raw iteration: pairs() invokes __pairs on lazy tables,
-    -- walking the full JSON via FFI instead of the Lua-side rawget cache.
     local cache = {}
     local ck, cv = next(t)
     while ck ~= nil do
@@ -272,8 +279,11 @@ LazyObject.__newindex = function(t, k, v)
         end
         ck, cv = next(t, ck)
     end
-    t._doc, t._cur_box, t._cur, t._bs, t._be = nil, nil, nil, nil, nil
+    for _, f in ipairs({"_parent", "_dirty", "_doc", "_cur_box", "_cur", "_bs", "_be"}) do
+        rawset(t, f, nil)
+    end
     setmetatable(t, nil)
+    rawset(t, "__qjson_type", "object")
     for _, kv in ipairs(contents) do
         rawset(t, kv[1], cache[kv[1]] or kv[2])
     end
@@ -284,10 +294,14 @@ end
 -- switch to empty_array_mt (no lazy machinery), then apply the assignment.
 -- Existing rawget-cached entries are preserved so callers' references remain valid.
 LazyArray.__newindex = function(t, k, v)
+    -- Mark dirty from this view up to the root.
+    local cur = t
+    while cur do
+        rawset(cur, "_dirty", true)
+        cur = rawget(cur, "_parent")
+    end
     local contents = materialize_array_contents(t)
     -- Snapshot integer-key cache BEFORE nilling internals.
-    -- Use next() for raw iteration: pairs() would invoke __pairs on lazy arrays,
-    -- walking the full JSON via FFI instead of the Lua-side rawget cache.
     local cache = {}
     local ck, cv = next(t)
     while ck ~= nil do
@@ -296,8 +310,11 @@ LazyArray.__newindex = function(t, k, v)
         end
         ck, cv = next(t, ck)
     end
-    t._doc, t._cur_box, t._cur, t._bs, t._be = nil, nil, nil, nil, nil
+    for _, f in ipairs({"_parent", "_dirty", "_doc", "_cur_box", "_cur", "_bs", "_be"}) do
+        rawset(t, f, nil)
+    end
     setmetatable(t, _M.empty_array_mt)
+    rawset(t, "__qjson_type", "array")
     for i, x in ipairs(contents) do
         rawset(t, i, cache[i] or x)
     end
@@ -328,6 +345,7 @@ function _M.decode(json_str)
         error("qjson: root byte-span failed")
     end
     local view = {
+        _dirty   = false,
         _doc     = doc,
         _cur_box = root_box,   -- keep the box alive; _cur is a stable reference
         _cur     = root_box[0],
@@ -370,23 +388,42 @@ _M.materialize = materialize
 local string_byte = string.byte
 local string_format = string.format
 
--- Minimal JSON string escaper covering the cjson default set.
+-- Escape lookup table: byte value → escape sequence string (or nil if safe).
+local ESCAPES = {
+    [0x22] = '\\"',
+    [0x5C] = '\\\\',
+    [0x0A] = '\\n',
+    [0x0D] = '\\r',
+    [0x09] = '\\t',
+    [0x08] = '\\b',
+    [0x0C] = '\\f',
+}
+
+-- JSON string escaper with bulk-copy fast path.
+-- Scans for bytes that need escaping; copies clean segments via s:sub.
+-- For strings with no escapes, returns '"' .. s .. '"' with zero table allocations.
 local function encode_string(s)
-    local out = {'"'}
-    for i = 1, #s do
+    local n = #s
+    local last, i = 1, 1
+    local out = nil   -- lazily create table only when escapes found
+    while i <= n do
         local b = string_byte(s, i)
-        if b == 0x22 then out[#out+1] = '\\"'
-        elseif b == 0x5C then out[#out+1] = '\\\\'
-        elseif b == 0x0A then out[#out+1] = '\\n'
-        elseif b == 0x0D then out[#out+1] = '\\r'
-        elseif b == 0x09 then out[#out+1] = '\\t'
-        elseif b == 0x08 then out[#out+1] = '\\b'
-        elseif b == 0x0C then out[#out+1] = '\\f'
-        elseif b < 0x20 then out[#out+1] = string_format('\\u%04x', b)
-        else out[#out+1] = string.char(b)
+        local esc = ESCAPES[b]
+        if esc or b < 0x20 then
+            if not out then out = {'"'} end
+            if i > last then out[#out + 1] = s:sub(last, i - 1) end
+            if esc then
+                out[#out + 1] = esc
+            else
+                out[#out + 1] = string_format('\\u%04x', b)
+            end
+            last = i + 1
         end
+        i = i + 1
     end
-    out[#out+1] = '"'
+    if not out then return '"' .. s .. '"' end
+    if last <= n then out[#out + 1] = s:sub(last, n) end
+    out[#out + 1] = '"'
     return table.concat(out)
 end
 
@@ -398,27 +435,6 @@ local function encode_number(n)
         return string_format("%d", n)
     end
     return string_format("%.14g", n)
-end
-
--- A lazy subtree is "dirty" if any cached descendant has been materialized
--- (no longer carries Lazy* metatable). Non-cached descendants are guaranteed
--- untouched, so we only need to walk the rawget-cached entries.
-local function is_dirty(v)
-    if type(v) ~= "table" then return false end
-    local mt = getmetatable(v)
-    if mt ~= LazyObject and mt ~= LazyArray then
-        return true  -- materialized
-    end
-    -- Use next() for raw table iteration: pairs() would invoke __pairs on
-    -- lazy tables, walking the full JSON via FFI instead of the Lua cache.
-    local k, child = next(v)
-    while k ~= nil do
-        if not INTERNAL_KEYS[k] then
-            if is_dirty(child) then return true end
-        end
-        k, child = next(v, k)
-    end
-    return false
 end
 
 -- Forward declaration so encode_lazy_object_walking, encode_lazy_array_walking,
@@ -471,7 +487,7 @@ local function encode_lazy_array_walking(t)
 end
 
 local function encode_proxy(t)
-    if not is_dirty(t) then
+    if not t._dirty then
         -- Fast path: no mutations — slice the original buffer bytes.
         return t._doc._hold:sub(t._bs + 1, t._be)
     end
@@ -529,6 +545,15 @@ encode = function(v)
         local mt = getmetatable(v)
         if mt == LazyObject or mt == LazyArray then
             return encode_proxy(v)
+        end
+        if mt == _M.empty_array_mt then
+            return encode_array(v)
+        end
+        if rawget(v, "__qjson_type") == "object" then
+            return encode_object(v)
+        end
+        if rawget(v, "__qjson_type") == "array" then
+            return encode_array(v)
         end
         if is_array(v) then
             return encode_array(v)

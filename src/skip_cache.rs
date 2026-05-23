@@ -1,4 +1,5 @@
 use rustc_hash::FxHashMap;
+use std::rc::Rc;
 
 #[derive(Default)]
 pub(crate) struct SkipCache {
@@ -12,17 +13,18 @@ pub(crate) struct SkipSlot {
     /// child_starts[i] = position in doc.indices of the i-th child's leading
     /// marker. For object children this is the key's opening '"'; for array
     /// children, the value's first marker.
-    pub(crate) child_starts: Vec<u32>,
+    pub(crate) child_starts: Rc<[u32]>,
     /// child_ends[i] = the `cursor_end` value for the i-th child (i.e. the
     /// idx_end to put in a Cursor pointing at that child's value). Storing
     /// this lets cache-hit resolution skip the brace-counting find_value_span.
-    pub(crate) child_ends:   Vec<u32>,
+    pub(crate) child_ends:   Rc<[u32]>,
 }
 
 impl SkipCache {
     pub(crate) fn new() -> Self {
+        let empty: Rc<[u32]> = Rc::from([]);
         Self {
-            slots: vec![SkipSlot { child_starts: Vec::new(), child_ends: Vec::new() }],
+            slots: vec![SkipSlot { child_starts: Rc::clone(&empty), child_ends: empty }],
             by_opener: FxHashMap::default(),
         }
     }
@@ -34,7 +36,8 @@ impl SkipCache {
             return (slot, true);
         }
         let new = self.slots.len() as u32;
-        self.slots.push(SkipSlot { child_starts: Vec::new(), child_ends: Vec::new() });
+        let empty: Rc<[u32]> = Rc::from([]);
+        self.slots.push(SkipSlot { child_starts: Rc::clone(&empty), child_ends: empty });
         self.by_opener.insert(opener_idx, new);
         (new, false)
     }

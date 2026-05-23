@@ -220,6 +220,21 @@ local function default_table_access(t)
     end
 end
 
+local function default_table_modify_top(t)
+    t.model = "new-model"
+    t.temperature = 0.0
+end
+
+local function default_table_modify_add(t)
+    t.stream = true
+end
+
+local function default_table_modify_nested(t)
+    if t.messages and qjson.len(t.messages) > 0 then
+        t.messages[1].content = "modified"
+    end
+end
+
 -- GitHub issues accessors: array of issues, access first issue's fields
 local function github_cjson_access(obj)
     local _ = obj[1] and obj[1].id
@@ -239,11 +254,26 @@ local function github_table_access(t)
     local _ = t[1] and t[1].user and t[1].user.login
 end
 
+local function github_table_modify_top(t)
+    t[1].title = "modified title"
+end
+
+local function github_table_modify_add(t)
+    t.extra_field = true
+end
+
+local function github_table_modify_nested(t)
+    if t[1] and t[1].user then
+        t[1].user.login = "modified-user"
+    end
+end
+
 local scenarios = {
     {name = "small",  iters = 5000, payload = read_file("benches/fixtures/small_api.json")},
     {name = "medium", iters = 500,  payload = read_file("benches/fixtures/medium_resp.json")},
     {name = "github-100k", iters = 100, payload = make_github_issues_payload(100 * 1024),
-     cjson_access = github_cjson_access, qjson_access = github_qjson_access, table_access = github_table_access},
+     cjson_access = github_cjson_access, qjson_access = github_qjson_access, table_access = github_table_access,
+     modify_top = github_table_modify_top, modify_add = github_table_modify_add, modify_nested = github_table_modify_nested},
     {name = "100k",   iters = 100,  payload = make_payload(100 * 1024)},
     {name = "200k",   iters = 50,   payload = make_payload(200 * 1024)},
     {name = "500k",   iters = 20,   payload = make_payload(500 * 1024)},
@@ -269,6 +299,9 @@ for _, s in ipairs(scenarios) do
     local cjson_access = s.cjson_access or default_cjson_access
     local qjson_access = s.qjson_access or default_qjson_access
     local table_access = s.table_access or default_table_access
+    local modify_top = s.modify_top or default_table_modify_top
+    local modify_add = s.modify_add or default_table_modify_add
+    local modify_nested = s.modify_nested or default_table_modify_nested
 
     bench("cjson.decode + access fields", s.iters, function()
         local obj = cjson.decode(s.payload)
@@ -307,6 +340,24 @@ for _, s in ipairs(scenarios) do
 
     bench("qjson.decode + qjson.encode (unmodified)", s.iters, function()
         local t = qjson.decode(s.payload)
+        local _ = qjson.encode(t)
+    end)
+
+    bench("qjson.decode + modify top + encode", s.iters, function()
+        local t = qjson.decode(s.payload)
+        modify_top(t)
+        local _ = qjson.encode(t)
+    end)
+
+    bench("qjson.decode + add field + encode", s.iters, function()
+        local t = qjson.decode(s.payload)
+        modify_add(t)
+        local _ = qjson.encode(t)
+    end)
+
+    bench("qjson.decode + modify nested + encode", s.iters, function()
+        local t = qjson.decode(s.payload)
+        modify_nested(t)
         local _ = qjson.encode(t)
     end)
 end
@@ -384,6 +435,30 @@ do
     bench("qjson.decode + qjson.encode (unmodified)", 400, function()
         local p = next_p()
         local t = qjson.decode(p)
+        local _ = qjson.encode(t)
+    end)
+
+    next_p = make_cycler(interleaved)
+    bench("qjson.decode + modify top + encode", 400, function()
+        local p = next_p()
+        local t = qjson.decode(p)
+        default_table_modify_top(t)
+        local _ = qjson.encode(t)
+    end)
+
+    next_p = make_cycler(interleaved)
+    bench("qjson.decode + add field + encode", 400, function()
+        local p = next_p()
+        local t = qjson.decode(p)
+        default_table_modify_add(t)
+        local _ = qjson.encode(t)
+    end)
+
+    next_p = make_cycler(interleaved)
+    bench("qjson.decode + modify nested + encode", 400, function()
+        local p = next_p()
+        local t = qjson.decode(p)
+        default_table_modify_nested(t)
         local _ = qjson.encode(t)
     end)
 end

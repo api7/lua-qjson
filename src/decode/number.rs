@@ -19,7 +19,7 @@ pub(crate) fn parse_i64(bytes: &[u8], skip_validation: bool) -> Result<i64, qjso
     }
 
     // After ABNF validation, integer-only inputs have no `.`/`e`/`E`.
-    if bytes.iter().any(|&b| b == b'.' || b == b'e' || b == b'E') {
+    if memchr::memchr3(b'.', b'e', b'E', bytes).is_some() {
         return Err(qjson_err::QJSON_TYPE_MISMATCH);
     }
     let (neg, rest) = match bytes[0] {

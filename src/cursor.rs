@@ -1,6 +1,7 @@
 use crate::doc::Document;
 use crate::error::qjson_err;
 use crate::path::{PathIter, PathSeg};
+use std::rc::Rc;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Cursor {
@@ -62,9 +63,10 @@ fn walk_children(doc: &Document, cur: Cursor, seg: &PathSeg) -> Result<Cursor, q
 
     if was_cached {
         // Fast path: iterate cached (start, end) pairs. No brace counting.
+        // Rc::clone is O(1) — avoids O(n) Vec clone of previous implementation.
         let slot = cache.slot(slot_n);
-        let starts = slot.child_starts.clone();
-        let ends   = slot.child_ends.clone();
+        let starts = Rc::clone(&slot.child_starts);
+        let ends   = Rc::clone(&slot.child_ends);
         drop(cache);
         return resolve_in_known_children(doc, &starts, &ends, is_obj, seg);
     }
@@ -88,8 +90,8 @@ fn walk_children(doc: &Document, cur: Cursor, seg: &PathSeg) -> Result<Cursor, q
         }
         if p == closer_byte_pos {
             let slot = cache.slot_mut(slot_n);
-            slot.child_starts = starts;
-            slot.child_ends   = ends;
+            slot.child_starts = starts.into();
+            slot.child_ends   = ends.into();
             return Err(qjson_err::QJSON_NOT_FOUND);
         }
     }
@@ -133,8 +135,8 @@ fn walk_children(doc: &Document, cur: Cursor, seg: &PathSeg) -> Result<Cursor, q
     }
 
     let slot = cache.slot_mut(slot_n);
-    slot.child_starts = starts;
-    slot.child_ends   = ends;
+    slot.child_starts = starts.into();
+    slot.child_ends   = ends.into();
 
     match result {
         Some(c) => Ok(c),

@@ -105,21 +105,66 @@ unsafe fn scan_avx2_impl(buf: &[u8], out: &mut Vec<u32>) -> Result<(), usize> {
     super::validate_brackets(buf, out)
 }
 
+// Tag bits for nibble-based structural byte classification (mirrors NEON).
+const TAG_QUOTE: u8         = 0x01;
+const TAG_COMMA: u8         = 0x02;
+const TAG_COLON: u8         = 0x04;
+const TAG_OPEN_BRACKET: u8  = 0x08;
+const TAG_CLOSE_BRACKET: u8 = 0x10;
+const TAG_OPEN_BRACE: u8    = 0x20;
+const TAG_CLOSE_BRACE: u8   = 0x40;
+
 #[inline(always)]
 unsafe fn structural_mask_chunk(lo: __m256i, hi: __m256i) -> u64 {
-    // For each byte, set 1 if byte is one of: { } [ ] : , "
-    // Bit-OR results from 7 byte-equality compares.
-    let chars: [u8; 7] = [b'{', b'}', b'[', b']', b':', b',', b'"'];
-    let mut mask_lo: i32 = 0;
-    let mut mask_hi: i32 = 0;
-    for c in chars {
-        let v = _mm256_set1_epi8(c as i8);
-        let eq_lo = _mm256_cmpeq_epi8(lo, v);
-        let eq_hi = _mm256_cmpeq_epi8(hi, v);
-        mask_lo |= _mm256_movemask_epi8(eq_lo);
-        mask_hi |= _mm256_movemask_epi8(eq_hi);
-    }
-    (mask_lo as u32 as u64) | ((mask_hi as u32 as u64) << 32)
+    // Nibble-based classification via PSHUFB LUTs.  Each structural byte
+    // has a unique (hi, lo) nibble pair; the LUTs hold disjoint tag bits
+    // so that HI_LUT[hi] & LO_LUT[lo] is non-zero only for the 7
+    // structural bytes: { } [ ] : , "
+    #[rustfmt::skip]
+    const HI_LUT: [u8; 16] = [
+        0, 0,
+        TAG_QUOTE | TAG_COMMA,           // index 2: 0x2_
+        TAG_COLON,                       // index 3: 0x3_
+        0,
+        TAG_OPEN_BRACKET | TAG_CLOSE_BRACKET, // index 5: 0x5_
+        0,
+        TAG_OPEN_BRACE | TAG_CLOSE_BRACE,     // index 7: 0x7_
+        0, 0, 0, 0, 0, 0, 0, 0,
+    ];
+    #[rustfmt::skip]
+    const LO_LUT: [u8; 16] = [
+        0, 0,
+        TAG_QUOTE,                                   // index  2: 0x_2
+        0, 0, 0, 0, 0, 0, 0,
+        TAG_COLON,                                   // index 10: 0x_A
+        TAG_OPEN_BRACKET | TAG_OPEN_BRACE,           // index 11: 0x_B
+        TAG_COMMA,                                   // index 12: 0x_C
+        TAG_CLOSE_BRACKET | TAG_CLOSE_BRACE,         // index 13: 0x_D
+        0, 0,
+    ];
+
+    let hi_lut = _mm256_broadcastsi128_si256(
+        _mm_loadu_si128(HI_LUT.as_ptr() as *const __m128i));
+    let lo_lut = _mm256_broadcastsi128_si256(
+        _mm_loadu_si128(LO_LUT.as_ptr() as *const __m128i));
+    let mask_0f = _mm256_set1_epi8(0x0f);
+    let zero   = _mm256_setzero_si256();
+    let all_ff = _mm256_cmpeq_epi8(zero, zero); // 0xFF in every lane
+
+    let classify = |chunk: __m256i| -> i32 {
+        let hi_nib = _mm256_and_si256(_mm256_srli_epi16::<4>(chunk), mask_0f);
+        let lo_nib = _mm256_and_si256(chunk, mask_0f);
+        let hi_part = _mm256_shuffle_epi8(hi_lut, hi_nib);
+        let lo_part = _mm256_shuffle_epi8(lo_lut, lo_nib);
+        let tags = _mm256_and_si256(hi_part, lo_part);
+        // tags != 0  →  structural.  Map to 0xFF / 0x00 for movemask.
+        let is_zero = _mm256_cmpeq_epi8(tags, zero);
+        _mm256_movemask_epi8(_mm256_xor_si256(is_zero, all_ff))
+    };
+
+    let mlo = classify(lo);
+    let mhi = classify(hi);
+    (mlo as u32 as u64) | ((mhi as u32 as u64) << 32)
 }
 
 /// Build a u64 mask where bit i is 1 if byte i in (lo|hi) equals `"` OR `\`.
