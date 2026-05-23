@@ -266,6 +266,8 @@ LazyObject.__newindex = function(t, k, v)
     -- Mark dirty from this view up to the root.
     local cur = t
     while cur do
+        local mt = getmetatable(cur)
+        if mt ~= LazyObject and mt ~= LazyArray then break end
         rawset(cur, "_dirty", true)
         cur = rawget(cur, "_parent")
     end
@@ -297,6 +299,8 @@ LazyArray.__newindex = function(t, k, v)
     -- Mark dirty from this view up to the root.
     local cur = t
     while cur do
+        local mt = getmetatable(cur)
+        if mt ~= LazyObject and mt ~= LazyArray then break end
         rawset(cur, "_dirty", true)
         cur = rawget(cur, "_parent")
     end
@@ -525,7 +529,9 @@ local function encode_object(t)
         if type(k) ~= "string" then
             error("qjson.encode: object key must be a string, got " .. type(k))
         end
-        parts[#parts+1] = encode_string(k) .. ":" .. encode(v)
+        if k ~= "__qjson_type" then
+            parts[#parts+1] = encode_string(k) .. ":" .. encode(v)
+        end
     end
     return "{" .. table.concat(parts, ",") .. "}"
 end
