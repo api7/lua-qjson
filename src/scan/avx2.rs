@@ -107,8 +107,13 @@ unsafe fn scan_avx2_impl(buf: &[u8], out: &mut Vec<u32>) -> Result<(), usize> {
 
 #[inline(always)]
 unsafe fn structural_mask_chunk(lo: __m256i, hi: __m256i) -> u64 {
-    // For each byte, set 1 if byte is one of: { } [ ] : , "
-    // Bit-OR results from 7 byte-equality compares.
+    // 7 parallel byte-equality compares. On AMD Zen2 these dispatch across
+    // multiple FP ports and beat a PSHUFB-LUT nibble classifier (PSHUFB ymm
+    // is split into 2 micro-ops per lane, the LUT chain lengthens the
+    // critical path, and VPMOVMSKB has lat=4 — the 14-movemask total is
+    // still cheaper than the LUT path's serial dependency). PR #54 tried
+    // PSHUFB-LUT but measured -45% parse on small payloads on Zen2; this
+    // form is what shipped through #51.
     let chars: [u8; 7] = [b'{', b'}', b'[', b']', b':', b',', b'"'];
     let mut mask_lo: i32 = 0;
     let mut mask_hi: i32 = 0;

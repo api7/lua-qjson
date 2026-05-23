@@ -19,7 +19,7 @@ pub(crate) fn parse_i64(bytes: &[u8], skip_validation: bool) -> Result<i64, qjso
     }
 
     // After ABNF validation, integer-only inputs have no `.`/`e`/`E`.
-    if bytes.iter().any(|&b| b == b'.' || b == b'e' || b == b'E') {
+    if memchr::memchr3(b'.', b'e', b'E', bytes).is_some() {
         return Err(qjson_err::QJSON_TYPE_MISMATCH);
     }
     let (neg, rest) = match bytes[0] {
@@ -48,10 +48,10 @@ pub(crate) fn parse_f64(bytes: &[u8], skip_validation: bool) -> Result<f64, qjso
     // When validation is skipped, do a cheap precheck to avoid returning
     // a mode-dependent error code for non-number input.  The leading
     // byte must plausibly start a JSON number: `-`, `.`, or digit.
-    if skip_validation {
-        if bytes.is_empty() || !matches!(bytes[0], b'-' | b'.' | b'0'..=b'9') {
-            return Err(qjson_err::QJSON_INVALID_NUMBER);
-        }
+    if skip_validation
+        && (bytes.is_empty() || !matches!(bytes[0], b'-' | b'.' | b'0'..=b'9'))
+    {
+        return Err(qjson_err::QJSON_INVALID_NUMBER);
     }
 
     let s = std::str::from_utf8(bytes).map_err(|_| qjson_err::QJSON_DECODE_FAILED)?;
@@ -120,6 +120,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::approx_constant)]
     fn f64_skip_validation_valid_input() {
         assert_eq!(parse_f64(b"3.14", true).unwrap(), 3.14);
     }

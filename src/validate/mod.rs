@@ -145,10 +145,56 @@ pub(crate) fn validate_eager_values(
     indices: &[u32],
     max_depth: u32,
 ) -> Result<(), qjson_err> {
-    // Stack of container contexts; the top is the current state.
-    // We use a single seed entry `CtxKind::Top` for the root value.
-    let mut stack: Vec<CtxKind> = Vec::with_capacity(16);
-    stack.push(CtxKind::Top);
+    // Fixed-size stack avoids heap allocation for typical JSON depths.
+    const STACK_CAP: usize = 64;
+    let mut stack_buf: [CtxKind; STACK_CAP] = [CtxKind::Top; STACK_CAP];
+    let mut sp: usize = 1; // next free slot (= len)
+    let mut fallback: Option<Vec<CtxKind>> = None;
+
+    macro_rules! push {
+        ($kind:expr) => {
+            if sp < STACK_CAP {
+                stack_buf[sp] = $kind;
+                sp += 1;
+            } else {
+                let fb = fallback.get_or_insert_with(|| {
+                    let mut v: Vec<CtxKind> = Vec::with_capacity(STACK_CAP + 16);
+                    v.extend_from_slice(&stack_buf[..sp]);
+                    v
+                });
+                sp = STACK_CAP.wrapping_add(fb.len() + 1);
+                fb.push($kind);
+            }
+        };
+    }
+    macro_rules! pop {
+        () => {{
+            if sp <= STACK_CAP {
+                if sp == 0 { None }
+                else { sp -= 1; Some(stack_buf[sp]) }
+            } else {
+                let fb = fallback.as_mut().unwrap();
+                let val = fb.pop();
+                if fb.is_empty() { sp = STACK_CAP; }
+                val
+            }
+        }};
+    }
+    macro_rules! last_mut {
+        () => {{
+            if sp <= STACK_CAP {
+                if sp == 0 { None } else { Some(&mut stack_buf[sp - 1]) }
+            } else {
+                fallback.as_mut().unwrap().last_mut()
+            }
+        }};
+    }
+    macro_rules! stack_len {
+        () => { if sp <= STACK_CAP { sp } else { fallback.as_ref().map_or(0, |v| v.len()) } };
+    }
+    macro_rules! stack_is_empty {
+        () => { stack_len!() == 0 };
+    }
 
     // Byte position just past the previous structural we consumed —
     // i.e. the start of the current gap. A gap may contain a scalar
@@ -165,11 +211,11 @@ pub(crate) fn validate_eager_values(
         // First, consume any scalar token sitting in the gap before
         // this structural. This may transition the current state from
         // a value-expecting form to its "AfterValue" form.
-        consume_scalar_gap(buf, prev_end, pos, stack.last_mut().unwrap())?;
+        consume_scalar_gap(buf, prev_end, pos, last_mut!().unwrap())?;
 
         match b {
             b'{' | b'[' => {
-                let cur = stack.last_mut().unwrap();
+                let cur = last_mut!().unwrap();
                 match *cur {
                     CtxKind::Top
                     | CtxKind::ArrAfterOpen
@@ -178,10 +224,10 @@ pub(crate) fn validate_eager_values(
                         // Transition parent to AfterValue ahead of the
                         // descent; the inner container's close pops back.
                         *cur = parent_after_value(*cur);
-                        if stack.len() > max_depth as usize {
+                        if stack_len!() > max_depth as usize {
                             return Err(qjson_err::QJSON_NESTING_TOO_DEEP);
                         }
-                        stack.push(if b == b'{' {
+                        push!(if b == b'{' {
                             CtxKind::ObjAfterOpen
                         } else {
                             CtxKind::ArrAfterOpen
@@ -193,25 +239,25 @@ pub(crate) fn validate_eager_values(
                 i += 1;
             }
             b'}' => {
-                let top = stack.pop().ok_or(qjson_err::QJSON_PARSE_ERROR)?;
+                let top = pop!().ok_or(qjson_err::QJSON_PARSE_ERROR)?;
                 if !matches!(top, CtxKind::ObjAfterOpen | CtxKind::ObjAfterValue) {
                     return Err(qjson_err::QJSON_PARSE_ERROR);
                 }
-                if stack.is_empty() { return Err(qjson_err::QJSON_PARSE_ERROR); }
+                if stack_is_empty!() { return Err(qjson_err::QJSON_PARSE_ERROR); }
                 prev_end = pos + 1;
                 i += 1;
             }
             b']' => {
-                let top = stack.pop().ok_or(qjson_err::QJSON_PARSE_ERROR)?;
+                let top = pop!().ok_or(qjson_err::QJSON_PARSE_ERROR)?;
                 if !matches!(top, CtxKind::ArrAfterOpen | CtxKind::ArrAfterValue) {
                     return Err(qjson_err::QJSON_PARSE_ERROR);
                 }
-                if stack.is_empty() { return Err(qjson_err::QJSON_PARSE_ERROR); }
+                if stack_is_empty!() { return Err(qjson_err::QJSON_PARSE_ERROR); }
                 prev_end = pos + 1;
                 i += 1;
             }
             b',' => {
-                let cur = stack.last_mut().ok_or(qjson_err::QJSON_PARSE_ERROR)?;
+                let cur = last_mut!().ok_or(qjson_err::QJSON_PARSE_ERROR)?;
                 match *cur {
                     CtxKind::ArrAfterValue => *cur = CtxKind::ArrAfterComma,
                     CtxKind::ObjAfterValue => *cur = CtxKind::ObjAfterComma,
@@ -221,7 +267,7 @@ pub(crate) fn validate_eager_values(
                 i += 1;
             }
             b':' => {
-                let cur = stack.last_mut().ok_or(qjson_err::QJSON_PARSE_ERROR)?;
+                let cur = last_mut!().ok_or(qjson_err::QJSON_PARSE_ERROR)?;
                 match *cur {
                     CtxKind::ObjAfterKey => *cur = CtxKind::ObjAfterColon,
                     _ => return Err(qjson_err::QJSON_PARSE_ERROR),
@@ -239,7 +285,7 @@ pub(crate) fn validate_eager_values(
                 }
                 strings::validate_string_span(&buf[pos + 1 .. close])?;
 
-                let cur = stack.last_mut().ok_or(qjson_err::QJSON_PARSE_ERROR)?;
+                let cur = last_mut!().ok_or(qjson_err::QJSON_PARSE_ERROR)?;
                 match *cur {
                     // Key position in an object.
                     CtxKind::ObjAfterOpen | CtxKind::ObjAfterComma => {
@@ -264,11 +310,11 @@ pub(crate) fn validate_eager_values(
     // Tail: a top-level scalar root (e.g. `42`, `true`) lives in the
     // gap after the last structural — or, if there are no structurals,
     // the whole buffer.
-    consume_scalar_gap(buf, prev_end, buf.len(), stack.last_mut().unwrap())?;
+    consume_scalar_gap(buf, prev_end, buf.len(), last_mut!().unwrap())?;
 
     // After the walk, the stack must hold exactly one frame: the root
     // context, which must be `TopDone` (root value consumed).
-    if stack.len() != 1 || stack[0] != CtxKind::TopDone {
+    if stack_len!() != 1 || stack_buf[0] != CtxKind::TopDone {
         return Err(qjson_err::QJSON_PARSE_ERROR);
     }
     Ok(())
@@ -495,9 +541,8 @@ mod tests {
     #[test]
     fn grammar_accepts_at_max_depth() {
         // 1024 nested arrays at the default max_depth limit.
-        let mut buf = Vec::new();
-        for _ in 0..1024 { buf.push(b'['); }
-        for _ in 0..1024 { buf.push(b']'); }
+        let mut buf = vec![b'['; 1024];
+        buf.extend_from_slice(&vec![b']'; 1024]);
         assert!(
             validate_eager_values(&buf, &ix(&buf), 1024).is_ok(),
             "should accept exactly at max_depth"
@@ -507,9 +552,8 @@ mod tests {
     #[test]
     fn grammar_rejects_over_max_depth() {
         // 1025 nested arrays — one past the default max_depth limit.
-        let mut buf = Vec::new();
-        for _ in 0..1025 { buf.push(b'['); }
-        for _ in 0..1025 { buf.push(b']'); }
+        let mut buf = vec![b'['; 1025];
+        buf.extend_from_slice(&vec![b']'; 1025]);
         assert_eq!(
             validate_eager_values(&buf, &ix(&buf), 1024), Err(qjson_err::QJSON_NESTING_TOO_DEEP),
         );

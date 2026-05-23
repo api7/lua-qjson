@@ -145,7 +145,10 @@ local ROUNDS = 5
 local function bench(name, iters, fn)
     -- Warmup pass: lets JIT compile hot traces and any one-time pools fill
     -- before measurement starts. Excluded from timing and memory delta.
-    local warmup = math.max(3, math.floor(iters / 5))
+    -- Floor at 50: LuaJIT hotloop default is 56, so fewer iterations leave
+    -- the bench measuring interpreter mode for the large-payload scenarios
+    -- (e.g. 500k has iters=100, iters/5=20 → without floor, traces may not compile).
+    local warmup = math.max(50, math.floor(iters / 5))
     for _ = 1, warmup do fn() end
 
     collectgarbage("collect")
@@ -220,6 +223,21 @@ local function default_table_access(t)
     end
 end
 
+local function default_table_modify_top(t)
+    t.model = "new-model"
+    t.temperature = 0.0
+end
+
+local function default_table_modify_add(t)
+    t.stream = true
+end
+
+local function default_table_modify_nested(t)
+    if t.messages and qjson.len(t.messages) > 0 then
+        t.messages[1].content = "modified"
+    end
+end
+
 -- GitHub issues accessors: array of issues, access first issue's fields
 local function github_cjson_access(obj)
     local _ = obj[1] and obj[1].id
@@ -239,15 +257,32 @@ local function github_table_access(t)
     local _ = t[1] and t[1].user and t[1].user.login
 end
 
+local function github_table_modify_top(t)
+    t[1].title = "modified title"
+end
+
+local function github_table_modify_add(t)
+    if t[1] then
+        t[1].extra_field = true
+    end
+end
+
+local function github_table_modify_nested(t)
+    if t[1] and t[1].user then
+        t[1].user.login = "modified-user"
+    end
+end
+
 local scenarios = {
     {name = "small",  iters = 5000, payload = read_file("benches/fixtures/small_api.json")},
     {name = "medium", iters = 500,  payload = read_file("benches/fixtures/medium_resp.json")},
     {name = "github-100k", iters = 100, payload = make_github_issues_payload(100 * 1024),
-     cjson_access = github_cjson_access, qjson_access = github_qjson_access, table_access = github_table_access},
+     cjson_access = github_cjson_access, qjson_access = github_qjson_access, table_access = github_table_access,
+     modify_top = github_table_modify_top, modify_add = github_table_modify_add, modify_nested = github_table_modify_nested},
     {name = "100k",   iters = 100,  payload = make_payload(100 * 1024)},
     {name = "200k",   iters = 50,   payload = make_payload(200 * 1024)},
-    {name = "500k",   iters = 20,   payload = make_payload(500 * 1024)},
-    {name = "1m",     iters = 15,   payload = make_payload(1024 * 1024)},
+    {name = "500k",   iters = 100,  payload = make_payload(500 * 1024)},
+    {name = "1m",     iters = 60,   payload = make_payload(1024 * 1024)},
     {name = "2m",     iters = 20,   payload = make_payload(2 * 1024 * 1024)},
     {name = "5m",     iters = 20,   payload = make_payload(5 * 1024 * 1024)},
     {name = "10m",    iters = 20,   payload = make_payload(10 * 1024 * 1024)},
@@ -258,21 +293,54 @@ local scenarios = {
 local has_pooled_api = type(qjson.new_decoder) == "function"
 local pooled_decoder = has_pooled_api and qjson.new_decoder() or nil
 
+-- Optional scenario filter: arg[1] = scenario name (e.g. "small").
+-- When set, only that single scenario runs in a fresh LuaJIT process,
+-- avoiding accumulated GC/JIT state from prior payloads.
+local filter = arg[1]
+
 if not simdjson then
     print("lua-resty-simdjson unavailable; skipping simdjson rows: "
         .. tostring(simdjson_or_err))
 end
 
 for _, s in ipairs(scenarios) do
+    if filter and s.name ~= filter then goto continue_scenario end
     print(string.format("=== %s (%d bytes) ===", s.name, #s.payload))
 
     local cjson_access = s.cjson_access or default_cjson_access
     local qjson_access = s.qjson_access or default_qjson_access
     local table_access = s.table_access or default_table_access
+    local modify_top = s.modify_top or default_table_modify_top
+    local modify_add = s.modify_add or default_table_modify_add
+    local modify_nested = s.modify_nested or default_table_modify_nested
 
     bench("cjson.decode + access fields", s.iters, function()
         local obj = cjson.decode(s.payload)
         cjson_access(obj)
+    end)
+
+    -- cjson always fully materializes on decode, so modify+encode is the
+    -- same cost as a full re-encode — useful as a realistic baseline for
+    -- modify workloads.
+    bench("cjson.decode + modify top + encode", s.iters, function()
+        local obj = cjson.decode(s.payload)
+        modify_top(obj)
+        local _enc = cjson.encode(obj)
+        if #_enc < 2 then error("cjson.encode produced too-short result") end
+    end)
+
+    bench("cjson.decode + add field + encode", s.iters, function()
+        local obj = cjson.decode(s.payload)
+        modify_add(obj)
+        local _enc = cjson.encode(obj)
+        if #_enc < 2 then error("cjson.encode produced too-short result") end
+    end)
+
+    bench("cjson.decode + modify nested + encode", s.iters, function()
+        local obj = cjson.decode(s.payload)
+        modify_nested(obj)
+        local _enc = cjson.encode(obj)
+        if #_enc < 2 then error("cjson.encode produced too-short result") end
     end)
 
     if simdjson then
@@ -307,8 +375,31 @@ for _, s in ipairs(scenarios) do
 
     bench("qjson.decode + qjson.encode (unmodified)", s.iters, function()
         local t = qjson.decode(s.payload)
-        local _ = qjson.encode(t)
+        local _enc = qjson.encode(t)
+        if #_enc < 2 then error("qjson.encode produced too-short result") end
     end)
+
+    bench("qjson.decode + modify top + encode", s.iters, function()
+        local t = qjson.decode(s.payload)
+        modify_top(t)
+        local _enc = qjson.encode(t)
+        if #_enc < 2 then error("qjson.encode produced too-short result") end
+    end)
+
+    bench("qjson.decode + add field + encode", s.iters, function()
+        local t = qjson.decode(s.payload)
+        modify_add(t)
+        local _enc = qjson.encode(t)
+        if #_enc < 2 then error("qjson.encode produced too-short result") end
+    end)
+
+    bench("qjson.decode + modify nested + encode", s.iters, function()
+        local t = qjson.decode(s.payload)
+        modify_nested(t)
+        local _enc = qjson.encode(t)
+        if #_enc < 2 then error("qjson.encode produced too-short result") end
+    end)
+    ::continue_scenario::
 end
 
 -- Interleaved scenario: cycle through several payloads of different sizes
@@ -337,6 +428,8 @@ local function make_cycler(items)
         return items[((i - 1) % n) + 1]
     end
 end
+
+if not filter or filter == "interleaved" then
 
 print(string.format("=== interleaved %s ===", table.concat(interleaved_names, ",")))
 
@@ -384,6 +477,36 @@ do
     bench("qjson.decode + qjson.encode (unmodified)", 400, function()
         local p = next_p()
         local t = qjson.decode(p)
-        local _ = qjson.encode(t)
+        local _enc = qjson.encode(t)
+        if #_enc < 2 then error("qjson.encode produced too-short result") end
+    end)
+
+    next_p = make_cycler(interleaved)
+    bench("qjson.decode + modify top + encode", 400, function()
+        local p = next_p()
+        local t = qjson.decode(p)
+        default_table_modify_top(t)
+        local _enc = qjson.encode(t)
+        if #_enc < 2 then error("qjson.encode produced too-short result") end
+    end)
+
+    next_p = make_cycler(interleaved)
+    bench("qjson.decode + add field + encode", 400, function()
+        local p = next_p()
+        local t = qjson.decode(p)
+        default_table_modify_add(t)
+        local _enc = qjson.encode(t)
+        if #_enc < 2 then error("qjson.encode produced too-short result") end
+    end)
+
+    next_p = make_cycler(interleaved)
+    bench("qjson.decode + modify nested + encode", 400, function()
+        local p = next_p()
+        local t = qjson.decode(p)
+        default_table_modify_nested(t)
+        local _enc = qjson.encode(t)
+        if #_enc < 2 then error("qjson.encode produced too-short result") end
     end)
 end
+
+end  -- filter == "interleaved"

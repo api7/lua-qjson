@@ -99,29 +99,36 @@ LD_LIBRARY_PATH="$PWD/target/release" \
 ## Benchmarks
 
 `qjson` vs. `lua-cjson` and `lua-resty-simdjson` on multimodal
-chat-completion payloads, "parse + access model, temperature, and all
-messages[*].content paths" workload (median ops/s under OpenResty LuaJIT 2.1,
-AMD EPYC Rome (Zen 2, 4 vCPUs); 5 rounds, deterministic payload):
+chat-completion payloads (median ops/s under OpenResty LuaJIT 2.1,
+AMD EPYC Rome, Zen 2, 4 vCPUs; 5 rounds, deterministic payload).
 
-| Size | cjson | simdjson | `qjson.parse` | `qjson.decode + access content` | speedup vs. cjson |
+### Parse + access (read-only)
+
+| Size | cjson | simdjson | `qjson.parse` | `qjson.decode + access` | speedup vs. cjson |
 |---:|---:|---:|---:|---:|---:|
-|   2 KB |  94,075 | 108,108 | 127,214 | 120,398 |  1.4× /  1.3× |
-|  60 KB |   9,041 |  83,043 | 123,487 | 214,500 | 13.7× / 23.7× |
-| 100 KB |   5,302 |  32,248 | 109,649 | 102,564 | 20.7× / 19.3× |
-|   1 MB |     517 |   3,538 |  16,520 |  16,988 | 32.0× / 32.9× |
-|  10 MB |      50 |     402 |   1,899 |   1,918 | 38.0× / 38.4× |
+|   2 KB |  92,716 | 102,602 | 128,005 | 125,815 |  1.4× /  1.4× |
+|  60 KB |   9,007 |  82,699 | 116,198 | 219,491 | 12.9× / 24.4× |
+| 100 KB |   2,769 |  40,437 |  84,034 | 121,803 | 30.3× / 44.0× |
+|   1 MB |     512 |   4,020 |  16,056 |  15,400 | 31.4× / 30.1× |
+|  10 MB |      51 |     363 |   1,830 |   1,783 | 35.9× / 35.0× |
 
-`qjson.parse` wins because it skips building a Lua table for the parts you
-never read; `qjson.decode + t.field` adds a cjson-shaped table proxy on top
-with similar throughput. Memory retention for `qjson` is essentially
-flat in payload size (a few KB for the reusable buffers), while `cjson`
-and `simdjson` retain more Lua heap because they materialize the table tree.
+### Encode (unmodified) + modify-then-re-encode
 
-See [`docs/benchmarks.md`](docs/benchmarks.md) for the full size ladder,
-memory numbers, an "encode round-trip" row (passthrough emit via
-`memcpy`), exact environment, and the reproduction command. `make bench`
-uses `lua-resty-simdjson` when `resty.simdjson` is available in the
-OpenResty environment; otherwise it skips the simdjson rows.
+| Size | encode (unmodified) | modify top (cjson / qjson) | modify nested (cjson / qjson) | speedup vs. cjson |
+|---:|---:|---:|---:|---:|
+|   2 KB | 219,925 | 59,761 /  56,909 | 61,685 /  49,798 |  1.0× /  0.8× |
+|  60 KB | 143,843 |  4,590 / **44,370** |  4,616 / **196,386** |  9.7× / 42.5× |
+| 100 KB | 119,617 |  2,645 / **32,712** |  5,263 /  **59,809** | 12.4× / 11.4× |
+|   1 MB |  16,269 |    241 /  **3,108** |    516 /  **14,134** | 12.9× / 27.4× |
+
+> **qjson.encode(unmodified)** re-emits the original byte range via `memcpy` —
+> no fields touched means zero serializer work.
+> **qjson modify+encode** materializes only the mutated subtree; unmodified
+> siblings stay on the fast path. cjson always does a full materialize +
+> re-serialize on every encode. At 60 KB+, qjson modify+encode is **10–43×**
+> faster than the cjson equivalent.
+> See [`docs/benchmarks.md`](docs/benchmarks.md) for the full size ladder,
+> memory numbers, and environment.
 
 ```sh
 make bench       # qjson vs cjson and lua-resty-simdjson

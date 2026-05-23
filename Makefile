@@ -34,8 +34,12 @@ test: build ## Run cargo tests + busted Lua tests
 lint: ## Run clippy with -D warnings
 	cargo clippy --release --all-targets -- -D warnings
 
-bench: build vendor/lua-cjson/cjson.so ## Run the OpenResty LuaJIT benchmark
-	$(LUA_ENV) $(RESTY) benches/lua_bench.lua
+BENCH_SCENARIOS := small medium github-100k 100k 200k 500k 1m 2m 5m 10m interleaved
+
+bench: build vendor/lua-cjson/cjson.so ## Run each scenario in a fresh LuaJIT process
+	@for s in $(BENCH_SCENARIOS); do \
+		$(LUA_ENV) $(RESTY) benches/lua_bench.lua $$s; \
+	done
 
 vendor/lua-cjson/cjson.so: | vendor/lua-cjson/Makefile
 ifeq ($(shell uname),Darwin)

@@ -390,4 +390,54 @@ describe("qjson.encode — nested mutations propagate", function()
         inner.x = 99
         assert.are.equal(99, t.a.x)
     end)
+
+    it("modifies top-level field and encodes correctly", function()
+        local cjson = require("cjson")
+        local t = qjson.decode('{"model":"gpt-4","temperature":0.7}')
+        t.model = "gpt-5"
+        local out = qjson.encode(t)
+        local parsed = cjson.decode(out)
+        assert.are.equal("gpt-5", parsed.model)
+        assert.are.equal(0.7, parsed.temperature)
+    end)
+
+    it("adds new field and encodes correctly", function()
+        local cjson = require("cjson")
+        local t = qjson.decode('{"a":1}')
+        t.b = true
+        local out = qjson.encode(t)
+        local parsed = cjson.decode(out)
+        assert.are.equal(1, parsed.a)
+        assert.are.equal(true, parsed.b)
+    end)
+
+    it("modifies nested field and encodes correctly", function()
+        local cjson = require("cjson")
+        local t = qjson.decode('{"messages":[{"role":"user","content":"hello"}]}')
+        t.messages[1].content = "world"
+        local out = qjson.encode(t)
+        local parsed = cjson.decode(out)
+        assert.are.equal("user", parsed.messages[1].role)
+        assert.are.equal("world", parsed.messages[1].content)
+    end)
+
+    it("encodes unmodified proxy via fast path", function()
+        local json = '{"a":1,"b":"text","c":true}'
+        local t = qjson.decode(json)
+        local out = qjson.encode(t)
+        local cjson = require("cjson")
+        local parsed = cjson.decode(out)
+        assert.are.equal(1, parsed.a)
+        assert.are.equal("text", parsed.b)
+        assert.are.equal(true, parsed.c)
+    end)
+
+    it("encodes string with escapes correctly", function()
+        local t = qjson.decode('{"key":"value"}')
+        t.key = 'line1\nline2\t"quoted"'
+        local out = qjson.encode(t)
+        local cjson = require("cjson")
+        local parsed = cjson.decode(out)
+        assert.are.equal('line1\nline2\t"quoted"', parsed.key)
+    end)
 end)
