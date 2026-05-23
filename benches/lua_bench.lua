@@ -145,7 +145,10 @@ local ROUNDS = 5
 local function bench(name, iters, fn)
     -- Warmup pass: lets JIT compile hot traces and any one-time pools fill
     -- before measurement starts. Excluded from timing and memory delta.
-    local warmup = math.max(3, math.floor(iters / 5))
+    -- Floor at 50: LuaJIT hotloop default is 56, so fewer iterations leave
+    -- the bench measuring interpreter mode for the large-payload scenarios
+    -- (1m has iters=15, iters/5=3 → trace never compiles → ~30% noise).
+    local warmup = math.max(50, math.floor(iters / 5))
     for _ = 1, warmup do fn() end
 
     collectgarbage("collect")
@@ -278,8 +281,8 @@ local scenarios = {
      modify_top = github_table_modify_top, modify_add = github_table_modify_add, modify_nested = github_table_modify_nested},
     {name = "100k",   iters = 100,  payload = make_payload(100 * 1024)},
     {name = "200k",   iters = 50,   payload = make_payload(200 * 1024)},
-    {name = "500k",   iters = 20,   payload = make_payload(500 * 1024)},
-    {name = "1m",     iters = 15,   payload = make_payload(1024 * 1024)},
+    {name = "500k",   iters = 100,  payload = make_payload(500 * 1024)},
+    {name = "1m",     iters = 60,   payload = make_payload(1024 * 1024)},
     {name = "2m",     iters = 20,   payload = make_payload(2 * 1024 * 1024)},
     {name = "5m",     iters = 20,   payload = make_payload(5 * 1024 * 1024)},
     {name = "10m",    iters = 20,   payload = make_payload(10 * 1024 * 1024)},
@@ -342,25 +345,29 @@ for _, s in ipairs(scenarios) do
 
     bench("qjson.decode + qjson.encode (unmodified)", s.iters, function()
         local t = qjson.decode(s.payload)
-        local _ = qjson.encode(t)
+        local _enc = qjson.encode(t)
+        if #_enc < 2 then error("qjson.encode produced too-short result") end
     end)
 
     bench("qjson.decode + modify top + encode", s.iters, function()
         local t = qjson.decode(s.payload)
         modify_top(t)
-        local _ = qjson.encode(t)
+        local _enc = qjson.encode(t)
+        if #_enc < 2 then error("qjson.encode produced too-short result") end
     end)
 
     bench("qjson.decode + add field + encode", s.iters, function()
         local t = qjson.decode(s.payload)
         modify_add(t)
-        local _ = qjson.encode(t)
+        local _enc = qjson.encode(t)
+        if #_enc < 2 then error("qjson.encode produced too-short result") end
     end)
 
     bench("qjson.decode + modify nested + encode", s.iters, function()
         local t = qjson.decode(s.payload)
         modify_nested(t)
-        local _ = qjson.encode(t)
+        local _enc = qjson.encode(t)
+        if #_enc < 2 then error("qjson.encode produced too-short result") end
     end)
 end
 
@@ -437,7 +444,8 @@ do
     bench("qjson.decode + qjson.encode (unmodified)", 400, function()
         local p = next_p()
         local t = qjson.decode(p)
-        local _ = qjson.encode(t)
+        local _enc = qjson.encode(t)
+        if #_enc < 2 then error("qjson.encode produced too-short result") end
     end)
 
     next_p = make_cycler(interleaved)
@@ -445,7 +453,8 @@ do
         local p = next_p()
         local t = qjson.decode(p)
         default_table_modify_top(t)
-        local _ = qjson.encode(t)
+        local _enc = qjson.encode(t)
+        if #_enc < 2 then error("qjson.encode produced too-short result") end
     end)
 
     next_p = make_cycler(interleaved)
@@ -453,7 +462,8 @@ do
         local p = next_p()
         local t = qjson.decode(p)
         default_table_modify_add(t)
-        local _ = qjson.encode(t)
+        local _enc = qjson.encode(t)
+        if #_enc < 2 then error("qjson.encode produced too-short result") end
     end)
 
     next_p = make_cycler(interleaved)
@@ -461,6 +471,7 @@ do
         local p = next_p()
         local t = qjson.decode(p)
         default_table_modify_nested(t)
-        local _ = qjson.encode(t)
+        local _enc = qjson.encode(t)
+        if #_enc < 2 then error("qjson.encode produced too-short result") end
     end)
 end

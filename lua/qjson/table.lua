@@ -254,8 +254,10 @@ local function materialize_array_contents(view)
 end
 
 -- The set of keys reserved by the lazy view bookkeeping; user-supplied JSON
--- keys with these names would collide (minor, deferred). Centralized here so
--- the dirty check and __newindex can share the list.
+-- keys with these names would collide (minor, deferred). Centralized so
+-- __newindex (cache snapshotting before materialization) and
+-- encode_lazy_object_walking (skipping internals while encoding a dirty
+-- proxy) share one source of truth.
 local INTERNAL_KEYS = {
     _doc = true, _cur_box = true, _cur = true, _bs = true, _be = true,
     _parent = true, _dirty = true,
@@ -285,9 +287,13 @@ LazyObject.__newindex = function(t, k, v)
         end
         ck, cv = next(t, ck)
     end
-    for _, f in ipairs({"_parent", "_dirty", "_doc", "_cur_box", "_cur", "_bs", "_be"}) do
-        rawset(t, f, nil)
-    end
+    rawset(t, "_parent",  nil)
+    rawset(t, "_dirty",   nil)
+    rawset(t, "_doc",     nil)
+    rawset(t, "_cur_box", nil)
+    rawset(t, "_cur",     nil)
+    rawset(t, "_bs",      nil)
+    rawset(t, "_be",      nil)
     setmetatable(t, nil)
     TABLE_TYPE_HINT[t] = "object"
     for _, kv in ipairs(contents) do
@@ -318,9 +324,13 @@ LazyArray.__newindex = function(t, k, v)
         end
         ck, cv = next(t, ck)
     end
-    for _, f in ipairs({"_parent", "_dirty", "_doc", "_cur_box", "_cur", "_bs", "_be"}) do
-        rawset(t, f, nil)
-    end
+    rawset(t, "_parent",  nil)
+    rawset(t, "_dirty",   nil)
+    rawset(t, "_doc",     nil)
+    rawset(t, "_cur_box", nil)
+    rawset(t, "_cur",     nil)
+    rawset(t, "_bs",      nil)
+    rawset(t, "_be",      nil)
     setmetatable(t, _M.empty_array_mt)
     TABLE_TYPE_HINT[t] = "array"
     for i, x in ipairs(contents) do
