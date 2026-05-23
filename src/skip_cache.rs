@@ -1,12 +1,14 @@
 use rustc_hash::FxHashMap;
 use std::rc::Rc;
 
-#[derive(Default)]
 pub(crate) struct SkipCache {
     /// Slot 0 reserved as "no cache" marker (never written to).
     slots: Vec<SkipSlot>,
     /// Map from a container's opener position-in-indices to slot index.
     by_opener: FxHashMap<u32, u32>,
+    /// Shared empty Rc slice reused for all newly-created empty slots,
+    /// avoiding per-slot Rc allocation until the slot is populated.
+    empty_rc: Rc<[u32]>,
 }
 
 pub(crate) struct SkipSlot {
@@ -24,8 +26,12 @@ impl SkipCache {
     pub(crate) fn new() -> Self {
         let empty: Rc<[u32]> = Rc::from([]);
         Self {
-            slots: vec![SkipSlot { child_starts: Rc::clone(&empty), child_ends: empty }],
+            slots: vec![SkipSlot {
+                child_starts: Rc::clone(&empty),
+                child_ends: Rc::clone(&empty),
+            }],
             by_opener: FxHashMap::default(),
+            empty_rc: empty,
         }
     }
 
@@ -36,8 +42,10 @@ impl SkipCache {
             return (slot, true);
         }
         let new = self.slots.len() as u32;
-        let empty: Rc<[u32]> = Rc::from([]);
-        self.slots.push(SkipSlot { child_starts: Rc::clone(&empty), child_ends: empty });
+        self.slots.push(SkipSlot {
+            child_starts: Rc::clone(&self.empty_rc),
+            child_ends: Rc::clone(&self.empty_rc),
+        });
         self.by_opener.insert(opener_idx, new);
         (new, false)
     }

@@ -541,9 +541,8 @@ mod tests {
     #[test]
     fn grammar_accepts_at_max_depth() {
         // 1024 nested arrays at the default max_depth limit.
-        let mut buf = Vec::new();
-        for _ in 0..1024 { buf.push(b'['); }
-        for _ in 0..1024 { buf.push(b']'); }
+        let mut buf = vec![b'['; 1024];
+        buf.extend_from_slice(&vec![b']'; 1024]);
         assert!(
             validate_eager_values(&buf, &ix(&buf), 1024).is_ok(),
             "should accept exactly at max_depth"
@@ -553,9 +552,8 @@ mod tests {
     #[test]
     fn grammar_rejects_over_max_depth() {
         // 1025 nested arrays — one past the default max_depth limit.
-        let mut buf = Vec::new();
-        for _ in 0..1025 { buf.push(b'['); }
-        for _ in 0..1025 { buf.push(b']'); }
+        let mut buf = vec![b'['; 1025];
+        buf.extend_from_slice(&vec![b']'; 1025]);
         assert_eq!(
             validate_eager_values(&buf, &ix(&buf), 1024), Err(qjson_err::QJSON_NESTING_TOO_DEEP),
         );

@@ -147,7 +147,7 @@ local function bench(name, iters, fn)
     -- before measurement starts. Excluded from timing and memory delta.
     -- Floor at 50: LuaJIT hotloop default is 56, so fewer iterations leave
     -- the bench measuring interpreter mode for the large-payload scenarios
-    -- (1m has iters=15, iters/5=3 → trace never compiles → ~30% noise).
+    -- (e.g. 500k has iters=100, iters/5=20 → without floor, traces may not compile).
     local warmup = math.max(50, math.floor(iters / 5))
     for _ = 1, warmup do fn() end
 
