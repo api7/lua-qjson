@@ -99,11 +99,12 @@ LD_LIBRARY_PATH="$PWD/target/release" \
 ## Benchmarks
 
 `qjson` vs. `lua-cjson` and `lua-resty-simdjson` on multimodal
-chat-completion payloads, "parse + access model, temperature, and all
-messages[*].content paths" workload (median ops/s under OpenResty LuaJIT 2.1,
-AMD EPYC Rome (Zen 2, 4 vCPUs); 5 rounds, deterministic payload):
+chat-completion payloads (median ops/s under OpenResty LuaJIT 2.1,
+AMD EPYC Rome, Zen 2, 4 vCPUs; 5 rounds, deterministic payload).
 
-| Size | cjson | simdjson | `qjson.parse` | `qjson.decode + access content` | speedup vs. cjson |
+### Parse + access (read-only)
+
+| Size | cjson | simdjson | `qjson.parse` | `qjson.decode + access` | speedup vs. cjson |
 |---:|---:|---:|---:|---:|---:|
 |   2 KB |  92,716 | 102,602 | 128,005 | 125,815 |  1.4× /  1.4× |
 |  60 KB |   9,007 |  82,699 | 116,198 | 219,491 | 12.9× / 24.4× |
@@ -111,10 +112,20 @@ AMD EPYC Rome (Zen 2, 4 vCPUs); 5 rounds, deterministic payload):
 |   1 MB |     512 |   4,020 |  16,056 |  15,400 | 31.4× / 30.1× |
 |  10 MB |      51 |     363 |   1,830 |   1,783 | 35.9× / 35.0× |
 
-Modify-then-encode scenarios (PR #54) add decode → mutate field → re-encode
-workloads; small payload modify+encode reaches 48k–60k ops/s. See
-[`docs/benchmarks.md`](docs/benchmarks.md) for the full size ladder,
-modify+encode results, memory numbers, environment, and reproduction.
+### Encode (unmodified + modify-then-re-encode)
+
+| Size | encode (unmodified) | modify top | add field | modify nested |
+|---:|---:|---:|---:|---:|
+|   2 KB | 260,322 | 58,242 | 58,190 | 43,003 |
+|  60 KB | 141,563 | 37,498 | 45,364 | 134,590 |
+| 100 KB | 105,374 | 28,114 | 34,364 |  71,942 |
+|   1 MB |  16,269 |  3,125 |  2,998 |  13,649 |
+|  10 MB |   1,749 |    120 |     92 |      83 |
+
+> **encode (unmodified)** re-emits the original byte range via `memcpy` (substring fast
+> path). **modify** scenarios materialize the mutated subtree and re-encode.
+> See [`docs/benchmarks.md`](docs/benchmarks.md) for the full size ladder,
+> memory numbers, environment, and reproduction.
 
 ```sh
 make bench       # qjson vs cjson and lua-resty-simdjson
