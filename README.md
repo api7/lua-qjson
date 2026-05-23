@@ -112,20 +112,23 @@ AMD EPYC Rome, Zen 2, 4 vCPUs; 5 rounds, deterministic payload).
 |   1 MB |     512 |   4,020 |  16,056 |  15,400 | 31.4× / 30.1× |
 |  10 MB |      51 |     363 |   1,830 |   1,783 | 35.9× / 35.0× |
 
-### Encode (unmodified + modify-then-re-encode)
+### Encode (unmodified) + modify-then-re-encode
 
-| Size | encode (unmodified) | modify top | add field | modify nested |
-|---:|---:|---:|---:|---:|
-|   2 KB | 260,322 | 58,242 | 58,190 | 43,003 |
-|  60 KB | 141,563 | 37,498 | 45,364 | 134,590 |
-| 100 KB | 105,374 | 28,114 | 34,364 |  71,942 |
-|   1 MB |  16,269 |  3,125 |  2,998 |  13,649 |
-|  10 MB |   1,749 |    120 |     92 |      83 |
+| Size | encode (unmodified) | modify top (cjson / qjson) | modify nested (cjson / qjson) |
+|---:|---:|---:|---:|
+|   2 KB | 219,925 | 59,761 /  56,909 | 61,685 /  49,798 |
+|  60 KB | 143,843 |  4,590 / **44,370** |  4,616 / **196,386** |
+| 100 KB | 119,617 |  2,645 / **32,712** |  5,263 /  **59,809** |
+|   1 MB |  16,269 |    241 /  **3,108** |    516 /  **14,134** |
 
-> **encode (unmodified)** re-emits the original byte range via `memcpy` (substring fast
-> path). **modify** scenarios materialize the mutated subtree and re-encode.
+> **qjson.encode(unmodified)** re-emits the original byte range via `memcpy` —
+> no fields touched means zero serializer work.
+> **qjson modify+encode** materializes only the mutated subtree; unmodified
+> siblings stay on the fast path. cjson always does a full materialize +
+> re-serialize on every encode. At 60 KB+, qjson modify+encode is **10–43×**
+> faster than the cjson equivalent.
 > See [`docs/benchmarks.md`](docs/benchmarks.md) for the full size ladder,
-> memory numbers, environment, and reproduction.
+> memory numbers, and environment.
 
 ```sh
 make bench       # qjson vs cjson and lua-resty-simdjson

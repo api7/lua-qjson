@@ -59,6 +59,8 @@ parsing workloads with ~3-5% structural density.
 | Row | What it does | Notes |
 |---|---|---|
 | `cjson.decode + access fields` | `cjson.decode(s)`, read `model` / `temperature`, then read every `messages[*].content` | Eager Lua table |
+| `cjson.decode + modify top + encode` | `cjson.decode(s)`, mutate top field, `cjson.encode()` | Full materialize + full re-encode (cjson baseline for modify+encode workloads) |
+| `cjson.decode + modify nested + encode` | `cjson.decode(s)`, mutate deeply nested field, `cjson.encode()` | Same — cjson always re-encodes the whole tree |
 | `simdjson.decode + access fields` | `resty.simdjson:decode(s)`, read `model` / `temperature`, then read every `messages[*].content` | Eager Lua table |
 | `qjson.parse + access fields` | `qjson.parse(s)`, read `model` / `temperature`, then touch every `messages[*].content` path | Lazy structural scan; explicit path reads |
 | `qjson.decode + access content` | `qjson.decode(s)`, read `model` / `temperature`, then read every `messages[*].content` | Lazy table proxy; reads go through `__index` |

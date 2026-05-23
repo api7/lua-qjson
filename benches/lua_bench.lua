@@ -319,6 +319,30 @@ for _, s in ipairs(scenarios) do
         cjson_access(obj)
     end)
 
+    -- cjson always fully materializes on decode, so modify+encode is the
+    -- same cost as a full re-encode — useful as a realistic baseline for
+    -- modify workloads.
+    bench("cjson.decode + modify top + encode", s.iters, function()
+        local obj = cjson.decode(s.payload)
+        modify_top(obj)
+        local _enc = cjson.encode(obj)
+        if #_enc < 2 then error("cjson.encode produced too-short result") end
+    end)
+
+    bench("cjson.decode + add field + encode", s.iters, function()
+        local obj = cjson.decode(s.payload)
+        modify_add(obj)
+        local _enc = cjson.encode(obj)
+        if #_enc < 2 then error("cjson.encode produced too-short result") end
+    end)
+
+    bench("cjson.decode + modify nested + encode", s.iters, function()
+        local obj = cjson.decode(s.payload)
+        modify_nested(obj)
+        local _enc = cjson.encode(obj)
+        if #_enc < 2 then error("cjson.encode produced too-short result") end
+    end)
+
     if simdjson then
         bench("simdjson.decode + access fields", s.iters, function()
             local obj = simdjson:decode(s.payload)
