@@ -91,17 +91,17 @@ Each row is "parse + access request fields" on the named payload.
 
 | Scenario | Size | cjson | simdjson | `qjson.parse` | `qjson.decode + access content` | `qjson.decode + qjson.encode` |
 |---|---|---:|---:|---:|---:|---:|---:|
-| small      |   2.1 KB |  94,075 | 108,108 | 127,214 | 120,398 | 203,666 |
-| medium     |  60.4 KB |   9,041 |  83,043 | 123,487 | 214,500 | 214,408 |
-| github-100k |   100 KB |   2,238 |   2,047 |   6,010 |   5,994 |   6,701 |
-| 100k       |   100 KB |   5,302 |  32,248 | 109,649 | 102,564 | 114,548 |
-| 200k       |   200 KB |   2,659 |  19,040 |  90,090 |  92,251 | 106,383 |
-| 500k       |   500 KB |   1,052 |   7,062 |  34,722 |  35,336 |  37,453 |
-| 1m         |  1.00 MB |     517 |   3,538 |  16,520 |  16,988 |  17,261 |
-| 2m         |  2.00 MB |     258 |   2,026 |   9,021 |   8,580 |   9,033 |
-| 5m         |  5.00 MB |     102 |     663 |   2,982 |   3,728 |   3,829 |
-| 10m        | 10.00 MB |      50 |     402 |   1,899 |   1,918 |   1,925 |
-| interleaved (100k/200k/500k/1m, cycled) | — | 1,141 | 9,544 | 34,043 | 33,611 | 32,752 |
+| small      |   2.1 KB |  92,716 | 102,602 | 128,005 | 125,815 | 260,322 |
+| medium     |  60.4 KB |   9,007 |  82,699 | 116,198 | 219,491 | 141,563 |
+| github-100k |   100 KB |   1,834 |   1,909 |   4,591 |   5,643 |   6,207 |
+| 100k       |   100 KB |   2,769 |  40,437 |  84,034 | 121,803 | 105,374 |
+| 200k       |   200 KB |   2,543 |  20,593 |  45,704 |  91,408 |  67,114 |
+| 500k       |   500 KB |   1,047 |   8,218 |  28,852 |  37,580 |  29,334 |
+| 1m         |  1.00 MB |     512 |   4,020 |  16,056 |  15,400 |  16,269 |
+| 2m         |  2.00 MB |     251 |   2,105 |   9,145 |   9,137 |   9,634 |
+| 5m         |  5.00 MB |     102 |     791 |   3,543 |   3,747 |   3,679 |
+| 10m        | 10.00 MB |      51 |     363 |   1,830 |   1,783 |   1,749 |
+| interleaved (100k/200k/500k/1m, cycled) | — | 1,125 | 9,701 | 34,173 | 36,278 | 36,456 |
 
 ### Modify + encode throughput (PR #54)
 
@@ -111,16 +111,17 @@ fresh-process run on x86_64 Linux (AMD EPYC Rome, Zen 2).
 
 | Scenario | modify top + encode | add field + encode | modify nested + encode |
 |---|---|---:|---:|---:|
-| small (2 KB)    | 59,835  | 56,655  | 47,541  |
-| medium (60 KB)  | 37,142  | 46,275  | 184,638 |
-| 100k (100 KB)   | 35,881  | 38,183  | 73,529  |
-| 200k (200 KB)   | 17,129  | 16,250  | 59,524  |
-| 500k (500 KB)   |  6,221  |  5,170  | 22,158  |
-| 1m              |  2,938  |  2,434  | 13,806  |
-| 2m              |  1,518  |  1,241  |  1,597  |
-| 5m              |    366  |    364  |    232  |
-| 10m             |    120  |    115  |     87  |
-| interleaved     |  7,176  |  5,645  | 26,824  |
+| small (2 KB)    | 58,242  | 58,190  | 43,003  |
+| medium (60 KB)  | 37,498  | 45,364  | 134,590 |
+| github-100k      |  4,419  |  3,964  |  4,359  |
+| 100k (100 KB)   | 28,114  | 34,364  | 71,942  |
+| 200k (200 KB)   | 18,282  | 16,932  | 55,127  |
+| 500k (500 KB)   |  6,850  |  4,841  | 19,001  |
+| 1m              |  3,125  |  2,998  | 13,649  |
+| 2m              |  1,788  |  1,076  |  1,555  |
+| 5m              |    366  |    283  |    215  |
+| 10m             |    120  |     92  |     83  |
+| interleaved     |  7,712  |  8,178  | 29,123  |
 
 For a before/after comparison against the pre-#54 baseline, see the
 [PR #54 benchmark comment](https://github.com/api7/lua-qjson/pull/54#issuecomment-4525477361).
@@ -129,16 +130,16 @@ For a before/after comparison against the pre-#54 baseline, see the
 
 | Scenario | `qjson.parse` / cjson | `qjson.parse` / simdjson | `qjson.decode + access content` / cjson | `qjson.decode + access content` / simdjson |
 |---|---:|---:|---:|---:|
-| small  |  1.4× |  1.2× |  1.3× |  1.1× |
-| medium | 13.7× |  1.5× | 23.7× |  2.6× |
-| github-100k | 2.7× |  2.9× | 2.7× |  2.9× |
-| 100k   | 20.7× |  3.4× | 19.3× |  3.2× |
-| 200k   | 33.9× |  4.7× | 34.7× |  4.8× |
-| 500k   | 33.0× |  4.9× | 33.6× |  5.0× |
-| 1m     | 32.0× |  4.7× | 32.9× |  4.8× |
-| 2m     | 35.0× |  4.5× | 33.3× |  4.2× |
-| 5m     | 29.2× |  4.5× | 36.5× |  5.6× |
-| 10m    | 38.0× |  4.7× | 38.4× |  4.8× |
+| small  |  1.4× |  1.2× |  1.4× |  1.2× |
+| medium | 12.9× |  1.4× | 24.4× |  2.7× |
+| github-100k | 2.5× |  2.4× | 3.1× |  3.0× |
+| 100k   | 30.3× |  2.1× | 44.0× |  3.0× |
+| 200k   | 18.0× |  2.2× | 35.9× |  4.4× |
+| 500k   | 27.6× |  3.5× | 35.9× |  4.6× |
+| 1m     | 31.4× |  4.0× | 30.1× |  3.8× |
+| 2m     | 36.4× |  4.3× | 36.4× |  4.3× |
+| 5m     | 34.7× |  4.5× | 36.7× |  4.7× |
+| 10m    | 35.9× |  5.0× | 35.0× |  4.9× |
 
 ## Results — memory delta (KB retained after 5 rounds)
 
@@ -147,18 +148,18 @@ the timing rounds without forcing a final collection, so short-lived garbage
 from the last round may still be included.
 
 | Scenario | cjson | simdjson | `qjson.parse` | `qjson.decode + access content` | `qjson.decode + qjson.encode` |
-|---|---:|---:|---:|---:|---:|
-| small      | +15,493 | +15,500 | +4,066 | +15,116 | +11,140 |
-| medium     |  +1,955 |  +2,660 |   +333 |  +1,114 |  +1,120 |
-| github-100k | +12,018 | +3,527 |    +14 |    +536 |    +230 |
-| 100k       |    +485 |   +748 |    +67 |    +692 |    +229 |
-| 200k       |    +392 |   +523 |    +34 |    +346 |    +112 |
-| 500k       |    +577 |   +630 |    +14 |    +139 |     +45 |
-| 1m         |  +1,082 | +1,121 |    +10 |    +104 |     +34 |
-| 2m         |  +1,155 | +1,248 |    +14 |    +208 |     +45 |
-| 5m         |  +1,316 | +1,538 |    +14 |    +400 |     +45 |
-| 10m        |  +1,583 | +2,014 |    +14 |    +708 |     +45 |
-| interleaved | +3,356 | +4,404 |   +268 |  +2,771 |    +897 |
+|---|---|---:|---:|---:|---:|---:|
+| small      | +15,474 | +15,482 | +4,070 | +15,111 | +4,892 |
+| medium     |  +1,955 |  +2,661 |   +158 |    +502 |    +558 |
+| github-100k |  +4,218 |  +3,035 |    +28 |    +560 |     +96 |
+| 100k       |    +485 |    +812 |    +39 |    +721 |     +96 |
+| 200k       |    +393 |    +709 |    +22 |    +373 |     +54 |
+| 500k       |    +885 |  +1,169 |    +30 |    +721 |     +96 |
+| 1m         |  +1,255 |  +1,415 |    +26 |    +444 |     +69 |
+| 2m         |  +1,155 |  +1,251 |    +19 |    +271 |     +27 |
+| 5m         |  +1,316 |  +1,562 |    +20 |    +405 |     +31 |
+| 10m        |  +1,584 |  +2,017 |    +24 |    +731 |     +47 |
+| interleaved | +3,357 | +4,406 |   +100 |  +2,796 |    +354 |
 
 `qjson.parse` retention is essentially constant across payload size: the only
 GC-rooted state is the reusable `indices: Vec<u32>` and `scratch` buffers.
@@ -171,8 +172,8 @@ key into the Lua table heap.
 
 1. **`qjson` is fastest once payloads move beyond tiny inputs.**
    The small 2 KB row is dominated by fixed Lua/FFI overhead, but medium and
-   larger multimodal payloads show roughly 14–38× higher throughput than
-   `cjson` and roughly 3–5× higher throughput than `lua-resty-simdjson`
+   larger multimodal payloads show roughly 13–36× higher throughput than
+   `cjson` and roughly 1.4–5× higher throughput than `lua-resty-simdjson`
    for request-field access.
 2. **Reading every `messages[*].content` is still access-light for large
    multimodal bodies.** The benchmark touches the top-level request fields and
@@ -180,7 +181,7 @@ key into the Lua table heap.
    inside each message.
 3. **Speedup remains high at 10 MB.** The eager-decode optimization
    keeps `qjson.parse` throughput scaling well even at the 10 MB level,
-   maintaining ~38× over cjson and ~5× over simdjson.
+   maintaining ~36× over cjson and ~5× over simdjson.
 4. **`qjson.decode + qjson.encode (unmodified)` is the headline number for
    passthrough workloads** — e.g. an LLM gateway re-emitting the original
    JSON after light-touch inspection. The substring fast path means
@@ -189,14 +190,14 @@ key into the Lua table heap.
 5. **Memory retention** for `qjson` is essentially flat in payload
    size; the eager parsers retain more Lua heap after the first run
    because the Lua table tree stays GC-rooted until the next collection.
-   The 10 MB case retains ~1.5 MB for `cjson`, ~2.0 MB for simdjson,
-   and ~14 KB for `qjson.parse`.
+   The 10 MB case retains ~1.6 MB for `cjson`, ~2.0 MB for simdjson,
+   and ~24 KB for `qjson.parse`.
 6. **REST API payloads (github-100k) show a smaller speedup** because their
    structural density is higher than the multimodal request ladder. Memory
    savings remain dramatic because `cjson` must materialize every nested
    object and string into the Lua heap.
 7. **Modify + encode pipeline (PR #54)** shows the lazy-table API in
-   mutation mode. Small/medium payloads reach 47k–185k median ops/s.
+   mutation mode. Small/medium payloads reach 43k–135k median ops/s.
    The `_dirty` flag and `TABLE_TYPE_HINT` side-table eliminate
    redundant tree walks and array/object re-scans inside the encoder.
    Large payloads (≥5 MB) are dominated by the root-container
