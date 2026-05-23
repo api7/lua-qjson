@@ -538,6 +538,26 @@ local function encode_object(t)
     return "{" .. table.concat(parts, ",") .. "}"
 end
 
+-- Dispatch for plain (non-lazy) tables. Separated from the main encode
+-- function to keep the lazy-proxy fast path narrow for LuaJIT traces.
+local function encode_plain_table(v)
+    local mt = getmetatable(v)
+    if mt == _M.empty_array_mt then
+        return encode_array(v)
+    end
+    local hint = TABLE_TYPE_HINT[v]
+    if hint == "object" then
+        return encode_object(v)
+    end
+    if hint == "array" then
+        return encode_array(v)
+    end
+    if is_array(v) then
+        return encode_array(v)
+    end
+    return encode_object(v)
+end
+
 encode = function(v)
     if rawequal(v, _M.null) then
         return "null"
@@ -554,19 +574,7 @@ encode = function(v)
         if mt == LazyObject or mt == LazyArray then
             return encode_proxy(v)
         end
-        if mt == _M.empty_array_mt then
-            return encode_array(v)
-        end
-        if TABLE_TYPE_HINT[v] == "object" then
-            return encode_object(v)
-        end
-        if TABLE_TYPE_HINT[v] == "array" then
-            return encode_array(v)
-        end
-        if is_array(v) then
-            return encode_array(v)
-        end
-        return encode_object(v)
+        return encode_plain_table(v)
     end
     error("qjson.encode: unsupported value type: " .. tv)
 end
