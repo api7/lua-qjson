@@ -39,7 +39,7 @@ cargo test --features test-panic --release
 
 `ffi.load("qjson")` uses `dlopen`, which respects `LD_LIBRARY_PATH` — **not** LuaJIT's `package.cpath`. The Makefile sets `LD_LIBRARY_PATH=target/release` for `test`/`bench`; if you invoke `busted` or `luajit` directly, set it yourself.
 
-`make lint` runs clippy only (with `-D warnings`); `cargo fmt --check` is intentionally **not** part of the lint gate because the codebase uses manual column alignment in struct definitions and compact single-line literals that default rustfmt would reflow. See the README "Roadmap / Deferred" entry on fmt for context.
+`make lint` runs clippy only (with `-D warnings`); `cargo fmt --check` is intentionally **not** part of the lint gate because the codebase uses manual column alignment in struct definitions and compact single-line literals that default rustfmt would reflow.
 
 ## Architecture
 
@@ -97,4 +97,4 @@ If you add a scanner code path, run gate 2 locally; the cross-check test (`tests
 
 ## Conventions
 
-- Deferred / "we'll do this later" decisions go in `README.md` under **Roadmap / Deferred**, one bullet per item, so each can be picked up individually. Don't park them in code comments or scratch files.
+- Deferred / "we'll do this later" decisions should be tracked as GitHub Issues so each can be picked up individually. Don't park them in code comments or scratch files.
