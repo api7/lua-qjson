@@ -18,16 +18,12 @@ A `Makefile` wraps the common workflows; run `make help` to see `build`, `test`,
 ## Installing
 
 ```sh
-luarocks make
+luarocks install lua-qjson
 ```
 
-This builds the Rust native library from the local rockspec, so Rust/Cargo
-and LuaJIT must be available on the target system. The Lua module name is
+The rock builds the Rust native library during installation, so Rust/Cargo
+and LuaJIT must be available on the target system. The Lua module name remains
 `qjson`:
-
-> **Note:** `luarocks install lua-qjson` will be available once the package
-> is published to [luarocks.org](https://luarocks.org). Until then, install
-> from the repo with `luarocks make`.
 
 ```lua
 local qjson = require("qjson")
