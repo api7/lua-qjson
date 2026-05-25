@@ -22,6 +22,9 @@ Lua-table baselines.
 | `lua-cjson` | vendored `openresty/lua-cjson` |
 | `lua-resty-simdjson` | `Kong/lua-resty-simdjson` commit `77322db640927c14968f1314a9fb1bb2bc084015`, installed under OpenResty lualib |
 
+> **Platform scope:** all published benchmarks are x86_64 only. ARM64 NEON/PMULL
+> is correctness-tested but has no performance data yet.
+
 ## Methodology
 
 The harness lives at `benches/lua_bench.lua`. For each scenario:

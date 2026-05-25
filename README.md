@@ -4,7 +4,7 @@ Rust-implemented fast JSON decoder exposed to LuaJIT via FFI. Optimized for the 
 
 ## Status
 
-Initial implementation complete: scalar + AVX2/PCLMUL + ARM64 NEON/PMULL structural scanner (runtime-dispatched), root-path and cursor APIs, escape-decoded strings, integer/float/bool/typeof/len, FFI panic barrier, and a LuaJIT wrapper. Rust unit/integration tests and Lua busted tests run in CI. The benchmark harness compares against lua-cjson and lua-resty-simdjson.
+Initial implementation complete: scalar, AVX2/PCLMUL, and ARM64 NEON/PMULL structural scanners (runtime-dispatched); root-path and cursor APIs; escape-decoded strings; integer/float/bool/typeof/len accessors; FFI panic barrier; and a LuaJIT wrapper. Rust unit/integration tests and Lua busted tests run in CI. The benchmark harness compares against lua-cjson and lua-resty-simdjson. ARM64 NEON/PMULL is correctness-tested via the scanner cross-check suite; published benchmarks are x86_64 only.
 
 ## Building
 
@@ -18,12 +18,16 @@ A `Makefile` wraps the common workflows; run `make help` to see `build`, `test`,
 ## Installing
 
 ```sh
-luarocks install lua-qjson
+luarocks make
 ```
 
-The rock builds the Rust native library during installation, so Rust/Cargo
-and LuaJIT must be available on the target system. The Lua module name remains
+This builds the Rust native library from the local rockspec, so Rust/Cargo
+and LuaJIT must be available on the target system. The Lua module name is
 `qjson`:
+
+> **Note:** `luarocks install lua-qjson` will be available once the package
+> is published to [luarocks.org](https://luarocks.org). Until then, install
+> from the repo with `luarocks make`.
 
 ```lua
 local qjson = require("qjson")
