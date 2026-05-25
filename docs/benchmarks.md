@@ -22,8 +22,9 @@ Lua-table baselines.
 | `lua-cjson` | vendored `openresty/lua-cjson` |
 | `lua-resty-simdjson` | `Kong/lua-resty-simdjson` commit `77322db640927c14968f1314a9fb1bb2bc084015`, installed under OpenResty lualib |
 
-> **Platform scope:** all published benchmarks are x86_64 only. ARM64 NEON/PMULL
-> is correctness-tested but has no performance data yet.
+> **Platform scope:** x86_64 benchmarks include simdjson and modify+encode
+> scenarios. ARM64 NEON benchmarks cover parse + access (cjson comparison
+> only); simdjson is not available on macOS ARM64.
 
 ## Methodology
 
@@ -90,7 +91,7 @@ harness prints a skip message and omits the simdjson rows.
 
 Numbers below come from one such run.
 
-## Results — throughput (median ops/s)
+## Results — throughput (x86_64, median ops/s)
 
 Each row is "parse + access request fields" on the named payload.
 
@@ -107,6 +108,29 @@ Each row is "parse + access request fields" on the named payload.
 | 5m         |  5.00 MB |     102 |     791 |   3,543 |   3,747 |   3,679 |
 | 10m        | 10.00 MB |      51 |     363 |   1,830 |   1,783 |   1,749 |
 | interleaved (100k/200k/500k/1m, cycled) | — | 1,125 | 9,701 | 34,173 | 36,278 | 36,456 |
+
+## Results — throughput (ARM64 NEON, median ops/s)
+
+Each row is "parse + access request fields" on the named payload. The same
+workload as the x86_64 table above. `simdjson` is omitted (no OpenResty on
+macOS ARM64). Numbers below come from a single run on Apple M4.
+
+| Scenario | Size | cjson | `qjson.parse` | speedup vs. cjson |
+|---|---:|---:|---:|---:|
+| small   |   2 KB  | 493,827 | 906,618 |  1.8× |
+| medium  |  60 KB  |  24,847 | 215,146 |  8.7× |
+| 100k    | 100 KB  |  15,475 | 146,413 |  9.5× |
+| 1m      | 1.0 MB  |   1,468 |  20,251 | 13.8× |
+| 10m     | 10.0 MB |     150 |   2,058 | 13.8× |
+
+> **Environment:** Apple M4 (ARM64), 16 GB, macOS 15.x. LuaJIT 2.1.1774896198
+> (Homebrew). `qjson` release build, NEON + PMULL scanner active.
+> `lua-cjson` from vendored `openresty/lua-cjson`. Reproduce with:
+> ```sh
+> cargo build --release
+> LUA_PATH='./lua/?.lua;;' DYLD_LIBRARY_PATH=./target/release \
+>   luajit arm_bench.lua
+> ```
 
 ### Modify + encode throughput (PR #54)
 
@@ -131,7 +155,7 @@ fresh-process run on x86_64 Linux (AMD EPYC Rome, Zen 2).
 For a before/after comparison against the pre-#54 baseline, see the
 [PR #54 benchmark comment](https://github.com/api7/lua-qjson/pull/54#issuecomment-4525477361).
 
-### Speed-up vs. baselines
+### Speed-up vs. baselines (x86_64)
 
 | Scenario | `qjson.parse` / cjson | `qjson.parse` / simdjson | `qjson.decode + access content` / cjson | `qjson.decode + access content` / simdjson |
 |---|---:|---:|---:|---:|
@@ -207,10 +231,17 @@ key into the Lua table heap.
    redundant tree walks and array/object re-scans inside the encoder.
    Large payloads (≥5 MB) are dominated by the root-container
    materialization cost, which copies all fields into a plain table.
-8. **Fresh-process isolation** removes accumulated GC and JIT trace-cache
-   interference between payload sizes. Each size now runs in its own
-   `resty` process, eliminating the systemic cross-scenario variance
-   observed in earlier benchmark runs.
+ 8. **Fresh-process isolation** removes accumulated GC and JIT trace-cache
+    interference between payload sizes. Each size now runs in its own
+    `resty` process, eliminating the systemic cross-scenario variance
+    observed in earlier benchmark runs.
+ 9. **ARM64 NEON delivers 1.8–13.8× over cjson** on the same multimodal
+    workload (Apple M4, LuaJIT 2.1 Homebrew). The speedup is lower than
+    x86_64 at equivalent sizes (~9.5× vs ~30.3× at 100 KB) primarily
+    because cjson runs faster on ARM64 hardware (JIT-compiled scalar code
+    benefits from wider out-of-order execution on M4). The absolute
+    `qjson.parse` throughput is competitive: ~146k ops/s at 100 KB vs
+    ~84k on the x86_64 Zen 2.
 
 ## When to pick which
 
