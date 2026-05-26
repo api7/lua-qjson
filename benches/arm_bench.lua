@@ -1,9 +1,12 @@
 -- ARM64 NEON benchmark: qjson vs lua-cjson (parse + access only)
 -- Run from worktree root:
---   DYLD_LIBRARY_PATH=./target/release LUA_CPATH='./vendor/lua-cjson/?.so;./target/release/lib?.so' \
---     luajit arm_bench.lua
+--   LUA_PATH='./lua/?.lua;;' DYLD_LIBRARY_PATH=./target/release \
+--     luajit benches/arm_bench.lua
+--
+-- qjson loads its native lib via `ffi.load` (honors DYLD_LIBRARY_PATH /
+-- LD_LIBRARY_PATH), so only cjson needs a package.cpath entry below.
 
-package.cpath = "./vendor/lua-cjson/?.so;./target/release/lib?.so;" .. package.cpath
+package.cpath = "./vendor/lua-cjson/?.so;" .. package.cpath
 
 local qjson  = require("qjson")
 local cjson  = require("cjson")
@@ -18,6 +21,9 @@ local function make_b64_block()
     end
     return table.concat(t)
 end
+
+local B64_BLOCK = make_b64_block()
+local B64_BLOCK_LEN = #B64_BLOCK
 
 local function make_b64(size)
     if size <= B64_BLOCK_LEN then
@@ -92,9 +98,6 @@ local scenarios = {
     {name = "1m",      target = 1024 * 1024, iters = 50},
     {name = "10m",     target = 10 * 1024 * 1024, iters = 5},
 }
-
-B64_BLOCK = make_b64_block()
-B64_BLOCK_LEN = #B64_BLOCK
 
 io.write("Generating payloads...")
 io.flush()

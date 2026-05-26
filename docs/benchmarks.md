@@ -129,7 +129,7 @@ macOS ARM64). Numbers below come from a single run on Apple M4.
 > ```sh
 > cargo build --release
 > LUA_PATH='./lua/?.lua;;' DYLD_LIBRARY_PATH=./target/release \
->   luajit arm_bench.lua
+>   luajit benches/arm_bench.lua
 > ```
 
 ### Modify + encode throughput (PR #54)
