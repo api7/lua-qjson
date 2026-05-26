@@ -112,8 +112,8 @@ Each row is "parse + access request fields" on the named payload.
 ## Results — throughput (ARM64 NEON, median ops/s)
 
 Each row is "parse + access request fields" on the named payload. The same
-workload as the x86_64 table above. `simdjson` is omitted (no OpenResty on
-macOS ARM64). Numbers below come from a single run on Apple M4.
+workload as the x86_64 table above, with `simdjson` omitted. Numbers below
+come from a single run on Apple M4.
 
 | Scenario | Size | cjson | `qjson.parse` | speedup vs. cjson |
 |---|---:|---:|---:|---:|
