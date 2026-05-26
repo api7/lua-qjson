@@ -24,7 +24,7 @@ Lua-table baselines.
 
 > **Platform scope:** x86_64 benchmarks include simdjson and modify+encode
 > scenarios. ARM64 NEON benchmarks cover parse + access (cjson comparison
-> only); simdjson is not available on macOS ARM64.
+> only).
 
 ## Methodology
 
