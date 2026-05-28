@@ -64,6 +64,22 @@ local LazyArray  = {}
 -- Using tables (not strings) ensures no user JSON key can match these.
 local ORDER_KEYS = {}    -- stores ordered key list after materialization
 local ORDER_VALUES = {}  -- stores key->value map after materialization
+local CHILD_CACHE = {}   -- stores key->child proxy cache before materialization
+
+local function get_child_cache(view)
+    local cache = rawget(view, CHILD_CACHE)
+    if not cache then
+        cache = {}
+        rawset(view, CHILD_CACHE, cache)
+    end
+    return cache
+end
+
+local function cached_child(view, key)
+    local cache = rawget(view, CHILD_CACHE)
+    if cache then return cache[key] end
+    return nil
+end
 
 -- Build a new lazy view for a child container cursor.
 -- src_box is an FFI cdata `qjson_cursor[1]`; src_box[0] is the cursor whose
@@ -115,11 +131,9 @@ end
 
 -- Resolve a child cursor at `key` (object) and decode it into a Lua value.
 -- Returns nil for missing keys (cjson semantics).
--- Container results (lazy proxies) are rawset-cached into `self` so that
--- subsequent accesses return the same Lua table object. This is required for
--- `t.a.x = v` to propagate back: __newindex materializes `t.a` in-place, and
--- the next `t.a` lookup retrieves the already-materialized table from the
--- raw table rather than creating a fresh proxy.
+-- Container results (lazy proxies) are cached behind a sentinel key so that
+-- subsequent accesses return the same Lua table object without occupying the
+-- user field name and bypassing LazyObject.__newindex.
 local function read_object_field(self, key)
     if type(key) ~= "string" then return nil end
 
@@ -129,13 +143,16 @@ local function read_object_field(self, key)
         return values[key]
     end
 
+    local cached = cached_child(self, key)
+    if cached ~= nil then return cached end
+
     -- Use child_box so the lookup result does not alias self._cur (which is
     -- itself stored in root_box's backing memory in the decode caller).
     local rc = C.qjson_cursor_field(self._cur, key, #key, child_box)
     if not check(rc) then return nil end
     local v = decode_cursor(self, child_box)
     -- Cache containers so identity is stable and materialization sticks.
-    if type(v) == "table" then rawset(self, key, v) end
+    if type(v) == "table" then get_child_cache(self)[key] = v end
     return v
 end
 
@@ -222,6 +239,10 @@ function _M.pairs(t)
 end
 
 local function lazy_len(self)
+    if getmetatable(self) == LazyObject then
+        local keys = rawget(self, ORDER_KEYS)
+        if keys then return #keys end
+    end
     local rc = C.qjson_cursor_len(self._cur, "", 0, size_box)
     check(rc)
     return tonumber(size_box[0])
@@ -315,10 +336,9 @@ LazyObject.__newindex = function(t, k, v)
             local key = ffi.string(strp_box[0], size_box[0])
             keys[#keys + 1] = key
             -- Prefer cached child proxy over fresh decode
-            local cached = rawget(t, key)
+            local cached = cached_child(t, key)
             if cached ~= nil and not INTERNAL_KEYS[key] then
                 values[key] = cached
-                rawset(t, key, nil)
             else
                 values[key] = decode_cursor(t, child_box)
             end
@@ -442,7 +462,8 @@ local function materialize(v)
         else
             -- Not yet materialized: use cursor-based walk
             for _, kv in ipairs(materialize_object_contents(v)) do
-                out[kv[1]] = materialize(kv[2])
+                local child = cached_child(v, kv[1]) or kv[2]
+                out[kv[1]] = materialize(child)
             end
         end
         return out
@@ -545,7 +566,7 @@ local function encode_lazy_object_walking(t)
         if rc == QJSON_NOT_FOUND then break end
         check(rc)
         local k = ffi.string(strp_box[0], size_box[0])
-        local cached = rawget(t, k)
+        local cached = cached_child(t, k)
         local v
         if cached ~= nil and not INTERNAL_KEYS[k] then
             v = cached
