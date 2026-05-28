@@ -152,6 +152,19 @@ describe("ordered encode", function()
         assert.truthy(out:find('"b":2'))
     end)
 
+    it("pairs sees cached child mutations on unmodified parent", function()
+        local t = qjson.decode('{"a":{"x":1},"b":2}')
+        local a = t.a
+        a.x = 99
+        local seen = {}
+        for k, v in qjson.pairs(t) do
+            if k == "a" then seen.a_x = v.x end
+            if k == "b" then seen.b = v end
+        end
+        assert.are.equal(99, seen.a_x)
+        assert.are.equal(2, seen.b)
+    end)
+
     it("rejects non-string key write with a clear error", function()
         local t = qjson.decode('{"a":1}')
         assert.has_error(function() t[1] = "x" end, "qjson: object key must be a string, got number")

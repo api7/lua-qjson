@@ -188,7 +188,8 @@ local function lazy_object_iter(state, _prev_key)
     if rc == QJSON_NOT_FOUND then return nil end
     check(rc)
     local k = ffi.string(strp_box[0], size_box[0])
-    local v = decode_cursor(state.view, child_box)
+    local cached = cached_child(state.view, k)
+    local v = cached ~= nil and cached or decode_cursor(state.view, child_box)
     return k, v
 end
 
