@@ -371,6 +371,8 @@ LazyObject.__newindex = function(t, k, v)
     if type(k) ~= "string" then
         error("qjson: object key must be a string, got " .. type(k))
     end
+    local keys, values = ensure_object_order_state(t)
+
     -- Mark dirty from this view up to the root.
     local cur = t
     while cur do
@@ -380,7 +382,6 @@ LazyObject.__newindex = function(t, k, v)
         cur = rawget(cur, "_parent")
     end
 
-    local keys, values = ensure_object_order_state(t)
     if v == nil then
         -- Delete: remove from _keys
         for i, key in ipairs(keys) do
@@ -490,9 +491,8 @@ local function materialize(v)
             local values = rawget(v, ORDER_VALUES)
             for _, k in ipairs(keys) do
                 local val = values[k]
-                if val ~= nil then
-                    out[k] = materialize(val)
-                end
+                assert(val ~= nil, "qjson: internal invariant violated (ORDER_VALUES missing key " .. tostring(k) .. ")")
+                out[k] = materialize(val)
             end
         else
             -- Not yet materialized: use cursor-based walk
