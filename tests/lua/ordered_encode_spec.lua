@@ -178,6 +178,17 @@ describe("ordered encode", function()
         assert.are.equal(2, m.b)
     end)
 
+    it("pairs returns distinct values for duplicate object keys", function()
+        local t = qjson.decode('{"a":{"x":1},"a":{"y":2}}')
+        local got = {}
+        for k, v in qjson.pairs(t) do
+            if k == "a" then
+                got[#got + 1] = (v.x and ("x=" .. v.x) or ("y=" .. v.y))
+            end
+        end
+        assert.are.same({"x=1", "y=2"}, got)
+    end)
+
     it("rejects non-string key write with a clear error", function()
         local t = qjson.decode('{"a":1}')
         assert.has_error(function() t[1] = "x" end, "qjson: object key must be a string, got number")

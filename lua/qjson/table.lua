@@ -188,6 +188,16 @@ local function lazy_object_iter(state, _prev_key)
     if rc == QJSON_NOT_FOUND then return nil end
     check(rc)
     local k = ffi.string(strp_box[0], size_box[0])
+    local seen = state.seen
+    local count = (seen[k] or 0) + 1
+    seen[k] = count
+    if count > 1 then
+        -- Duplicate keys cannot share key-based cache entries safely.
+        -- Drop any prior cache for this key and return the cursor-decoded value.
+        local cache = rawget(state.view, CHILD_CACHE)
+        if cache then cache[k] = nil end
+        return k, decode_cursor(state.view, child_box)
+    end
     local cached = cached_child(state.view, k)
     local v
     if cached ~= nil then
@@ -212,7 +222,7 @@ function LazyObject.__pairs(t)
             if k then return k, values[k] end
         end
     end
-    return lazy_object_iter, { view = t, i = 0 }, nil
+    return lazy_object_iter, { view = t, i = 0, seen = {} }, nil
 end
 
 local function lazy_array_iter(state, _prev_i)
