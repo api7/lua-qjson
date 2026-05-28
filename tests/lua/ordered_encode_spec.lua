@@ -92,4 +92,29 @@ describe("ordered encode", function()
         assert.truthy(out:find('"x":100'))
         assert.truthy(out:find('"extra":"added"'))
     end)
+
+    it("handles _keys as user JSON field without collision", function()
+        local t = qjson.decode('{"_keys":["user"],"a":1}')
+        local user_keys = t._keys
+        assert.are.equal("table", type(user_keys))
+        t.b = 2
+        assert.are.equal(1, t.a)
+        assert.are.equal(2, t.b)
+        local out = qjson.encode(t)
+        assert.truthy(out:find('"_keys"'))
+        assert.truthy(out:find('"a":1'))
+        assert.truthy(out:find('"b":2'))
+    end)
+
+    it("handles _values as user JSON field without collision", function()
+        local t = qjson.decode('{"_values":{"z":9},"a":1}')
+        local user_values = t._values
+        assert.are.equal(9, user_values.z)
+        assert.are.equal(1, t.a)
+        t.b = 2
+        local out = qjson.encode(t)
+        assert.truthy(out:find('"_values"'))
+        assert.truthy(out:find('"a":1'))
+        assert.truthy(out:find('"b":2'))
+    end)
 end)

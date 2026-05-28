@@ -60,6 +60,11 @@ end
 local LazyObject = {}
 local LazyArray  = {}
 
+-- Sentinel tables used as raw keys to avoid collision with user JSON keys.
+-- Using tables (not strings) ensures no user JSON key can match these.
+local ORDER_KEYS = {}    -- stores ordered key list after materialization
+local ORDER_VALUES = {}  -- stores key->value map after materialization
+
 -- Build a new lazy view for a child container cursor.
 -- src_box is an FFI cdata `qjson_cursor[1]`; src_box[0] is the cursor whose
 -- data we copy into a fresh per-view allocation so the new view's _cur
@@ -118,8 +123,8 @@ end
 local function read_object_field(self, key)
     if type(key) ~= "string" then return nil end
 
-    -- Check if materialized
-    local values = rawget(self, "_values")
+    -- Check if materialized (using sentinel key to avoid collision with user JSON keys)
+    local values = rawget(self, ORDER_VALUES)
     if values then
         return values[key]
     end
@@ -171,9 +176,9 @@ local function lazy_object_iter(state, _prev_key)
 end
 
 function LazyObject.__pairs(t)
-    local keys = rawget(t, "_keys")
+    local keys = rawget(t, ORDER_KEYS)
     if keys then
-        local values = rawget(t, "_values")
+        local values = rawget(t, ORDER_VALUES)
         local i = 0
         return function()
             i = i + 1
@@ -278,7 +283,8 @@ end
 local INTERNAL_KEYS = {
     _doc = true, _cur_box = true, _cur = true, _bs = true, _be = true,
     _parent = true, _dirty = true,
-    _keys = true, _values = true,
+    -- Note: ORDER_KEYS and ORDER_VALUES are sentinel tables, not strings,
+    -- so they don't need to be in this string-keyed exclusion set.
 }
 
 -- On first write, walk all existing key/value pairs into a plain table,
@@ -296,7 +302,7 @@ LazyObject.__newindex = function(t, k, v)
         cur = rawget(cur, "_parent")
     end
 
-    local keys = rawget(t, "_keys")
+    local keys = rawget(t, ORDER_KEYS)
     if not keys then
         -- First modification: materialize key order
         keys = {}
@@ -317,11 +323,11 @@ LazyObject.__newindex = function(t, k, v)
             end
             i = i + 1
         end
-        rawset(t, "_keys", keys)
-        rawset(t, "_values", values)
+        rawset(t, ORDER_KEYS, keys)
+        rawset(t, ORDER_VALUES, values)
     end
 
-    local values = rawget(t, "_values")
+    local values = rawget(t, ORDER_VALUES)
     if v == nil then
         -- Delete: remove from _keys
         for i, key in ipairs(keys) do
@@ -422,10 +428,10 @@ local function materialize(v)
     local mt = (type(v) == "table") and getmetatable(v) or nil
     if mt == LazyObject then
         local out = {}
-        local keys = rawget(v, "_keys")
+        local keys = rawget(v, ORDER_KEYS)
         if keys then
-            -- Already materialized: use _keys order and _values
-            local values = rawget(v, "_values")
+            -- Already materialized: use ORDER_KEYS order and ORDER_VALUES
+            local values = rawget(v, ORDER_VALUES)
             for _, k in ipairs(keys) do
                 local val = values[k]
                 if val ~= nil then
@@ -516,10 +522,10 @@ local encode
 -- may be materialized) over freshly resolved cursors. Non-cached children
 -- emit through a fresh proxy and naturally fast-path their unmodified subtree.
 local function encode_lazy_object_walking(t)
-    local keys = rawget(t, "_keys")
+    local keys = rawget(t, ORDER_KEYS)
     if keys then
-        -- Materialized: use _keys order
-        local values = rawget(t, "_values")
+        -- Materialized: use ORDER_KEYS order
+        local values = rawget(t, ORDER_VALUES)
         local parts = {}
         for _, k in ipairs(keys) do
             local v = values[k]
