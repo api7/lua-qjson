@@ -315,6 +315,53 @@ local function materialize_array_contents(view)
     return out
 end
 
+-- Build ORDER_KEYS/ORDER_VALUES for a LazyObject on demand.
+-- Semantics for duplicate keys after mutation:
+--   - keep first-appearance key order
+--   - value is last-wins for the same key
+local function ensure_object_order_state(view)
+    local keys = rawget(view, ORDER_KEYS)
+    if keys then
+        return keys, rawget(view, ORDER_VALUES)
+    end
+
+    keys = {}
+    local values = {}
+    local seen = {}
+    local i = 0
+    while true do
+        local rc = C.qjson_cursor_object_entry_at(view._cur, i, strp_box, size_box, child_box)
+        if rc == QJSON_NOT_FOUND then break end
+        check(rc)
+        local key = ffi.string(strp_box[0], size_box[0])
+        local count = (seen[key] or 0) + 1
+        seen[key] = count
+        if count == 1 then
+            keys[#keys + 1] = key
+        end
+
+        -- For duplicate keys, always decode from cursor so "last-wins" is
+        -- derived from lexical JSON order instead of ambiguous key cache state.
+        local val
+        if count == 1 then
+            local cached = cached_child(view, key)
+            if cached ~= nil then
+                val = cached
+            else
+                val = decode_cursor(view, child_box)
+            end
+        else
+            val = decode_cursor(view, child_box)
+        end
+        values[key] = val
+        i = i + 1
+    end
+
+    rawset(view, ORDER_KEYS, keys)
+    rawset(view, ORDER_VALUES, values)
+    return keys, values
+end
+
 -- The set of keys reserved by the lazy view bookkeeping; user-supplied JSON
 -- keys with these names would collide (minor, deferred). Centralized so
 -- __newindex (cache snapshotting before materialization) and
@@ -345,32 +392,7 @@ LazyObject.__newindex = function(t, k, v)
         cur = rawget(cur, "_parent")
     end
 
-    local keys = rawget(t, ORDER_KEYS)
-    if not keys then
-        -- First modification: materialize key order
-        keys = {}
-        local values = {}
-        local i = 0
-        while true do
-            local rc = C.qjson_cursor_object_entry_at(t._cur, i, strp_box, size_box, child_box)
-            if rc == QJSON_NOT_FOUND then break end
-            check(rc)
-            local key = ffi.string(strp_box[0], size_box[0])
-            keys[#keys + 1] = key
-            -- Prefer cached child proxy over fresh decode
-            local cached = cached_child(t, key)
-            if cached ~= nil and not INTERNAL_KEYS[key] then
-                values[key] = cached
-            else
-                values[key] = decode_cursor(t, child_box)
-            end
-            i = i + 1
-        end
-        rawset(t, ORDER_KEYS, keys)
-        rawset(t, ORDER_VALUES, values)
-    end
-
-    local values = rawget(t, ORDER_VALUES)
+    local keys, values = ensure_object_order_state(t)
     if v == nil then
         -- Delete: remove from _keys
         for i, key in ipairs(keys) do
@@ -472,6 +494,9 @@ local function materialize(v)
     if mt == LazyObject then
         local out = {}
         local keys = rawget(v, ORDER_KEYS)
+        if not keys and rawget(v, "_dirty") then
+            keys = ensure_object_order_state(v)
+        end
         if keys then
             -- Already materialized: use ORDER_KEYS order and ORDER_VALUES
             local values = rawget(v, ORDER_VALUES)
@@ -567,6 +592,11 @@ local encode
 -- emit through a fresh proxy and naturally fast-path their unmodified subtree.
 local function encode_lazy_object_walking(t)
     local keys = rawget(t, ORDER_KEYS)
+    if not keys then
+        -- Dirty object without ORDER state yet: establish deterministic
+        -- post-mutation semantics (dedupe + last-wins for duplicate keys).
+        keys = ensure_object_order_state(t)
+    end
     if keys then
         -- Materialized: use ORDER_KEYS order
         local values = rawget(t, ORDER_VALUES)

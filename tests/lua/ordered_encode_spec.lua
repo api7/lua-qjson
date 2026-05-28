@@ -189,6 +189,41 @@ describe("ordered encode", function()
         assert.are.same({"x=1", "y=2"}, got)
     end)
 
+    it("keeps unmodified duplicate keys as-is via fast path", function()
+        local src = '{"a":1,"a":2}'
+        local t = qjson.decode(src)
+        assert.are.equal(src, qjson.encode(t))
+    end)
+
+    it("dedupes duplicate keys with last-wins after parent modification", function()
+        local t = qjson.decode('{"a":1,"a":2}')
+        t.b = 3
+        assert.are.equal('{"a":2,"b":3}', qjson.encode(t))
+        assert.are.equal(2, t.a)
+    end)
+
+    it("dedupes duplicate container keys with last-wins after modification", function()
+        local t = qjson.decode('{"a":{"x":1},"a":{"y":2}}')
+        t.b = 1
+        assert.are.equal('{"a":{"y":2},"b":1}', qjson.encode(t))
+        local m = qjson.materialize(t)
+        assert.are.equal(2, m.a.y)
+        assert.is_nil(m.a.x)
+    end)
+
+    it("treats earlier duplicate-child mutations as non-winning under last-wins", function()
+        local t = qjson.decode('{"a":{"x":1},"a":{"y":2}}')
+        for _, v in qjson.pairs(t) do
+            if v.x then
+                v.x = 99
+            end
+        end
+        assert.are.equal('{"a":{"y":2}}', qjson.encode(t))
+        local m = qjson.materialize(t)
+        assert.are.equal(2, m.a.y)
+        assert.is_nil(m.a.x)
+    end)
+
     it("rejects non-string key write with a clear error", function()
         local t = qjson.decode('{"a":1}')
         assert.has_error(function() t[1] = "x" end, "qjson: object key must be a string, got number")
