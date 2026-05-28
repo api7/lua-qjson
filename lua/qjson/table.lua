@@ -314,6 +314,9 @@ local INTERNAL_KEYS = {
 -- ORDER_VALUES. Any CHILD_CACHE entries (pre-materialization child proxies) are
 -- promoted into ORDER_VALUES so proxy identity is preserved across materialization.
 LazyObject.__newindex = function(t, k, v)
+    if type(k) ~= "string" then
+        error("qjson: object key must be a string, got " .. type(k))
+    end
     -- Mark dirty from this view up to the root.
     local cur = t
     while cur do

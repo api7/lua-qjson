@@ -151,4 +151,11 @@ describe("ordered encode", function()
         assert.truthy(out:find('"a":1'))
         assert.truthy(out:find('"b":2'))
     end)
+
+    it("rejects non-string key write with a clear error", function()
+        local t = qjson.decode('{"a":1}')
+        assert.has_error(function() t[1] = "x" end, "qjson: object key must be a string, got number")
+        -- object must remain consistent after the failed write
+        assert.are.equal(1, t.a)
+    end)
 end)
