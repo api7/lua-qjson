@@ -117,6 +117,13 @@ end
 -- raw table rather than creating a fresh proxy.
 local function read_object_field(self, key)
     if type(key) ~= "string" then return nil end
+
+    -- Check if materialized
+    local values = rawget(self, "_values")
+    if values then
+        return values[key]
+    end
+
     -- Use child_box so the lookup result does not alias self._cur (which is
     -- itself stored in root_box's backing memory in the decode caller).
     local rc = C.qjson_cursor_field(self._cur, key, #key, child_box)
@@ -164,6 +171,16 @@ local function lazy_object_iter(state, _prev_key)
 end
 
 function LazyObject.__pairs(t)
+    local keys = rawget(t, "_keys")
+    if keys then
+        local values = rawget(t, "_values")
+        local i = 0
+        return function()
+            i = i + 1
+            local k = keys[i]
+            if k then return k, values[k] end
+        end
+    end
     return lazy_object_iter, { view = t, i = 0 }, nil
 end
 
@@ -261,6 +278,7 @@ end
 local INTERNAL_KEYS = {
     _doc = true, _cur_box = true, _cur = true, _bs = true, _be = true,
     _parent = true, _dirty = true,
+    _keys = true, _values = true,
 }
 
 -- On first write, walk all existing key/value pairs into a plain table,
@@ -277,29 +295,44 @@ LazyObject.__newindex = function(t, k, v)
         rawset(cur, "_dirty", true)
         cur = rawget(cur, "_parent")
     end
-    local contents = materialize_object_contents(t)
-    -- Snapshot user-key cache BEFORE nilling internals.
-    local cache = {}
-    local ck, cv = next(t)
-    while ck ~= nil do
-        if not INTERNAL_KEYS[ck] then
-            cache[ck] = cv
+
+    local keys = rawget(t, "_keys")
+    if not keys then
+        -- First modification: materialize key order
+        keys = {}
+        local values = {}
+        local i = 0
+        while true do
+            local rc = C.qjson_cursor_object_entry_at(t._cur, i, strp_box, size_box, child_box)
+            if rc == QJSON_NOT_FOUND then break end
+            check(rc)
+            local key = ffi.string(strp_box[0], size_box[0])
+            keys[#keys + 1] = key
+            values[key] = decode_cursor(t, child_box)
+            i = i + 1
         end
-        ck, cv = next(t, ck)
+        rawset(t, "_keys", keys)
+        rawset(t, "_values", values)
     end
-    rawset(t, "_parent",  nil)
-    rawset(t, "_dirty",   nil)
-    rawset(t, "_doc",     nil)
-    rawset(t, "_cur_box", nil)
-    rawset(t, "_cur",     nil)
-    rawset(t, "_bs",      nil)
-    rawset(t, "_be",      nil)
-    setmetatable(t, nil)
-    TABLE_TYPE_HINT[t] = "object"
-    for _, kv in ipairs(contents) do
-        rawset(t, kv[1], cache[kv[1]] or kv[2])
+
+    local values = rawget(t, "_values")
+    if v == nil then
+        -- Delete: remove from _keys
+        for i, key in ipairs(keys) do
+            if key == k then
+                table.remove(keys, i)
+                break
+            end
+        end
+        values[k] = nil
+    elseif values[k] == nil then
+        -- New key: append to _keys
+        keys[#keys + 1] = k
+        values[k] = v
+    else
+        -- Existing key: just update value
+        values[k] = v
     end
-    rawset(t, k, v)
 end
 
 -- On first write, walk all existing elements into a plain sequence,
@@ -464,6 +497,21 @@ local encode
 -- may be materialized) over freshly resolved cursors. Non-cached children
 -- emit through a fresh proxy and naturally fast-path their unmodified subtree.
 local function encode_lazy_object_walking(t)
+    local keys = rawget(t, "_keys")
+    if keys then
+        -- Materialized: use _keys order
+        local values = rawget(t, "_values")
+        local parts = {}
+        for _, k in ipairs(keys) do
+            local v = values[k]
+            if v ~= nil then
+                parts[#parts + 1] = encode_string(k) .. ":" .. encode(v)
+            end
+        end
+        return "{" .. table.concat(parts, ",") .. "}"
+    end
+
+    -- Original cursor-based walking (for dirty-via-child-only case)
     local parts = {}
     local i = 0
     while true do
@@ -471,8 +519,8 @@ local function encode_lazy_object_walking(t)
         if rc == QJSON_NOT_FOUND then break end
         check(rc)
         local k = ffi.string(strp_box[0], size_box[0])
-        local v
         local cached = rawget(t, k)
+        local v
         if cached ~= nil and not INTERNAL_KEYS[k] then
             v = cached
         else

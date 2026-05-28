@@ -1,0 +1,76 @@
+local qjson = require("qjson")
+
+describe("ordered encode", function()
+    it("preserves key order on value modification", function()
+        local t = qjson.decode('{"c":3,"a":1,"b":2}')
+        t.a = 100
+        assert.are.equal('{"c":3,"a":100,"b":2}', qjson.encode(t))
+    end)
+
+    it("preserves order when deleting a key", function()
+        local t = qjson.decode('{"c":3,"a":1,"b":2}')
+        t.a = nil
+        assert.are.equal('{"c":3,"b":2}', qjson.encode(t))
+    end)
+
+    it("appends new keys to the end", function()
+        local t = qjson.decode('{"c":3,"a":1}')
+        t.b = 2
+        assert.are.equal('{"c":3,"a":1,"b":2}', qjson.encode(t))
+    end)
+
+    it("deleted then re-added key appears at end", function()
+        local t = qjson.decode('{"a":1,"b":2,"c":3}')
+        t.b = nil
+        t.b = 999
+        assert.are.equal('{"a":1,"c":3,"b":999}', qjson.encode(t))
+    end)
+
+    it("handles nested object modification", function()
+        local t = qjson.decode('{"x":1,"nested":{"a":1,"b":2},"y":2}')
+        t.nested.a = 100
+        local out = qjson.encode(t)
+        assert.truthy(out:find('"x":1'))
+        assert.truthy(out:find('"y":2'))
+        assert.truthy(out:find('"a":100'))
+    end)
+
+    it("handles empty object with additions", function()
+        local t = qjson.decode('{}')
+        t.a = 1
+        t.b = 2
+        assert.are.equal('{"a":1,"b":2}', qjson.encode(t))
+    end)
+
+    it("handles delete all keys", function()
+        local t = qjson.decode('{"a":1,"b":2}')
+        t.a = nil
+        t.b = nil
+        assert.are.equal('{}', qjson.encode(t))
+    end)
+
+    it("read before modify works correctly", function()
+        local t = qjson.decode('{"a":1,"b":2,"c":3}')
+        local _ = t.b  -- read first
+        t.b = 999
+        assert.are.equal('{"a":1,"b":999,"c":3}', qjson.encode(t))
+    end)
+
+    it("pairs iterates in original order after modification", function()
+        local t = qjson.decode('{"c":3,"a":1,"b":2}')
+        t.a = 100
+        local order = {}
+        for k, _ in qjson.pairs(t) do
+            order[#order + 1] = k
+        end
+        assert.are.same({"c", "a", "b"}, order)
+    end)
+
+    it("multiple modifications preserve order", function()
+        local t = qjson.decode('{"a":1,"b":2,"c":3,"d":4}')
+        t.b = 20
+        t.d = 40
+        t.a = 10
+        assert.are.equal('{"a":10,"b":20,"c":3,"d":40}', qjson.encode(t))
+    end)
+end)
