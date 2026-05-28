@@ -308,11 +308,11 @@ local INTERNAL_KEYS = {
     -- so they don't need to be in this string-keyed exclusion set.
 }
 
--- On first write, walk all existing key/value pairs into a plain table,
--- strip the lazy metatable, then apply the new assignment. Any FFI error
--- during the walk leaves `t` in its original lazy state.
--- Existing rawget-cached entries (e.g. previously returned child proxies)
--- are preserved so callers' references remain valid.
+-- On first write, walk all cursor entries into ORDER_KEYS (ordered list) and
+-- ORDER_VALUES (key→value map) stored under sentinel table keys. The LazyObject
+-- metatable is kept alive so __index continues to route reads through
+-- ORDER_VALUES. Any CHILD_CACHE entries (pre-materialization child proxies) are
+-- promoted into ORDER_VALUES so proxy identity is preserved across materialization.
 LazyObject.__newindex = function(t, k, v)
     -- Mark dirty from this view up to the root.
     local cur = t
