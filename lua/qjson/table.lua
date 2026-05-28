@@ -362,18 +362,6 @@ local function ensure_object_order_state(view)
     return keys, values
 end
 
--- The set of keys reserved by the lazy view bookkeeping; user-supplied JSON
--- keys with these names would collide (minor, deferred). Centralized so
--- __newindex (cache snapshotting before materialization) and
--- encode_lazy_object_walking (skipping internals while encoding a dirty
--- proxy) share one source of truth.
-local INTERNAL_KEYS = {
-    _doc = true, _cur_box = true, _cur = true, _bs = true, _be = true,
-    _parent = true, _dirty = true,
-    -- Note: ORDER_KEYS and ORDER_VALUES are sentinel tables, not strings,
-    -- so they don't need to be in this string-keyed exclusion set.
-}
-
 -- On first write, walk all cursor entries into ORDER_KEYS (ordered list) and
 -- ORDER_VALUES (key→value map) stored under sentinel table keys. The LazyObject
 -- metatable is kept alive so __index continues to route reads through
@@ -587,46 +575,24 @@ end
 -- complete (Lua resolves upvalues at call time, but the slot must be declared first).
 local encode
 
--- Walk a dirty LazyObject and emit JSON, preferring cached children (which
--- may be materialized) over freshly resolved cursors. Non-cached children
--- emit through a fresh proxy and naturally fast-path their unmodified subtree.
+-- Emit a dirty LazyObject as JSON in ORDER_KEYS (first-appearance) order.
+-- A dirty object without ORDER state yet (e.g. dirtied only via a child
+-- mutation) is materialized on demand by ensure_object_order_state, which
+-- also collapses duplicate keys to last-wins. Container values that were not
+-- themselves mutated encode through a fresh proxy and naturally fast-path
+-- their unmodified subtree.
 local function encode_lazy_object_walking(t)
     local keys = rawget(t, ORDER_KEYS)
     if not keys then
-        -- Dirty object without ORDER state yet: establish deterministic
-        -- post-mutation semantics (dedupe + last-wins for duplicate keys).
         keys = ensure_object_order_state(t)
     end
-    if keys then
-        -- Materialized: use ORDER_KEYS order
-        local values = rawget(t, ORDER_VALUES)
-        local parts = {}
-        for _, k in ipairs(keys) do
-            local v = values[k]
-            if v ~= nil then
-                parts[#parts + 1] = encode_string(k) .. ":" .. encode(v)
-            end
-        end
-        return "{" .. table.concat(parts, ",") .. "}"
-    end
-
-    -- Original cursor-based walking (for dirty-via-child-only case)
+    local values = rawget(t, ORDER_VALUES)
     local parts = {}
-    local i = 0
-    while true do
-        local rc = C.qjson_cursor_object_entry_at(t._cur, i, strp_box, size_box, child_box)
-        if rc == QJSON_NOT_FOUND then break end
-        check(rc)
-        local k = ffi.string(strp_box[0], size_box[0])
-        local cached = cached_child(t, k)
-        local v
-        if cached ~= nil and not INTERNAL_KEYS[k] then
-            v = cached
-        else
-            v = decode_cursor(t, child_box)
+    for _, k in ipairs(keys) do
+        local v = values[k]
+        if v ~= nil then
+            parts[#parts + 1] = encode_string(k) .. ":" .. encode(v)
         end
-        parts[#parts + 1] = encode_string(k) .. ":" .. encode(v)
-        i = i + 1
     end
     return "{" .. table.concat(parts, ",") .. "}"
 end
