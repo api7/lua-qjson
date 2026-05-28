@@ -73,4 +73,23 @@ describe("ordered encode", function()
         t.a = 10
         assert.are.equal('{"a":10,"b":20,"c":3,"d":40}', qjson.encode(t))
     end)
+
+    it("materialize preserves modified values", function()
+        local t = qjson.decode('{"c":3,"a":1,"b":2}')
+        t.a = 100
+        local m = qjson.materialize(t)
+        assert.are.equal(100, m.a)
+        assert.are.equal(2, m.b)
+        assert.are.equal(3, m.c)
+    end)
+
+    it("cached nested object mutations are preserved in encode", function()
+        local t = qjson.decode('{"nested":{"x":1,"y":2}}')
+        local nested = t.nested  -- cache the nested object
+        t.extra = "added"        -- trigger parent materialization
+        nested.x = 100           -- modify cached nested
+        local out = qjson.encode(t)
+        assert.truthy(out:find('"x":100'))
+        assert.truthy(out:find('"extra":"added"'))
+    end)
 end)

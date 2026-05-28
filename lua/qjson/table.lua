@@ -308,7 +308,13 @@ LazyObject.__newindex = function(t, k, v)
             check(rc)
             local key = ffi.string(strp_box[0], size_box[0])
             keys[#keys + 1] = key
-            values[key] = decode_cursor(t, child_box)
+            -- Prefer cached child proxy over fresh decode
+            local cached = rawget(t, key)
+            if cached ~= nil and not INTERNAL_KEYS[key] then
+                values[key] = cached
+            else
+                values[key] = decode_cursor(t, child_box)
+            end
             i = i + 1
         end
         rawset(t, "_keys", keys)
@@ -416,8 +422,21 @@ local function materialize(v)
     local mt = (type(v) == "table") and getmetatable(v) or nil
     if mt == LazyObject then
         local out = {}
-        for _, kv in ipairs(materialize_object_contents(v)) do
-            out[kv[1]] = materialize(kv[2])
+        local keys = rawget(v, "_keys")
+        if keys then
+            -- Already materialized: use _keys order and _values
+            local values = rawget(v, "_values")
+            for _, k in ipairs(keys) do
+                local val = values[k]
+                if val ~= nil then
+                    out[k] = materialize(val)
+                end
+            end
+        else
+            -- Not yet materialized: use cursor-based walk
+            for _, kv in ipairs(materialize_object_contents(v)) do
+                out[kv[1]] = materialize(kv[2])
+            end
         end
         return out
     elseif mt == LazyArray then
