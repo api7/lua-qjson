@@ -169,19 +169,19 @@ describe("__ipairs / qjson.ipairs over LazyArray", function()
 end)
 
 describe("__newindex — first-write materialization", function()
-    it("converts LazyObject into a plain table preserving existing keys", function()
+    it("preserves LazyObject metatable after modification for ordered encoding", function()
         local t = qjson.decode('{"a":1,"b":2}')
         t.c = 3
-        assert.is_nil(getmetatable(t))
+        assert.are.equal(qjson._LazyObject, getmetatable(t))
         assert.are.equal(1, t.a)
         assert.are.equal(2, t.b)
         assert.are.equal(3, t.c)
     end)
 
-    it("nested containers remain lazy after parent materialization", function()
+    it("nested containers remain lazy after parent modification", function()
         local t = qjson.decode('{"inner":{"x":1}}')
         t.extra = "y"
-        assert.is_nil(getmetatable(t))
+        assert.are.equal(qjson._LazyObject, getmetatable(t))
         local inner = t.inner
         assert.are.equal(qjson._LazyObject, getmetatable(inner))
         assert.are.equal(1, inner.x)
