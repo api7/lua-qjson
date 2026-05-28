@@ -165,6 +165,19 @@ describe("ordered encode", function()
         assert.are.equal(2, seen.b)
     end)
 
+    it("pairs direct child mutation is preserved in encode and materialize", function()
+        local t = qjson.decode('{"a":{"x":1},"b":2}')
+        for k, v in qjson.pairs(t) do
+            if k == "a" then
+                v.x = 99
+            end
+        end
+        assert.are.equal('{"a":{"x":99},"b":2}', qjson.encode(t))
+        local m = qjson.materialize(t)
+        assert.are.equal(99, m.a.x)
+        assert.are.equal(2, m.b)
+    end)
+
     it("rejects non-string key write with a clear error", function()
         local t = qjson.decode('{"a":1}')
         assert.has_error(function() t[1] = "x" end, "qjson: object key must be a string, got number")

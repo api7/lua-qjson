@@ -189,7 +189,15 @@ local function lazy_object_iter(state, _prev_key)
     check(rc)
     local k = ffi.string(strp_box[0], size_box[0])
     local cached = cached_child(state.view, k)
-    local v = cached ~= nil and cached or decode_cursor(state.view, child_box)
+    local v
+    if cached ~= nil then
+        v = cached
+    else
+        v = decode_cursor(state.view, child_box)
+        if type(v) == "table" then
+            get_child_cache(state.view)[k] = v
+        end
+    end
     return k, v
 end
 
