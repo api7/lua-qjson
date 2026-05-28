@@ -93,6 +93,24 @@ describe("ordered encode", function()
         assert.truthy(out:find('"extra":"added"'))
     end)
 
+    it("replaces a cached child container after parent materialization", function()
+        local t = qjson.decode('{"a":{"x":1},"b":2}')
+        local old = t.a
+        assert.are.equal(1, old.x)
+        t.c = 3
+        t.a = "replaced"
+        assert.are.equal('{"a":"replaced","b":2,"c":3}', qjson.encode(t))
+    end)
+
+    it("deletes a cached child container after parent materialization", function()
+        local t = qjson.decode('{"a":{"x":1},"b":2}')
+        local old = t.a
+        assert.are.equal(1, old.x)
+        t.c = 3
+        t.a = nil
+        assert.are.equal('{"b":2,"c":3}', qjson.encode(t))
+    end)
+
     it("handles _keys as user JSON field without collision", function()
         local t = qjson.decode('{"_keys":["user"],"a":1}')
         local user_keys = t._keys

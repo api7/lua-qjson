@@ -318,6 +318,7 @@ LazyObject.__newindex = function(t, k, v)
             local cached = rawget(t, key)
             if cached ~= nil and not INTERNAL_KEYS[key] then
                 values[key] = cached
+                rawset(t, key, nil)
             else
                 values[key] = decode_cursor(t, child_box)
             end
