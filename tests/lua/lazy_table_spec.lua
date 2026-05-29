@@ -93,6 +93,14 @@ describe("qjson.len", function()
     it("falls back to # on a plain table", function()
         assert.are.equal(3, qjson.len({10, 20, 30}))
     end)
+
+    it("counts materialized object keys after add and delete", function()
+        local t = qjson.decode('{"a":1,"b":2}')
+        t.c = 3
+        assert.are.equal(3, qjson.len(t))
+        t.a = nil
+        assert.are.equal(2, qjson.len(t))
+    end)
 end)
 
 describe("__len (LJ52 only)", function()
@@ -169,19 +177,19 @@ describe("__ipairs / qjson.ipairs over LazyArray", function()
 end)
 
 describe("__newindex — first-write materialization", function()
-    it("converts LazyObject into a plain table preserving existing keys", function()
+    it("preserves LazyObject metatable after modification for ordered encoding", function()
         local t = qjson.decode('{"a":1,"b":2}')
         t.c = 3
-        assert.is_nil(getmetatable(t))
+        assert.are.equal(qjson._LazyObject, getmetatable(t))
         assert.are.equal(1, t.a)
         assert.are.equal(2, t.b)
         assert.are.equal(3, t.c)
     end)
 
-    it("nested containers remain lazy after parent materialization", function()
+    it("nested containers remain lazy after parent modification", function()
         local t = qjson.decode('{"inner":{"x":1}}')
         t.extra = "y"
-        assert.is_nil(getmetatable(t))
+        assert.are.equal(qjson._LazyObject, getmetatable(t))
         local inner = t.inner
         assert.are.equal(qjson._LazyObject, getmetatable(inner))
         assert.are.equal(1, inner.x)
@@ -227,6 +235,14 @@ describe("qjson.materialize", function()
         assert.are.equal("hi", qjson.materialize("hi"))
         local raw = {1, 2, 3}
         assert.are.equal(raw, qjson.materialize(raw))
+    end)
+
+    it("preserves cached child mutations in parent materialize", function()
+        local t = qjson.decode('{"a":{"x":1},"b":2}')
+        t.a.x = 99
+        local m = qjson.materialize(t)
+        assert.are.equal(99, m.a.x)
+        assert.are.equal(2, m.b)
     end)
 end)
 

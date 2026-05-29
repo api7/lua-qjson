@@ -60,6 +60,27 @@ end
 local LazyObject = {}
 local LazyArray  = {}
 
+-- Sentinel tables used as raw keys to avoid collision with user JSON keys.
+-- Using tables (not strings) ensures no user JSON key can match these.
+local ORDER_KEYS = {}    -- stores ordered key list after materialization
+local ORDER_VALUES = {}  -- stores key->value map after materialization
+local CHILD_CACHE = {}   -- stores key->child proxy cache before materialization
+
+local function get_child_cache(view)
+    local cache = rawget(view, CHILD_CACHE)
+    if not cache then
+        cache = {}
+        rawset(view, CHILD_CACHE, cache)
+    end
+    return cache
+end
+
+local function cached_child(view, key)
+    local cache = rawget(view, CHILD_CACHE)
+    if cache then return cache[key] end
+    return nil
+end
+
 -- Build a new lazy view for a child container cursor.
 -- src_box is an FFI cdata `qjson_cursor[1]`; src_box[0] is the cursor whose
 -- data we copy into a fresh per-view allocation so the new view's _cur
@@ -110,20 +131,28 @@ end
 
 -- Resolve a child cursor at `key` (object) and decode it into a Lua value.
 -- Returns nil for missing keys (cjson semantics).
--- Container results (lazy proxies) are rawset-cached into `self` so that
--- subsequent accesses return the same Lua table object. This is required for
--- `t.a.x = v` to propagate back: __newindex materializes `t.a` in-place, and
--- the next `t.a` lookup retrieves the already-materialized table from the
--- raw table rather than creating a fresh proxy.
+-- Container results (lazy proxies) are cached behind a sentinel key so that
+-- subsequent accesses return the same Lua table object without occupying the
+-- user field name and bypassing LazyObject.__newindex.
 local function read_object_field(self, key)
     if type(key) ~= "string" then return nil end
+
+    -- Check if materialized (using sentinel key to avoid collision with user JSON keys)
+    local values = rawget(self, ORDER_VALUES)
+    if values then
+        return values[key]
+    end
+
+    local cached = cached_child(self, key)
+    if cached ~= nil then return cached end
+
     -- Use child_box so the lookup result does not alias self._cur (which is
     -- itself stored in root_box's backing memory in the decode caller).
     local rc = C.qjson_cursor_field(self._cur, key, #key, child_box)
     if not check(rc) then return nil end
     local v = decode_cursor(self, child_box)
     -- Cache containers so identity is stable and materialization sticks.
-    if type(v) == "table" then rawset(self, key, v) end
+    if type(v) == "table" then get_child_cache(self)[key] = v end
     return v
 end
 
@@ -159,12 +188,41 @@ local function lazy_object_iter(state, _prev_key)
     if rc == QJSON_NOT_FOUND then return nil end
     check(rc)
     local k = ffi.string(strp_box[0], size_box[0])
-    local v = decode_cursor(state.view, child_box)
+    local seen = state.seen
+    local count = (seen[k] or 0) + 1
+    seen[k] = count
+    if count > 1 then
+        -- Duplicate keys cannot share key-based cache entries safely.
+        -- Drop any prior cache for this key and return the cursor-decoded value.
+        local cache = rawget(state.view, CHILD_CACHE)
+        if cache then cache[k] = nil end
+        return k, decode_cursor(state.view, child_box)
+    end
+    local cached = cached_child(state.view, k)
+    local v
+    if cached ~= nil then
+        v = cached
+    else
+        v = decode_cursor(state.view, child_box)
+        if type(v) == "table" then
+            get_child_cache(state.view)[k] = v
+        end
+    end
     return k, v
 end
 
 function LazyObject.__pairs(t)
-    return lazy_object_iter, { view = t, i = 0 }, nil
+    local keys = rawget(t, ORDER_KEYS)
+    if keys then
+        local values = rawget(t, ORDER_VALUES)
+        local i = 0
+        return function()
+            i = i + 1
+            local k = keys[i]
+            if k then return k, values[k] end
+        end
+    end
+    return lazy_object_iter, { view = t, i = 0, seen = {} }, nil
 end
 
 local function lazy_array_iter(state, _prev_i)
@@ -200,6 +258,10 @@ function _M.pairs(t)
 end
 
 local function lazy_len(self)
+    if getmetatable(self) == LazyObject then
+        local keys = rawget(self, ORDER_KEYS)
+        if keys then return #keys end
+    end
     local rc = C.qjson_cursor_len(self._cur, "", 0, size_box)
     check(rc)
     return tonumber(size_box[0])
@@ -253,22 +315,64 @@ local function materialize_array_contents(view)
     return out
 end
 
--- The set of keys reserved by the lazy view bookkeeping; user-supplied JSON
--- keys with these names would collide (minor, deferred). Centralized so
--- __newindex (cache snapshotting before materialization) and
--- encode_lazy_object_walking (skipping internals while encoding a dirty
--- proxy) share one source of truth.
-local INTERNAL_KEYS = {
-    _doc = true, _cur_box = true, _cur = true, _bs = true, _be = true,
-    _parent = true, _dirty = true,
-}
+-- Build ORDER_KEYS/ORDER_VALUES for a LazyObject on demand.
+-- Semantics for duplicate keys after mutation:
+--   - keep first-appearance key order
+--   - value is last-wins for the same key
+local function ensure_object_order_state(view)
+    local keys = rawget(view, ORDER_KEYS)
+    if keys then
+        return keys, rawget(view, ORDER_VALUES)
+    end
 
--- On first write, walk all existing key/value pairs into a plain table,
--- strip the lazy metatable, then apply the new assignment. Any FFI error
--- during the walk leaves `t` in its original lazy state.
--- Existing rawget-cached entries (e.g. previously returned child proxies)
--- are preserved so callers' references remain valid.
+    keys = {}
+    local values = {}
+    local seen = {}
+    local i = 0
+    while true do
+        local rc = C.qjson_cursor_object_entry_at(view._cur, i, strp_box, size_box, child_box)
+        if rc == QJSON_NOT_FOUND then break end
+        check(rc)
+        local key = ffi.string(strp_box[0], size_box[0])
+        local count = (seen[key] or 0) + 1
+        seen[key] = count
+        if count == 1 then
+            keys[#keys + 1] = key
+        end
+
+        -- For duplicate keys, always decode from cursor so "last-wins" is
+        -- derived from lexical JSON order instead of ambiguous key cache state.
+        local val
+        if count == 1 then
+            local cached = cached_child(view, key)
+            if cached ~= nil then
+                val = cached
+            else
+                val = decode_cursor(view, child_box)
+            end
+        else
+            val = decode_cursor(view, child_box)
+        end
+        values[key] = val
+        i = i + 1
+    end
+
+    rawset(view, ORDER_KEYS, keys)
+    rawset(view, ORDER_VALUES, values)
+    return keys, values
+end
+
+-- On first write, walk all cursor entries into ORDER_KEYS (ordered list) and
+-- ORDER_VALUES (key→value map) stored under sentinel table keys. The LazyObject
+-- metatable is kept alive so __index continues to route reads through
+-- ORDER_VALUES. Any CHILD_CACHE entries (pre-materialization child proxies) are
+-- promoted into ORDER_VALUES so proxy identity is preserved across materialization.
 LazyObject.__newindex = function(t, k, v)
+    if type(k) ~= "string" then
+        error("qjson: object key must be a string, got " .. type(k))
+    end
+    local keys, values = ensure_object_order_state(t)
+
     -- Mark dirty from this view up to the root.
     local cur = t
     while cur do
@@ -277,29 +381,24 @@ LazyObject.__newindex = function(t, k, v)
         rawset(cur, "_dirty", true)
         cur = rawget(cur, "_parent")
     end
-    local contents = materialize_object_contents(t)
-    -- Snapshot user-key cache BEFORE nilling internals.
-    local cache = {}
-    local ck, cv = next(t)
-    while ck ~= nil do
-        if not INTERNAL_KEYS[ck] then
-            cache[ck] = cv
+
+    if v == nil then
+        -- Delete: remove from _keys
+        for i, key in ipairs(keys) do
+            if key == k then
+                table.remove(keys, i)
+                break
+            end
         end
-        ck, cv = next(t, ck)
+        values[k] = nil
+    elseif values[k] == nil then
+        -- New key: append to _keys
+        keys[#keys + 1] = k
+        values[k] = v
+    else
+        -- Existing key: just update value
+        values[k] = v
     end
-    rawset(t, "_parent",  nil)
-    rawset(t, "_dirty",   nil)
-    rawset(t, "_doc",     nil)
-    rawset(t, "_cur_box", nil)
-    rawset(t, "_cur",     nil)
-    rawset(t, "_bs",      nil)
-    rawset(t, "_be",      nil)
-    setmetatable(t, nil)
-    TABLE_TYPE_HINT[t] = "object"
-    for _, kv in ipairs(contents) do
-        rawset(t, kv[1], cache[kv[1]] or kv[2])
-    end
-    rawset(t, k, v)
 end
 
 -- On first write, walk all existing elements into a plain sequence,
@@ -383,8 +482,24 @@ local function materialize(v)
     local mt = (type(v) == "table") and getmetatable(v) or nil
     if mt == LazyObject then
         local out = {}
-        for _, kv in ipairs(materialize_object_contents(v)) do
-            out[kv[1]] = materialize(kv[2])
+        local keys = rawget(v, ORDER_KEYS)
+        if not keys and rawget(v, "_dirty") then
+            keys = ensure_object_order_state(v)
+        end
+        if keys then
+            -- Already materialized: use ORDER_KEYS order and ORDER_VALUES
+            local values = rawget(v, ORDER_VALUES)
+            for _, k in ipairs(keys) do
+                local val = values[k]
+                assert(val ~= nil, "qjson: internal invariant violated (ORDER_VALUES missing key " .. tostring(k) .. ")")
+                out[k] = materialize(val)
+            end
+        else
+            -- Not yet materialized: use cursor-based walk
+            for _, kv in ipairs(materialize_object_contents(v)) do
+                local child = cached_child(v, kv[1]) or kv[2]
+                out[kv[1]] = materialize(child)
+            end
         end
         return out
     elseif mt == LazyArray then
@@ -460,26 +575,24 @@ end
 -- complete (Lua resolves upvalues at call time, but the slot must be declared first).
 local encode
 
--- Walk a dirty LazyObject and emit JSON, preferring cached children (which
--- may be materialized) over freshly resolved cursors. Non-cached children
--- emit through a fresh proxy and naturally fast-path their unmodified subtree.
+-- Emit a dirty LazyObject as JSON in ORDER_KEYS (first-appearance) order.
+-- A dirty object without ORDER state yet (e.g. dirtied only via a child
+-- mutation) is materialized on demand by ensure_object_order_state, which
+-- also collapses duplicate keys to last-wins. Container values that were not
+-- themselves mutated encode through a fresh proxy and naturally fast-path
+-- their unmodified subtree.
 local function encode_lazy_object_walking(t)
+    local keys = rawget(t, ORDER_KEYS)
+    if not keys then
+        keys = ensure_object_order_state(t)
+    end
+    local values = rawget(t, ORDER_VALUES)
     local parts = {}
-    local i = 0
-    while true do
-        local rc = C.qjson_cursor_object_entry_at(t._cur, i, strp_box, size_box, child_box)
-        if rc == QJSON_NOT_FOUND then break end
-        check(rc)
-        local k = ffi.string(strp_box[0], size_box[0])
-        local v
-        local cached = rawget(t, k)
-        if cached ~= nil and not INTERNAL_KEYS[k] then
-            v = cached
-        else
-            v = decode_cursor(t, child_box)
+    for _, k in ipairs(keys) do
+        local v = values[k]
+        if v ~= nil then
+            parts[#parts + 1] = encode_string(k) .. ":" .. encode(v)
         end
-        parts[#parts + 1] = encode_string(k) .. ":" .. encode(v)
-        i = i + 1
     end
     return "{" .. table.concat(parts, ",") .. "}"
 end
