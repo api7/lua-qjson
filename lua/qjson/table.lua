@@ -575,13 +575,18 @@ end
 -- complete (Lua resolves upvalues at call time, but the slot must be declared first).
 local encode
 
+local ENCODE_MAX_DEPTH = 1000
+
 -- Emit a dirty LazyObject as JSON in ORDER_KEYS (first-appearance) order.
 -- A dirty object without ORDER state yet (e.g. dirtied only via a child
 -- mutation) is materialized on demand by ensure_object_order_state, which
 -- also collapses duplicate keys to last-wins. Container values that were not
 -- themselves mutated encode through a fresh proxy and naturally fast-path
 -- their unmodified subtree.
-local function encode_lazy_object_walking(t)
+local function encode_lazy_object_walking(t, depth)
+    if depth > ENCODE_MAX_DEPTH then
+        error("qjson.encode: max depth exceeded")
+    end
     local keys = rawget(t, ORDER_KEYS)
     if not keys then
         keys = ensure_object_order_state(t)
@@ -591,13 +596,16 @@ local function encode_lazy_object_walking(t)
     for _, k in ipairs(keys) do
         local v = values[k]
         if v ~= nil then
-            parts[#parts + 1] = encode_string(k) .. ":" .. encode(v)
+            parts[#parts + 1] = encode_string(k) .. ":" .. encode(v, depth + 1)
         end
     end
     return "{" .. table.concat(parts, ",") .. "}"
 end
 
-local function encode_lazy_array_walking(t)
+local function encode_lazy_array_walking(t, depth)
+    if depth > ENCODE_MAX_DEPTH then
+        error("qjson.encode: max depth exceeded")
+    end
     local parts = {}
     local rc = C.qjson_cursor_len(t._cur, "", 0, size_box)
     check(rc)
@@ -612,20 +620,20 @@ local function encode_lazy_array_walking(t)
         else
             v = decode_cursor(t, child_box)
         end
-        parts[#parts + 1] = encode(v)
+        parts[#parts + 1] = encode(v, depth + 1)
     end
     return "[" .. table.concat(parts, ",") .. "]"
 end
 
-local function encode_proxy(t)
+local function encode_proxy(t, depth)
     if not t._dirty then
         -- Fast path: no mutations — slice the original buffer bytes.
         return t._doc._hold:sub(t._bs + 1, t._be)
     end
     if getmetatable(t) == LazyObject then
-        return encode_lazy_object_walking(t)
+        return encode_lazy_object_walking(t, depth)
     end
-    return encode_lazy_array_walking(t)
+    return encode_lazy_array_walking(t, depth)
 end
 
 local function is_array(t)
@@ -642,46 +650,52 @@ local function is_array(t)
     return count == n and (n > 0 or mt == _M.empty_array_mt)
 end
 
-local function encode_array(t)
+local function encode_array(t, depth)
+    if depth > ENCODE_MAX_DEPTH then
+        error("qjson.encode: max depth exceeded")
+    end
     local parts = {}
     for i = 1, #t do
-        parts[i] = encode(t[i])
+        parts[i] = encode(t[i], depth + 1)
     end
     return "[" .. table.concat(parts, ",") .. "]"
 end
 
-local function encode_object(t)
+local function encode_object(t, depth)
+    if depth > ENCODE_MAX_DEPTH then
+        error("qjson.encode: max depth exceeded")
+    end
     local parts = {}
     for k, v in pairs(t) do
         if type(k) ~= "string" then
             error("qjson.encode: object key must be a string, got " .. type(k))
         end
-        parts[#parts+1] = encode_string(k) .. ":" .. encode(v)
+        parts[#parts+1] = encode_string(k) .. ":" .. encode(v, depth + 1)
     end
     return "{" .. table.concat(parts, ",") .. "}"
 end
 
 -- Dispatch for plain (non-lazy) tables. Separated from the main encode
 -- function to keep the lazy-proxy fast path narrow for LuaJIT traces.
-local function encode_plain_table(v)
+local function encode_plain_table(v, depth)
     local mt = getmetatable(v)
     if mt == _M.empty_array_mt then
-        return encode_array(v)
+        return encode_array(v, depth)
     end
     local hint = TABLE_TYPE_HINT[v]
     if hint == "object" then
-        return encode_object(v)
+        return encode_object(v, depth)
     end
     if hint == "array" then
-        return encode_array(v)
+        return encode_array(v, depth)
     end
     if is_array(v) then
-        return encode_array(v)
+        return encode_array(v, depth)
     end
-    return encode_object(v)
+    return encode_object(v, depth)
 end
 
-encode = function(v)
+encode = function(v, depth)
     if rawequal(v, _M.null) then
         return "null"
     end
@@ -695,19 +709,21 @@ encode = function(v)
     elseif tv == "table" then
         local mt = getmetatable(v)
         if mt == LazyObject or mt == LazyArray then
-            return encode_proxy(v)
+            return encode_proxy(v, depth)
         end
-        return encode_plain_table(v)
+        return encode_plain_table(v, depth)
     end
     error("qjson.encode: unsupported value type: " .. tv)
 end
 
-_M.encode = encode
+_M.encode = function(v)
+    return encode(v, 1)
+end
 
 -- Debug convenience: tostring(lazy_view) returns the original JSON bytes.
 -- Not the canonical encoder — callers should still use qjson.encode for output.
-LazyObject.__tostring = encode_proxy
-LazyArray.__tostring  = encode_proxy
+LazyObject.__tostring = function(t) return encode_proxy(t, 1) end
+LazyArray.__tostring  = function(t) return encode_proxy(t, 1) end
 
 -- Test-only exports for metatable identity checks.
 _M._LazyObject = LazyObject
