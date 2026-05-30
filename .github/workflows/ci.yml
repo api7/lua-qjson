@@ -61,6 +61,9 @@ jobs:
       - name: Test scalar-only (no AVX2/NEON feature)
         run: cargo test --release --no-default-features
 
+      - name: Test debug scalar-only
+        run: cargo test --no-default-features
+
       - name: Test with test-panic feature
         run: cargo test --features test-panic --release
 
@@ -98,6 +101,7 @@ jobs:
         run: |
           cargo +nightly fuzz run fuzz_parse_eager -- -max_total_time=60
           cargo +nightly fuzz run fuzz_depth -- -max_total_time=60
+          cargo +nightly fuzz run fuzz_ffi_ops -- -max_total_time=60
 
       - name: Run lazy parse fuzz target
         run: cargo +nightly fuzz run fuzz_parse_lazy -- -max_total_time=60

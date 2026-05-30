@@ -153,6 +153,7 @@ Run the PR-length regression guard:
 ```sh
 cargo +nightly fuzz run fuzz_parse_eager -- -max_total_time=60
 cargo +nightly fuzz run fuzz_depth -- -max_total_time=60
+cargo +nightly fuzz run fuzz_ffi_ops -- -max_total_time=60
 cargo +nightly fuzz run fuzz_parse_lazy -- -max_total_time=60
 ```
 
@@ -169,6 +170,11 @@ depth `N` is accepted and `N+1` returns `QJSON_NESTING_TOO_DEEP` at both the
 default depth (`1024`) and the clamped ceiling (`4096`). Accepted boundary
 inputs are also walked through the FFI cursor API to exercise Phase 2 without
 recursive descent.
+
+The `fuzz_ffi_ops` target drives the public FFI surface with arbitrary
+parse/get/cursor/free operation sequences. It focuses on panic-barrier and
+pointer-safety regressions around null docs/cursors, path/key bytes, repeated
+parses/frees, and mixed root/cursor accessors.
 
 The `fuzz_parse_lazy` target compares serde-accepted inputs by reconstructing a
 whole `serde_json::Value` through qjson's public cursor FFI APIs. It normalizes
@@ -187,6 +193,7 @@ Before releases, run the same target much longer than the CI guard, for example:
 ```sh
 cargo +nightly fuzz run fuzz_parse_eager -- -max_total_time=3600
 cargo +nightly fuzz run fuzz_depth -- -max_total_time=3600
+cargo +nightly fuzz run fuzz_ffi_ops -- -max_total_time=3600
 cargo +nightly fuzz run fuzz_parse_lazy -- -max_total_time=3600
 ```
 
