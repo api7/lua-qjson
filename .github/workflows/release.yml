@@ -100,6 +100,61 @@ jobs:
           )"
           echo "rockspec_file=${rockspec_file}" >> $GITHUB_OUTPUT
 
+      - name: Extract changelog entry
+        id: changelog
+        shell: bash
+        env:
+          VERSION_WITHOUT_V: ${{ steps.release_env.outputs.version_without_v }}
+        run: |
+          python3 - <<'PY'
+          import os
+          import re
+          from pathlib import Path
+
+          version = os.environ["VERSION_WITHOUT_V"]
+          changelog = Path("CHANGELOG.md")
+          if not changelog.is_file():
+              raise SystemExit("CHANGELOG.md not found")
+
+          lines = changelog.read_text(encoding="utf-8").splitlines()
+          heading = re.compile(r"^## \[" + re.escape(version) + r"\](?:\s+-\s+.*)?\s*$")
+          start = None
+          for index, line in enumerate(lines):
+              if heading.match(line):
+                  start = index + 1
+                  break
+
+          if start is None:
+              raise SystemExit(
+                  "CHANGELOG.md is missing a '## [" + version + "]' section; "
+                  "promote the [Unreleased] notes before publishing this release"
+              )
+
+          end = len(lines)
+          for index in range(start, len(lines)):
+              if re.match(r"^## \[[^]]+\]", lines[index]):
+                  end = index
+                  break
+
+          section_lines = lines[start:end]
+          while section_lines and not section_lines[-1].strip():
+              section_lines.pop()
+          while section_lines and re.match(r"^\[[^]]+\]:\s+", section_lines[-1]):
+              section_lines.pop()
+              while section_lines and not section_lines[-1].strip():
+                  section_lines.pop()
+
+          body = "\n".join(section_lines).strip()
+          if not body:
+              raise SystemExit("CHANGELOG.md section for " + version + " is empty")
+
+          body_path = Path(os.environ.get("RUNNER_TEMP", ".")) / "release-notes.md"
+          body_path.write_text(body + "\n", encoding="utf-8")
+          with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as output:
+              print(f"body_path={body_path}", file=output)
+          print(f"Using CHANGELOG.md entry for {version}: {body_path}")
+          PY
+
       - name: Validate LuaRocks token
         shell: bash
         env:
@@ -115,6 +170,7 @@ jobs:
         with:
           tag_name: ${{ steps.release_env.outputs.version }}
           name: ${{ steps.release_env.outputs.version }}
+          body_path: ${{ steps.changelog.outputs.body_path }}
           draft: false
           prerelease: ${{ steps.release_env.outputs.is_prerelease }}
 
