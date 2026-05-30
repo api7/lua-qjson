@@ -5,7 +5,7 @@ OPENRESTY_RESTY  := $(OPENRESTY)/bin/resty
 LUAJIT    ?= $(shell if [ -x "$(OPENRESTY_LUAJIT)" ]; then echo "$(OPENRESTY_LUAJIT)"; else command -v luajit 2>/dev/null || echo luajit; fi)
 RESTY     ?= $(shell if [ -x "$(OPENRESTY_RESTY)" ]; then echo "$(OPENRESTY_RESTY)"; else command -v resty 2>/dev/null || echo resty; fi)
 LUA_PATH  ?= ./lua/?.lua;$(OPENRESTY)/lualib/?.lua;$(OPENRESTY)/lualib/?/init.lua;;
-LUA_CPATH ?= ./vendor/lua-cjson/?.so;./target/release/lib?.so;./?.so;$(OPENRESTY)/lualib/?.so;/usr/local/lib/lua/5.1/?.so;$(OPENRESTY)/luajit/lib/lua/5.1/?.so
+LUA_CPATH ?= ./vendor/lua-cjson/?.so;./target/release/lib?.dylib;./target/release/lib?.so;./?.so;$(OPENRESTY)/lualib/?.so;/usr/local/lib/lua/5.1/?.so;$(OPENRESTY)/luajit/lib/lua/5.1/?.so
 
 LUAJIT_PREFIX ?= $(shell dirname $$(dirname $$(command -v $(LUAJIT) 2>/dev/null || echo $(OPENRESTY_LUAJIT))))
 LUAJIT_INC    ?= $(LUAJIT_PREFIX)/include/luajit-2.1
