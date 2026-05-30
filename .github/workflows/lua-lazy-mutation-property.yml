@@ -102,10 +102,23 @@ jobs:
           if [ -z "$seed" ]; then
             seed="$(python3 - <<'PY'
           import secrets
-          print(secrets.randbelow(2**31))
+          print(secrets.randbelow(2**31 - 1) + 1)
           PY
             )"
           fi
+
+          require_positive_int() {
+            name="$1"
+            value="$2"
+            if ! [[ "$value" =~ ^[1-9][0-9]*$ ]]; then
+              echo "$name must be a positive integer, got '$value'" >&2
+              exit 1
+            fi
+          }
+
+          require_positive_int cases "$cases"
+          require_positive_int steps "$steps"
+          require_positive_int seed "$seed"
 
           echo "cases=$cases" >> "$GITHUB_OUTPUT"
           echo "steps=$steps" >> "$GITHUB_OUTPUT"

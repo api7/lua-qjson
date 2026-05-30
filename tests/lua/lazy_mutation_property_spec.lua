@@ -2,9 +2,20 @@ local qjson = require("qjson")
 local cjson = require("cjson")
 local prop = require("tests.lua.property_json")
 
-local CASES = tonumber(os.getenv("QJSON_MUT_PROP_CASES")) or 40
-local SEED  = tonumber(os.getenv("QJSON_MUT_PROP_SEED"))  or 104104
-local STEPS = tonumber(os.getenv("QJSON_MUT_PROP_STEPS")) or 24
+local function positive_int_env(name, default)
+    local value = os.getenv(name)
+    if value == nil then
+        return default
+    end
+    if not value:match("^[1-9]%d*$") then
+        error(name .. " must be a positive integer, got " .. string.format("%q", value))
+    end
+    return tonumber(value)
+end
+
+local CASES = positive_int_env("QJSON_MUT_PROP_CASES", 40)
+local SEED  = positive_int_env("QJSON_MUT_PROP_SEED", 104104)
+local STEPS = positive_int_env("QJSON_MUT_PROP_STEPS", 24)
 
 -- Supported lazy proxy API under test:
 --   t.k reads/writes/deletes, t[i] reads/writes/appends, qjson.pairs,

@@ -87,7 +87,7 @@ nested nodes so the sequence can deliberately create hybrid trees containing
 clean lazy proxies, cached children, mutated nodes, materialized outputs, and
 plain replacement values.
 
-Operations include:
+Randomized operations include:
 
 - read a field or array element before mutation
 - traverse an object or array before mutation
@@ -99,13 +99,15 @@ Operations include:
 - replace a container with a scalar
 - replace a scalar with an object or array
 - mutate and append array elements
-- create an array hole, then check `qjson.len` and `qjson.ipairs`
 - self-assignment with `t.k = t.k`
 - assign one child proxy under a second key to pin alias semantics
-- attempt a mutation-created cycle and assert a clean encode error
-- mutate during `qjson.pairs` / `qjson.ipairs` iteration
 - call `qjson.encode()` mid-sequence, then continue mutating
 - call `qjson.materialize()` mid-sequence, then continue mutating
+
+High-risk operations that intentionally leave the normal stateful model, such
+as mutation-created cycles, sparse array holes, and mutation during active
+iteration, are pinned as deterministic regressions instead of randomized
+operations so their currently documented semantics stay explicit.
 
 Every checkpoint failure prints the seed, case number, source JSON, operation
 trace, checkpoint name, model JSON, qjson encoded output when relevant, and the
