@@ -4,6 +4,7 @@ local C = require("qjson.lib")
 
 local err_box  = ffi.new("int[1]")
 local i64_box  = ffi.new("int64_t[1]")
+local u64_box  = ffi.new("uint64_t[1]")
 local f64_box  = ffi.new("double[1]")
 local bool_box = ffi.new("int[1]")
 local size_box = ffi.new("size_t[1]")
@@ -90,7 +91,13 @@ end
 function Doc:get_i64(path)
     local rc = C.qjson_get_i64(self._ptr, path, #path, i64_box)
     if not check_err(rc) then return nil end
-    return tonumber(i64_box[0])
+    return i64_box[0]
+end
+
+function Doc:get_u64(path)
+    local rc = C.qjson_get_u64(self._ptr, path, #path, u64_box)
+    if not check_err(rc) then return nil end
+    return u64_box[0]
 end
 
 function Doc:get_f64(path)
@@ -140,7 +147,14 @@ function Cursor:get_i64(path)
     path = path or ""
     local rc = C.qjson_cursor_get_i64(self._cur, path, #path, i64_box)
     if not check_err(rc) then return nil end
-    return tonumber(i64_box[0])
+    return i64_box[0]
+end
+
+function Cursor:get_u64(path)
+    path = path or ""
+    local rc = C.qjson_cursor_get_u64(self._cur, path, #path, u64_box)
+    if not check_err(rc) then return nil end
+    return u64_box[0]
 end
 
 function Cursor:get_f64(path)

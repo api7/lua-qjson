@@ -311,10 +311,37 @@ pub unsafe extern "C" fn qjson_get_i64(
         let (d, cur) = match resolve_root_path(doc, path, path_len) {
             Ok(x) => x, Err(e) => return e as c_int,
         };
-        let bytes = match scalar_bytes(d, cur) {
+        let bytes = match number_bytes(d, cur) {
             Ok(b) => b, Err(e) => return e as c_int,
         };
         match number::parse_i64(bytes, d.eager_validated) {
+            Ok(v) => { *out = v; qjson_err::QJSON_OK as c_int }
+            Err(e) => e as c_int,
+        }
+    })
+}
+
+/// Parse the JSON number at `path` as `u64` and write into `*out`.
+/// Returns `QJSON_OUT_OF_RANGE` if the value does not fit in `u64`.
+///
+/// # Safety
+///
+/// See the module-level [shared safety contract](self#shared-safety-contract).
+/// `doc` must be live or NULL; `path` must point to `path_len` bytes or be
+/// NULL with `path_len == 0`; `out` must be non-NULL and writable.
+#[no_mangle]
+pub unsafe extern "C" fn qjson_get_u64(
+    doc: *mut qjson_doc, path: *const c_char, path_len: usize, out: *mut u64,
+) -> c_int {
+    ffi_catch!({
+        if out.is_null() { return qjson_err::QJSON_INVALID_ARG as c_int; }
+        let (d, cur) = match resolve_root_path(doc, path, path_len) {
+            Ok(x) => x, Err(e) => return e as c_int,
+        };
+        let bytes = match number_bytes(d, cur) {
+            Ok(b) => b, Err(e) => return e as c_int,
+        };
+        match number::parse_u64(bytes, d.eager_validated) {
             Ok(v) => { *out = v; qjson_err::QJSON_OK as c_int }
             Err(e) => e as c_int,
         }
@@ -403,6 +430,13 @@ unsafe fn scalar_byte_range(d: &Document<'_>, cur: Cursor) -> Result<(usize, usi
 unsafe fn scalar_bytes<'d>(d: &'d Document<'d>, cur: Cursor) -> Result<&'d [u8], qjson_err> {
     let (s, e) = scalar_byte_range(d, cur)?;
     Ok(&d.buf[s..e])
+}
+
+unsafe fn number_bytes<'d>(d: &'d Document<'d>, cur: Cursor) -> Result<&'d [u8], qjson_err> {
+    match d.type_of(cur)? {
+        qjson_type::QJSON_T_NUM => scalar_bytes(d, cur),
+        _                       => Err(qjson_err::QJSON_TYPE_MISMATCH),
+    }
 }
 
 // ── qjson_cursor type and cursor-based FFI ────────────────────────────────────
@@ -617,8 +651,36 @@ pub unsafe extern "C" fn qjson_cursor_get_i64(
             std::slice::from_raw_parts(path as *const u8, path_len)
         };
         let cur = match cur.resolve(d, p) { Ok(x) => x, Err(e) => return e as c_int };
-        let bytes = match scalar_bytes(d, cur) { Ok(b) => b, Err(e) => return e as c_int };
+        let bytes = match number_bytes(d, cur) { Ok(b) => b, Err(e) => return e as c_int };
         match number::parse_i64(bytes, d.eager_validated) {
+            Ok(v) => { *out = v; qjson_err::QJSON_OK as c_int }
+            Err(e) => e as c_int,
+        }
+    })
+}
+
+/// Parse the JSON number at `path` (relative to `*c`) as `u64`.
+/// Returns `QJSON_OUT_OF_RANGE` if the value does not fit in `u64`.
+///
+/// # Safety
+///
+/// See the module-level [shared safety contract](self#shared-safety-contract).
+/// `c` must point to a cursor produced by an earlier `qjson_*` call whose
+/// document is still alive; `path` must point to `path_len` bytes or be NULL
+/// with `path_len == 0`; `out` must be non-NULL and writable.
+#[no_mangle]
+pub unsafe extern "C" fn qjson_cursor_get_u64(
+    c: *const qjson_cursor, path: *const c_char, path_len: usize, out: *mut u64,
+) -> c_int {
+    ffi_catch!({
+        if out.is_null() { return qjson_err::QJSON_INVALID_ARG as c_int; }
+        let (d, cur) = match cursor_to_internal(c) { Ok(x) => x, Err(e) => return e as c_int };
+        let p: &[u8] = if path.is_null() { &[] } else {
+            std::slice::from_raw_parts(path as *const u8, path_len)
+        };
+        let cur = match cur.resolve(d, p) { Ok(x) => x, Err(e) => return e as c_int };
+        let bytes = match number_bytes(d, cur) { Ok(b) => b, Err(e) => return e as c_int };
+        match number::parse_u64(bytes, d.eager_validated) {
             Ok(v) => { *out = v; qjson_err::QJSON_OK as c_int }
             Err(e) => e as c_int,
         }

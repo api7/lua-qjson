@@ -521,6 +521,8 @@ _M.materialize = materialize
 
 local string_byte = string.byte
 local string_format = string.format
+local int64_ct = ffi.typeof("int64_t")
+local uint64_ct = ffi.typeof("uint64_t")
 
 -- Escape lookup table: byte value → escape sequence string (or nil if safe).
 local ESCAPES = {
@@ -569,6 +571,16 @@ local function encode_number(n)
         return string_format("%d", n)
     end
     return string_format("%.14g", n)
+end
+
+local function encode_cdata(v)
+    if ffi.istype(int64_ct, v) or ffi.istype(uint64_ct, v) then
+        local s = tostring(v)
+        s = s:gsub("ULL$", "")
+        s = s:gsub("LL$", "")
+        return s
+    end
+    error("qjson.encode: unsupported value type: cdata")
 end
 
 -- Forward declaration so encode_lazy_object_walking, encode_lazy_array_walking,
@@ -707,6 +719,8 @@ encode = function(v, depth)
         return encode_number(v)
     elseif tv == "boolean" then
         return v and "true" or "false"
+    elseif tv == "cdata" then
+        return encode_cdata(v)
     elseif tv == "table" then
         local mt = getmetatable(v)
         if mt == LazyObject or mt == LazyArray then
