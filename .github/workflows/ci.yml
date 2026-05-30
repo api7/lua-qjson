@@ -325,6 +325,52 @@ jobs:
           "$LUAJIT_BIN" -e 'local qjson = require("qjson"); local doc = qjson.parse("{\"a\":42}"); assert(doc:get_i64("a") == 42)'
           busted --lua="$LUAJIT_BIN" tests/lua
 
+  openresty:
+    name: OpenResty runtime (${{ matrix.openresty.version }})
+    runs-on: ubuntu-22.04
+    needs: rust
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        openresty:
+          - version: "1.21.4.4"
+            image: "openresty/openresty:1.21.4.4-0-jammy"
+          - version: "1.27.1.2"
+            image: "openresty/openresty:1.27.1.2-0-jammy"
+          - version: "1.29.2.4"
+            image: "openresty/openresty:1.29.2.4-0-jammy"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Rust (stable)
+        run: |
+          rustup toolchain install stable --profile minimal --no-self-update
+          rustup default stable
+
+      - name: Cache cargo registry & target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: openresty-${{ runner.os }}-${{ matrix.openresty.version }}-${{ hashFiles('Cargo.toml') }}
+          restore-keys: |
+            openresty-${{ runner.os }}-${{ matrix.openresty.version }}-
+            openresty-${{ runner.os }}-
+
+      - name: Build cdylib
+        run: cargo build --release
+
+      - name: Run OpenResty runtime checks
+        env:
+          OPENRESTY_IMAGE: ${{ matrix.openresty.image }}
+        run: .github/scripts/run-openresty-runtime.sh
+
   package:
     name: LuaRocks package (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
