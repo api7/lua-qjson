@@ -10,7 +10,7 @@ cargo-fuzz = true
 [dependencies]
 arbitrary = { version = "1", features = ["derive"] }
 libfuzzer-sys = "0.4"
-serde_json = "1"
+serde_json = { version = "1", features = ["float_roundtrip"] }
 
 [dependencies.qjson]
 path = ".."
@@ -32,6 +32,13 @@ bench = false
 [[bin]]
 name = "fuzz_ffi_ops"
 path = "fuzz_targets/fuzz_ffi_ops.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_parse_lazy"
+path = "fuzz_targets/fuzz_parse_lazy.rs"
 test = false
 doc = false
 bench = false

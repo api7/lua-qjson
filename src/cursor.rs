@@ -15,6 +15,10 @@ pub(crate) struct Cursor {
 
 impl Cursor {
     pub(crate) fn root(doc: &Document) -> Self {
+        if doc.indices.first().copied() == Some(u32::MAX) {
+            return Cursor { idx_start: 0, idx_end: 1 };
+        }
+
         // Find the closing index of the outermost container.
         // indices has a u32::MAX sentinel at the end.
         let n = doc.indices.len() as u32;

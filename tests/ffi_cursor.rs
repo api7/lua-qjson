@@ -133,3 +133,77 @@ fn walk_children_trailing_scalar_bool() {
 
     unsafe { qjson_free(d) };
 }
+
+#[test]
+fn open_root_number_cursor_gets_f64() {
+    let d = parse(b"42");
+    let mut c = std::mem::MaybeUninit::<qjson_cursor>::uninit();
+    let empty = b"";
+    let rc = unsafe { qjson_open(d, empty.as_ptr() as *const i8, 0, c.as_mut_ptr()) };
+    assert_eq!(rc, 0);
+    let c = unsafe { c.assume_init() };
+
+    let mut t: c_int = -1;
+    let rc = unsafe { qjson_cursor_typeof(&c, empty.as_ptr() as *const i8, 0, &mut t) };
+    assert_eq!(rc, 0);
+    assert_eq!(t, 2);
+
+    let mut v: f64 = 0.0;
+    let rc = unsafe { qjson_cursor_get_f64(&c, empty.as_ptr() as *const i8, 0, &mut v) };
+    assert_eq!(rc, 0);
+    assert_eq!(v, 42.0);
+
+    unsafe { qjson_free(d) };
+}
+
+#[test]
+fn open_root_bool_and_null_cursors() {
+    let empty = b"";
+
+    let d = parse(b"true");
+    let mut c = std::mem::MaybeUninit::<qjson_cursor>::uninit();
+    let rc = unsafe { qjson_open(d, empty.as_ptr() as *const i8, 0, c.as_mut_ptr()) };
+    assert_eq!(rc, 0);
+    let c = unsafe { c.assume_init() };
+
+    let mut b: c_int = -1;
+    let rc = unsafe { qjson_cursor_get_bool(&c, empty.as_ptr() as *const i8, 0, &mut b) };
+    assert_eq!(rc, 0);
+    assert_eq!(b, 1);
+    unsafe { qjson_free(d) };
+
+    let d = parse(b"null");
+    let mut c = std::mem::MaybeUninit::<qjson_cursor>::uninit();
+    let rc = unsafe { qjson_open(d, empty.as_ptr() as *const i8, 0, c.as_mut_ptr()) };
+    assert_eq!(rc, 0);
+    let c = unsafe { c.assume_init() };
+
+    let mut t: c_int = -1;
+    let rc = unsafe { qjson_cursor_typeof(&c, empty.as_ptr() as *const i8, 0, &mut t) };
+    assert_eq!(rc, 0);
+    assert_eq!(t, 0);
+
+    unsafe { qjson_free(d) };
+}
+
+#[test]
+fn root_scalar_cursor_container_ops_return_type_mismatch() {
+    let d = parse(b"42");
+    let mut c = std::mem::MaybeUninit::<qjson_cursor>::uninit();
+    let empty = b"";
+    let rc = unsafe { qjson_open(d, empty.as_ptr() as *const i8, 0, c.as_mut_ptr()) };
+    assert_eq!(rc, 0);
+    let c = unsafe { c.assume_init() };
+
+    let mut len = 0usize;
+    let rc = unsafe { qjson_cursor_len(&c, empty.as_ptr() as *const i8, 0, &mut len) };
+    assert_eq!(rc, 3);
+
+    let mut key_ptr: *const u8 = std::ptr::null();
+    let mut key_len = 0usize;
+    let mut child: qjson_cursor = unsafe { std::mem::zeroed() };
+    let rc = unsafe { qjson_cursor_object_entry_at(&c, 0, &mut key_ptr, &mut key_len, &mut child) };
+    assert_eq!(rc, 3);
+
+    unsafe { qjson_free(d) };
+}

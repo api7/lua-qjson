@@ -138,3 +138,43 @@ fn len_single_scalar_object() {
     assert_eq!(n, 1);
     unsafe { qjson_free(d) };
 }
+
+#[test]
+fn root_scalar_typeof_and_getters_work_with_empty_path() {
+    let empty = b"";
+
+    let d = parse(b"42");
+    let mut t: c_int = -1;
+    let rc = unsafe { qjson_typeof(d, empty.as_ptr() as *const i8, 0, &mut t) };
+    assert_eq!(rc, 0);
+    assert_eq!(t, 2);
+    let mut v: f64 = 0.0;
+    let rc = unsafe { qjson_get_f64(d, empty.as_ptr() as *const i8, 0, &mut v) };
+    assert_eq!(rc, 0);
+    assert_eq!(v, 42.0);
+    unsafe { qjson_free(d) };
+
+    let d = parse(b"false");
+    let mut b: c_int = -1;
+    let rc = unsafe { qjson_get_bool(d, empty.as_ptr() as *const i8, 0, &mut b) };
+    assert_eq!(rc, 0);
+    assert_eq!(b, 0);
+    unsafe { qjson_free(d) };
+
+    let d = parse(b"null");
+    let mut is_null: c_int = 0;
+    let rc = unsafe { qjson_is_null(d, empty.as_ptr() as *const i8, 0, &mut is_null) };
+    assert_eq!(rc, 0);
+    assert_eq!(is_null, 1);
+    unsafe { qjson_free(d) };
+}
+
+#[test]
+fn root_scalar_len_returns_type_mismatch() {
+    let d = parse(b"42");
+    let empty = b"";
+    let mut len = 0usize;
+    let rc = unsafe { qjson_len(d, empty.as_ptr() as *const i8, 0, &mut len) };
+    assert_eq!(rc, 3);
+    unsafe { qjson_free(d) };
+}
