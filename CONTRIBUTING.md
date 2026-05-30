@@ -56,3 +56,30 @@ cargo +nightly fuzz run fuzz_parse_lazy -- -max_total_time=3600
 
 CI intentionally runs only a short 60-second fuzzing pass so pull requests get a
 quick regression signal without pretending to be a deep fuzz campaign.
+
+## Lua encode property tests
+
+`qjson.encode` and `qjson.materialize` live in Lua (`lua/qjson/table.lua`), so
+they are outside cargo-fuzz's Rust decoder targets. Lua-side round-trip coverage
+uses deterministic busted property tests instead of luzer for now: busted is
+already installed in CI and gives a portable PR regression guard without adding
+a LuaJIT/libFuzzer binding dependency. luzer can still be revisited later for
+long-running coverage-guided Lua fuzzing.
+
+Run the default PR-length guard:
+
+```sh
+make lua-property-test
+```
+
+Increase the generated case count or pin a different deterministic seed when
+investigating locally:
+
+```sh
+make lua-property-test QJSON_PROP_CASES=1000 QJSON_PROP_SEED=12345
+```
+
+The property suite generates valid JSON containers, runs
+`decode -> materialize -> encode -> decode -> materialize`, checks structural
+equality, and probes the encoder max-depth boundary around 1000 nested
+containers.

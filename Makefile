@@ -9,6 +9,8 @@ LUA_CPATH ?= ./vendor/lua-cjson/?.so;./target/release/lib?.so;./?.so;$(OPENRESTY
 
 LUAJIT_PREFIX ?= $(shell dirname $$(dirname $$(command -v $(LUAJIT) 2>/dev/null || echo $(OPENRESTY_LUAJIT))))
 LUAJIT_INC    ?= $(LUAJIT_PREFIX)/include/luajit-2.1
+QJSON_PROP_CASES ?= 200
+QJSON_PROP_SEED  ?= 760076
 
 LIB_DIR := $(CURDIR)/target/release
 ifeq ($(shell uname),Darwin)
@@ -17,7 +19,7 @@ else
 LUA_ENV := LD_LIBRARY_PATH=$(LIB_DIR) LUA_PATH='$(LUA_PATH)' LUA_CPATH='$(LUA_CPATH)'
 endif
 
-.PHONY: help build test lint bench clean
+.PHONY: help build test lua-property-test lint bench clean
 
 help: ## Show this help
 	@# FS uses [^#]* (not .*) so a description containing `##` isn't truncated.
@@ -30,6 +32,10 @@ build: ## Build the release cdylib (target/release/libqjson.so)
 test: build ## Run cargo tests + busted Lua tests
 	cargo test --release
 	$(LUA_ENV) busted --lua=$(LUAJIT) tests/lua --lpath='./lua/?.lua'
+
+lua-property-test: build ## Run deterministic Lua encode/materialize property tests
+	QJSON_PROP_CASES=$(QJSON_PROP_CASES) QJSON_PROP_SEED=$(QJSON_PROP_SEED) \
+		$(LUA_ENV) busted --lua=$(LUAJIT) tests/lua/encode_property_spec.lua --lpath='./lua/?.lua'
 
 lint: ## Run clippy with -D warnings
 	cargo clippy --release --all-targets -- -D warnings
