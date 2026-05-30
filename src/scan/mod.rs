@@ -65,7 +65,16 @@ pub(crate) fn find_escape_mask_with_carry(bs: u64, prev_carry: &mut u64) -> u64 
     let odd_carry_ends  = odd_carries  & !bs;
 
     let escaped_from_runs = (even_carry_ends & odd_bits) | (odd_carry_ends & even_bits);
-    let escaped = escaped_from_runs | pc;
+    let mut escaped = escaped_from_runs | pc;
+
+    // If a backslash run crosses the chunk boundary, `starts` deliberately
+    // suppresses bit 0, so restore the escaped byte after that leading run.
+    if pc != 0 && (bs & 1) != 0 {
+        let leading_bs = bs.trailing_ones();
+        if leading_bs < 64 && (leading_bs & 1) == 0 {
+            escaped |= 1u64 << leading_bs;
+        }
+    }
 
     let trailing_bs = (!bs).leading_zeros();
 
@@ -127,4 +136,28 @@ pub(crate) fn validate_brackets(buf: &[u8], indices: &[u32]) -> Result<(), usize
         return Err(buf.len());
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::find_escape_mask_with_carry;
+
+    #[test]
+    fn continued_escape_mask_marks_quote_after_even_boundary_run() {
+        // Previous chunk ended with one '\' and this chunk starts with two
+        // more before a quote: the quote sees a 3-byte run and is escaped.
+        let mut carry = 1;
+        let escaped = find_escape_mask_with_carry(0b11, &mut carry);
+        assert_ne!(escaped & (1 << 2), 0);
+        assert_eq!(carry, 0);
+    }
+
+    #[test]
+    fn continued_escape_mask_leaves_quote_after_odd_boundary_run_real() {
+        // Previous odd run + one leading '\' = an even run before byte 1.
+        let mut carry = 1;
+        let escaped = find_escape_mask_with_carry(0b1, &mut carry);
+        assert_eq!(escaped & (1 << 1), 0);
+        assert_eq!(carry, 0);
+    }
 }

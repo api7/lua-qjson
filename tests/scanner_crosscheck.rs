@@ -57,6 +57,16 @@ fn valid_jsonish() -> impl Strategy<Value = String> {
 #[cfg(not(all(target_arch = "x86_64", feature = "avx2")))]
 #[test] fn skip_avx2() {}
 
+#[cfg(all(target_arch = "x86_64", feature = "avx2"))]
+#[test]
+fn scalar_avx2_handles_continued_backslash_run_before_quote() {
+    if !std::is_x86_feature_detected!("avx2")
+        || !std::is_x86_feature_detected!("pclmulqdq") {
+        return;
+    }
+    assert_continued_backslash_run_matches_scalar::<Avx2Scanner>();
+}
+
 // ── NEON cross-check ──────────────────────────────────────────────────────────
 
 #[cfg(target_arch = "aarch64")]
@@ -115,3 +125,32 @@ fn neon_valid_jsonish() -> impl Strategy<Value = String> {
 
 #[cfg(not(target_arch = "aarch64"))]
 #[test] fn skip_neon() {}
+
+#[cfg(target_arch = "aarch64")]
+#[test]
+fn scalar_neon_handles_continued_backslash_run_before_quote() {
+    if !std::arch::is_aarch64_feature_detected!("aes") {
+        return;
+    }
+    assert_continued_backslash_run_matches_scalar::<NeonScanner>();
+}
+
+#[cfg(any(all(target_arch = "x86_64", feature = "avx2"), target_arch = "aarch64"))]
+fn assert_continued_backslash_run_matches_scalar<S: Scanner>() {
+    let mut input = b"[\"".to_vec();
+    while input.len() < 63 {
+        input.push(b'a');
+    }
+    input.extend_from_slice(b"\\\\\\\"");
+    while input.len() < 130 {
+        input.push(b'b');
+    }
+    input.extend_from_slice(b"\"]");
+
+    let mut a = Vec::new();
+    let mut b = Vec::new();
+    let ra = ScalarScanner::scan(&input, &mut a);
+    let rb = S::scan(&input, &mut b);
+    assert_eq!(ra, rb);
+    assert_eq!(a, b);
+}

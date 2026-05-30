@@ -1,0 +1,46 @@
+{
+  "model": "gpt-4",
+  "temperature": 0.7,
+  "max_tokens": 1024,
+  "top_p": 0.95,
+  "frequency_penalty": 0.0,
+  "presence_penalty": 0.0,
+  "stream": false,
+  "messages": [
+    {"role": "system", "content": "You are a helpful assistant that responds clearly and concisely. Always provide accurate information and acknowledge uncertainty when appropriate. When asked technical questions, prefer concrete examples over abstract explanations. Avoid unnecessary preambles."},
+    {"role": "user", "content": "Hello, how are you today? Can you tell me a bit about yourself and what you can help with? I am particularly interested in programming and software engineering topics."},
+    {"role": "assistant", "content": "I'm doing well, thanks for asking! I'm an AI assistant designed to help with a wide range of tasks including programming, software engineering, technical writing, debugging, code review, system design, and general problem-solving. I can read code, explain concepts, suggest improvements, and walk through complex topics step by step."},
+    {"role": "user", "content": "Great! Can you help me understand the difference between async and threading in Python? What are the main use cases for each?"}
+  ],
+  "metadata": {
+    "user_id": "u_12345abc",
+    "session_id": "s_xyzabc789",
+    "request_id": "req_2026051512345",
+    "client_version": "1.4.2",
+    "tags": ["chat", "programming", "tutorial", "python"],
+    "experiment_groups": ["streaming-v2", "long-context"],
+    "user_preferences": {
+      "language": "en",
+      "timezone": "America/Los_Angeles",
+      "verbosity": "medium",
+      "code_blocks": true
+    }
+  },
+  "tools": [
+    {
+      "type": "function",
+      "function": {
+        "name": "get_weather",
+        "description": "Get the current weather in a given location",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "location": {"type": "string", "description": "City and country"},
+            "unit": {"type": "string", "enum": ["celsius", "fahrenheit"]}
+          },
+          "required": ["location"]
+        }
+      }
+    }
+  ]
+}

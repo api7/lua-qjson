@@ -1,0 +1,22 @@
+[package]
+name = "qjson-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+serde_json = "1"
+
+[dependencies.qjson]
+path = ".."
+
+[[bin]]
+name = "fuzz_parse_eager"
+path = "fuzz_targets/fuzz_parse_eager.rs"
+test = false
+doc = false
+bench = false
