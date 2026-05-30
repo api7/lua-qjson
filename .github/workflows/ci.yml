@@ -300,6 +300,8 @@ jobs:
     name: OpenResty runtime (${{ matrix.openresty.version }})
     runs-on: ubuntu-22.04
     needs: rust
+    permissions:
+      contents: read
     strategy:
       fail-fast: false
       matrix:
