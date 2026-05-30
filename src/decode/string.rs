@@ -108,6 +108,12 @@ mod tests {
         Ok(unsafe { std::slice::from_raw_parts(p, n) }.to_vec())
     }
 
+    fn d_skip_validation(s: &[u8]) -> Result<Vec<u8>, qjson_err> {
+        let mut scratch = Vec::new();
+        let (p, n) = decode_string(s, 0, s.len(), &mut scratch, true)?;
+        Ok(unsafe { std::slice::from_raw_parts(p, n) }.to_vec())
+    }
+
     #[test]
     fn no_escape_returns_input() {
         assert_eq!(d(b"hello").unwrap(), b"hello".to_vec());
@@ -162,7 +168,10 @@ mod tests {
 
     #[test]
     fn lone_high_surrogate_fails() {
-        assert_eq!(d(b"\\uD83D").unwrap_err(), qjson_err::QJSON_DECODE_FAILED);
+        assert_eq!(
+            d_skip_validation(b"\\uD83D").unwrap_err(),
+            qjson_err::QJSON_DECODE_FAILED,
+        );
     }
 
     #[test]
