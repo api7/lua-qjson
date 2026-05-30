@@ -30,7 +30,6 @@ local TABLE_TYPE_HINT = setmetatable({}, { __mode = "k" })
 -- Box scratch used for one-shot FFI returns. Reused across calls to avoid
 -- per-call allocation; safe because the parent Doc / lazy view holds the
 -- buffer alive and these are read-and-copy.
-local i64_box  = ffi.new("int64_t[1]")
 local f64_box  = ffi.new("double[1]")
 local bool_box = ffi.new("int[1]")
 local size_box = ffi.new("size_t[1]")

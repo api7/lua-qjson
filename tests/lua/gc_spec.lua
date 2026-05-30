@@ -9,7 +9,6 @@ describe("qjson GC", function()
         for i = 1, 200 do
             local d = qjson.parse(string.format('{"i":%d}', i))
             assert.are.equal(i, d:get_i64("i"))
-            d = nil  -- drop reference
         end
         collectgarbage("collect")
         collectgarbage("collect")

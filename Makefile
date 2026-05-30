@@ -19,7 +19,7 @@ else
 LUA_ENV := LD_LIBRARY_PATH=$(LIB_DIR) LUA_PATH='$(LUA_PATH)' LUA_CPATH='$(LUA_CPATH)'
 endif
 
-.PHONY: help build test lua-property-test lint bench clean
+.PHONY: help build test lua-property-test lint lua-lint bench clean
 
 help: ## Show this help
 	@# FS uses [^#]* (not .*) so a description containing `##` isn't truncated.
@@ -39,6 +39,13 @@ lua-property-test: build ## Run deterministic Lua encode/materialize property te
 
 lint: ## Run clippy with -D warnings
 	cargo clippy --release --all-targets -- -D warnings
+
+lua-lint: ## Run luacheck over Lua sources and tests
+	@command -v luacheck >/dev/null 2>&1 || { \
+		echo "luacheck not found. Install it with: luarocks install luacheck" >&2; \
+		exit 127; \
+	}
+	luacheck lua tests/lua
 
 BENCH_SCENARIOS := small medium github-100k 100k 200k 500k 1m 2m 5m 10m interleaved
 
