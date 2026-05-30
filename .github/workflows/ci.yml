@@ -103,9 +103,19 @@ jobs:
         run: cargo +nightly fuzz run fuzz_parse_lazy -- -max_total_time=60
 
   lua:
-    name: Lua integration tests
+    name: Lua integration tests (${{ matrix.runtime.name }})
     runs-on: ubuntu-latest
     needs: rust
+    strategy:
+      fail-fast: false
+      matrix:
+        runtime:
+          - name: upstream LuaJIT
+            lua_version: "luajit-2.1.0-beta3"
+            validate_rockspec: true
+          - name: OpenResty LuaJIT
+            lua_version: "luajit-openresty"
+            validate_rockspec: false
     steps:
       - uses: actions/checkout@v4
         with:
@@ -127,27 +137,55 @@ jobs:
           restore-keys: |
             cargo-${{ runner.os }}-
 
+      - name: Install LuaJIT (${{ matrix.runtime.name }})
+        uses: leafo/gh-actions-lua@v13
+        with:
+          luaVersion: ${{ matrix.runtime.lua_version }}
+
+      - name: Install LuaRocks
+        uses: leafo/gh-actions-luarocks@v4
+        with:
+          luarocksVersion: "3.11.1"
+
       - name: Build cdylib
         run: cargo build --release
 
-      - name: Install LuaJIT, LuaRocks and dependencies
+      - name: Install Lua dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y luajit lua5.1 liblua5.1-0-dev luarocks
-          # luarocks on Ubuntu targets lua5.1 by default; LuaJIT is ABI-compatible
-          # with 5.1 so rocks built for 5.1 load fine under luajit.
-          sudo luarocks install busted
-          sudo luarocks install lua-cjson
+          luarocks install busted
+          luarocks install lua-cjson
 
-      - name: Run busted tests (under LuaJIT)
+      - name: Resolve LuaJIT executable
+        id: luajit
+        run: |
+          set -euo pipefail
+          for candidate in luajit luajit-2.1.0-beta3 lua; do
+            if command -v "$candidate" >/dev/null 2>&1; then
+              lua_bin="$(command -v "$candidate")"
+              if "$lua_bin" -e 'assert(jit, "LuaJIT required")' >/dev/null 2>&1; then
+                echo "path=$lua_bin" >> "$GITHUB_OUTPUT"
+                "$lua_bin" -e 'print(jit.version)'
+                exit 0
+              fi
+            fi
+          done
+          echo "LuaJIT executable not found" >&2
+          exit 1
+
+      - name: Run busted tests (${{ matrix.runtime.name }})
+        env:
+          LUAJIT_BIN: ${{ steps.luajit.outputs.path }}
         run: |
           # ffi.load("qjson") uses dlopen which respects LD_LIBRARY_PATH,
           # not LuaJIT's package.cpath. Point dlopen at the release build dir.
           LD_LIBRARY_PATH="$PWD/target/release" \
-            busted --lua=$(which luajit) tests/lua \
+            busted --lua="$LUAJIT_BIN" tests/lua \
               --lpath='./lua/?.lua'
 
       - name: Validate LuaRocks package
+        if: matrix.runtime.validate_rockspec
+        env:
+          LUAJIT_BIN: ${{ steps.luajit.outputs.path }}
         run: |
           rm -rf /tmp/lua-qjson-rock
           ROCKSPEC="$(python3 - <<'PY'
@@ -180,8 +218,8 @@ jobs:
           luarocks make "$ROCKSPEC" --tree /tmp/lua-qjson-rock
           eval "$(luarocks path --tree /tmp/lua-qjson-rock)"
           unset LD_LIBRARY_PATH
-          luajit -e 'local qjson = require("qjson"); local doc = qjson.parse("{\"a\":42}"); assert(doc:get_i64("a") == 42)'
-          busted --lua=$(which luajit) tests/lua
+          "$LUAJIT_BIN" -e 'local qjson = require("qjson"); local doc = qjson.parse("{\"a\":42}"); assert(doc:get_i64("a") == 42)'
+          busted --lua="$LUAJIT_BIN" tests/lua
 
   package:
     name: LuaRocks package (${{ matrix.os }})
