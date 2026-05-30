@@ -83,6 +83,9 @@ jobs:
           cargo +nightly fuzz run fuzz_parse_eager -- -max_total_time=60
           cargo +nightly fuzz run fuzz_depth -- -max_total_time=60
 
+      - name: Run lazy parse fuzz target
+        run: cargo +nightly fuzz run fuzz_parse_lazy -- -max_total_time=60
+
   lua:
     name: Lua integration tests
     runs-on: ubuntu-latest

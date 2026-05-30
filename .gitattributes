@@ -1,1 +1,2 @@
 fuzz/corpus/fuzz_parse_eager/* -whitespace
+fuzz/corpus/fuzz_parse_lazy/* -whitespace
