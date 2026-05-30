@@ -23,6 +23,13 @@ doc = false
 bench = false
 
 [[bin]]
+name = "fuzz_depth"
+path = "fuzz_targets/fuzz_depth.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "fuzz_ffi_ops"
 path = "fuzz_targets/fuzz_ffi_ops.rs"
 test = false
