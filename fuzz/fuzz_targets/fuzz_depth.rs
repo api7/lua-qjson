@@ -9,7 +9,7 @@ use qjson::doc::Document;
 use qjson::error::qjson_err;
 use qjson::ffi::{
     qjson_cursor, qjson_cursor_bytes, qjson_cursor_field, qjson_cursor_index, qjson_cursor_len,
-    qjson_free, qjson_open, qjson_parse_ex,
+    qjson_error, qjson_free, qjson_open, qjson_parse_ex,
 };
 use qjson::options::{
     Options, QJSON_DEFAULT_MAX_DEPTH, QJSON_MAX_MAX_DEPTH, QJSON_MODE_EAGER, QJSON_MODE_LAZY,
@@ -125,24 +125,24 @@ fn assert_nesting_error(json: &[u8], opts: &Options) {
 
 fn ffi_parse_error(json: &[u8], opts: &Options) -> c_int {
     unsafe {
-        let mut err = -1;
+        let mut err = qjson_error::default();
         let doc = qjson_parse_ex(json.as_ptr(), json.len(), opts as *const Options, &mut err);
         if !doc.is_null() {
             qjson_free(doc);
         }
-        err
+        err.code
     }
 }
 
 fn walk_accepted_doc(json: &[u8], opts: &Options, steps: impl Iterator<Item = Step>) {
     unsafe {
-        let mut err = -1;
+        let mut err = qjson_error::default();
         let doc = qjson_parse_ex(json.as_ptr(), json.len(), opts as *const Options, &mut err);
         assert!(
             !doc.is_null(),
-            "accepted Phase 2 sample failed to parse: err={err}"
+            "accepted Phase 2 sample failed to parse: err={err:?}"
         );
-        assert_eq!(err, qjson_err::QJSON_OK as c_int);
+        assert_eq!(err.code, qjson_err::QJSON_OK as c_int);
 
         let mut cur: qjson_cursor = std::mem::zeroed();
         assert_eq!(

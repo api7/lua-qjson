@@ -4,7 +4,7 @@ use std::ptr;
 use qjson::ffi::{
     qjson_cursor, qjson_cursor_field, qjson_cursor_get_i64, qjson_cursor_get_str,
     qjson_cursor_index, qjson_cursor_object_entry_at, qjson_doc, qjson_free, qjson_get_bool,
-    qjson_get_str, qjson_open, qjson_parse,
+    qjson_error, qjson_get_str, qjson_open, qjson_parse,
 };
 
 const OK: c_int = 0;
@@ -64,10 +64,10 @@ struct State {
 
 impl State {
     fn parse(json: &'static [u8]) -> Self {
-        let mut err: c_int = -1;
+        let mut err = qjson_error::default();
         let doc = unsafe { qjson_parse(json.as_ptr(), json.len(), &mut err) };
-        assert!(!doc.is_null(), "qjson_parse failed with err={err}");
-        assert_eq!(err, OK);
+        assert!(!doc.is_null(), "qjson_parse failed with err={err:?}");
+        assert_eq!(err.code, OK);
         Self {
             json,
             doc,

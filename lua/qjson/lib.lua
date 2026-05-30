@@ -3,6 +3,10 @@ local ffi = require("ffi")
 ffi.cdef[[
 typedef struct qjson_doc qjson_doc;
 typedef struct {
+    int code;
+    size_t offset;
+} qjson_error;
+typedef struct {
     const qjson_doc* doc;
     uint32_t idx_start, idx_end, _reserved0, _reserved1;
 } qjson_cursor;
@@ -18,9 +22,9 @@ typedef struct {
 } qjson_options;
 
 const char* qjson_strerror(int code);
-qjson_doc* qjson_parse   (const uint8_t* buf, size_t len, int* err_out);
+qjson_doc* qjson_parse   (const uint8_t* buf, size_t len, qjson_error* err_out);
 qjson_doc* qjson_parse_ex(const uint8_t* buf, size_t len,
-                       const qjson_options* opts, int* err_out);
+                       const qjson_options* opts, qjson_error* err_out);
 void     qjson_free    (qjson_doc* doc);
 
 int qjson_get_str (qjson_doc*, const char* path, size_t path_len, const uint8_t** p, size_t* n);

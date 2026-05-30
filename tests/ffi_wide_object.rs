@@ -1,7 +1,6 @@
 //! Wide-object skip-cache test (spec §9.2): 5K keys, repeatedly access random
 //! keys via the same cursor and confirm correctness.
 
-use std::os::raw::c_int;
 use qjson::ffi::*;
 
 fn build_wide(n: usize) -> (String, Vec<String>) {
@@ -22,7 +21,7 @@ fn build_wide(n: usize) -> (String, Vec<String>) {
 fn wide_object_5k_keys_all_resolvable() {
     let n = 5000;
     let (json, keys) = build_wide(n);
-    let mut err: c_int = -1;
+    let mut err = qjson_error::default();
     let d = unsafe { qjson_parse(json.as_ptr(), json.len(), &mut err) };
     assert!(!d.is_null());
 

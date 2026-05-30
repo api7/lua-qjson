@@ -10,18 +10,27 @@ pub(crate) use number::validate_number;
 pub(crate) mod strings;
 pub(crate) use strings::validate_string_span;
 
-use crate::error::qjson_err;
+use crate::error::{ParseError, qjson_err};
 
 /// Verify that the maximum bracket-stack depth implied by `indices`
 /// does not exceed `max_depth`. Walks indices once; assumes scan() has
 /// already validated bracket pairing.
 ///
 /// `indices` is the post-scan vector with the trailing u32::MAX sentinel.
+#[cfg(test)]
 pub(crate) fn validate_depth(
     buf: &[u8],
     indices: &[u32],
     max_depth: u32,
 ) -> Result<(), qjson_err> {
+    validate_depth_with_offset(buf, indices, max_depth).map_err(|err| err.code)
+}
+
+pub(crate) fn validate_depth_with_offset(
+    buf: &[u8],
+    indices: &[u32],
+    max_depth: u32,
+) -> Result<(), ParseError> {
     let mut depth: u32 = 0;
     for &idx in indices {
         if idx == u32::MAX { break; }
@@ -29,7 +38,7 @@ pub(crate) fn validate_depth(
             b'{' | b'[' => {
                 depth += 1;
                 if depth > max_depth {
-                    return Err(qjson_err::QJSON_NESTING_TOO_DEEP);
+                    return Err(ParseError::new(qjson_err::QJSON_NESTING_TOO_DEEP, idx as usize));
                 }
             }
             b'}' | b']' => {
@@ -48,10 +57,18 @@ pub(crate) fn validate_depth(
 /// bracket where nesting depth returns to zero — that is the actual root
 /// end, regardless of how many additional structural chars the buffer has.
 /// For scalar roots (no opening bracket), we scan the raw bytes.
+#[cfg(test)]
 pub(crate) fn validate_trailing(
     buf: &[u8],
     indices: &[u32],
 ) -> Result<(), qjson_err> {
+    validate_trailing_with_offset(buf, indices).map_err(|err| err.code)
+}
+
+pub(crate) fn validate_trailing_with_offset(
+    buf: &[u8],
+    indices: &[u32],
+) -> Result<(), ParseError> {
     // Find the first real structural character to determine root kind.
     let first = indices.iter().find(|&&i| i != u32::MAX).copied();
 
@@ -120,7 +137,7 @@ pub(crate) fn validate_trailing(
     };
 
     if root_end < buf.len() {
-        return Err(qjson_err::QJSON_TRAILING_CONTENT);
+        return Err(ParseError::new(qjson_err::QJSON_TRAILING_CONTENT, root_end));
     }
     Ok(())
 }
@@ -140,11 +157,20 @@ pub(crate) fn validate_trailing(
 /// `validate_number` or matched against the three literal keywords;
 /// the error-code precedence matches the previous heuristic-based
 /// `check_gap` so existing tests keep their current error codes.
+#[cfg(test)]
 pub(crate) fn validate_eager_values(
     buf: &[u8],
     indices: &[u32],
     max_depth: u32,
 ) -> Result<(), qjson_err> {
+    validate_eager_values_with_offset(buf, indices, max_depth).map_err(|err| err.code)
+}
+
+pub(crate) fn validate_eager_values_with_offset(
+    buf: &[u8],
+    indices: &[u32],
+    max_depth: u32,
+) -> Result<(), ParseError> {
     // Fixed-size stack avoids heap allocation for typical JSON depths.
     const STACK_CAP: usize = 64;
     let mut stack_buf: [CtxKind; STACK_CAP] = [CtxKind::Top; STACK_CAP];
@@ -225,7 +251,7 @@ pub(crate) fn validate_eager_values(
                         // descent; the inner container's close pops back.
                         *cur = parent_after_value(*cur);
                         if stack_len!() > max_depth as usize {
-                            return Err(qjson_err::QJSON_NESTING_TOO_DEEP);
+                            return Err(ParseError::new(qjson_err::QJSON_NESTING_TOO_DEEP, pos));
                         }
                         push!(if b == b'{' {
                             CtxKind::ObjAfterOpen
@@ -233,44 +259,44 @@ pub(crate) fn validate_eager_values(
                             CtxKind::ArrAfterOpen
                         });
                     }
-                    _ => return Err(qjson_err::QJSON_PARSE_ERROR),
+                    _ => return Err(ParseError::new(qjson_err::QJSON_PARSE_ERROR, pos)),
                 }
                 prev_end = pos + 1;
                 i += 1;
             }
             b'}' => {
-                let top = pop!().ok_or(qjson_err::QJSON_PARSE_ERROR)?;
+                let top = pop!().ok_or_else(|| ParseError::new(qjson_err::QJSON_PARSE_ERROR, pos))?;
                 if !matches!(top, CtxKind::ObjAfterOpen | CtxKind::ObjAfterValue) {
-                    return Err(qjson_err::QJSON_PARSE_ERROR);
+                    return Err(ParseError::new(qjson_err::QJSON_PARSE_ERROR, pos));
                 }
-                if stack_is_empty!() { return Err(qjson_err::QJSON_PARSE_ERROR); }
+                if stack_is_empty!() { return Err(ParseError::new(qjson_err::QJSON_PARSE_ERROR, pos)); }
                 prev_end = pos + 1;
                 i += 1;
             }
             b']' => {
-                let top = pop!().ok_or(qjson_err::QJSON_PARSE_ERROR)?;
+                let top = pop!().ok_or_else(|| ParseError::new(qjson_err::QJSON_PARSE_ERROR, pos))?;
                 if !matches!(top, CtxKind::ArrAfterOpen | CtxKind::ArrAfterValue) {
-                    return Err(qjson_err::QJSON_PARSE_ERROR);
+                    return Err(ParseError::new(qjson_err::QJSON_PARSE_ERROR, pos));
                 }
-                if stack_is_empty!() { return Err(qjson_err::QJSON_PARSE_ERROR); }
+                if stack_is_empty!() { return Err(ParseError::new(qjson_err::QJSON_PARSE_ERROR, pos)); }
                 prev_end = pos + 1;
                 i += 1;
             }
             b',' => {
-                let cur = last_mut!().ok_or(qjson_err::QJSON_PARSE_ERROR)?;
+                let cur = last_mut!().ok_or_else(|| ParseError::new(qjson_err::QJSON_PARSE_ERROR, pos))?;
                 match *cur {
                     CtxKind::ArrAfterValue => *cur = CtxKind::ArrAfterComma,
                     CtxKind::ObjAfterValue => *cur = CtxKind::ObjAfterComma,
-                    _ => return Err(qjson_err::QJSON_PARSE_ERROR),
+                    _ => return Err(ParseError::new(qjson_err::QJSON_PARSE_ERROR, pos)),
                 }
                 prev_end = pos + 1;
                 i += 1;
             }
             b':' => {
-                let cur = last_mut!().ok_or(qjson_err::QJSON_PARSE_ERROR)?;
+                let cur = last_mut!().ok_or_else(|| ParseError::new(qjson_err::QJSON_PARSE_ERROR, pos))?;
                 match *cur {
                     CtxKind::ObjAfterKey => *cur = CtxKind::ObjAfterColon,
-                    _ => return Err(qjson_err::QJSON_PARSE_ERROR),
+                    _ => return Err(ParseError::new(qjson_err::QJSON_PARSE_ERROR, pos)),
                 }
                 prev_end = pos + 1;
                 i += 1;
@@ -278,14 +304,15 @@ pub(crate) fn validate_eager_values(
             b'"' => {
                 // The scanner pairs the opening and closing quotes; the
                 // closing quote is at indices[i + 1].
-                if i + 1 >= indices.len() { return Err(qjson_err::QJSON_PARSE_ERROR); }
+                if i + 1 >= indices.len() { return Err(ParseError::new(qjson_err::QJSON_PARSE_ERROR, pos)); }
                 let close = indices[i + 1] as usize;
                 if close <= pos || close >= buf.len() || buf[close] != b'"' {
-                    return Err(qjson_err::QJSON_PARSE_ERROR);
+                    return Err(ParseError::new(qjson_err::QJSON_PARSE_ERROR, pos));
                 }
-                strings::validate_string_span(&buf[pos + 1 .. close])?;
+                strings::validate_string_span(&buf[pos + 1 .. close])
+                    .map_err(|code| ParseError::new(code, pos))?;
 
-                let cur = last_mut!().ok_or(qjson_err::QJSON_PARSE_ERROR)?;
+                let cur = last_mut!().ok_or_else(|| ParseError::new(qjson_err::QJSON_PARSE_ERROR, pos))?;
                 match *cur {
                     // Key position in an object.
                     CtxKind::ObjAfterOpen | CtxKind::ObjAfterComma => {
@@ -298,12 +325,12 @@ pub(crate) fn validate_eager_values(
                     | CtxKind::ObjAfterColon => {
                         *cur = parent_after_value(*cur);
                     }
-                    _ => return Err(qjson_err::QJSON_PARSE_ERROR),
+                    _ => return Err(ParseError::new(qjson_err::QJSON_PARSE_ERROR, pos)),
                 }
                 prev_end = close + 1;
                 i += 2;
             }
-            _ => return Err(qjson_err::QJSON_PARSE_ERROR),
+            _ => return Err(ParseError::new(qjson_err::QJSON_PARSE_ERROR, pos)),
         }
     }
 
@@ -315,7 +342,7 @@ pub(crate) fn validate_eager_values(
     // After the walk, the stack must hold exactly one frame: the root
     // context, which must be `TopDone` (root value consumed).
     if stack_len!() != 1 || stack_buf[0] != CtxKind::TopDone {
-        return Err(qjson_err::QJSON_PARSE_ERROR);
+        return Err(ParseError::new(qjson_err::QJSON_PARSE_ERROR, buf.len()));
     }
     Ok(())
 }
@@ -359,7 +386,7 @@ fn consume_scalar_gap(
     start: usize,
     end: usize,
     state: &mut CtxKind,
-) -> Result<(), qjson_err> {
+) -> Result<(), ParseError> {
     // Strip whitespace.
     let mut s = start;
     while s < end && is_ws(buf[s]) { s += 1; }
@@ -380,10 +407,10 @@ fn consume_scalar_gap(
             | CtxKind::ArrAfterComma
             | CtxKind::ObjAfterColon
     ) {
-        return Err(qjson_err::QJSON_PARSE_ERROR);
+        return Err(ParseError::new(qjson_err::QJSON_PARSE_ERROR, s));
     }
 
-    validate_scalar(&buf[s..e])?;
+    validate_scalar(&buf[s..e]).map_err(|code| ParseError::new(code, s))?;
     *state = parent_after_value(*state);
     Ok(())
 }

@@ -1,6 +1,6 @@
 use std::cell::RefCell;
 
-use crate::error::qjson_err;
+use crate::error::{ParseError, qjson_err};
 use crate::skip_cache::SkipCache;
 
 pub struct Document<'a> {
@@ -20,22 +20,30 @@ impl<'a> Document<'a> {
         buf: &'a [u8],
         opts: &crate::options::Options,
     ) -> Result<Self, qjson_err> {
+        Self::parse_with_options_detailed(buf, opts).map_err(|err| err.code)
+    }
+
+    pub(crate) fn parse_with_options_detailed(
+        buf: &'a [u8],
+        opts: &crate::options::Options,
+    ) -> Result<Self, ParseError> {
         // RFC 8259 §2: "A JSON text is a serialized value."
         // Empty input and whitespace-only input contain no value.
         if buf.iter().all(|&b| matches!(b, b' ' | b'\t' | b'\n' | b'\r')) {
-            return Err(qjson_err::QJSON_PARSE_ERROR);
+            return Err(ParseError::no_offset(qjson_err::QJSON_PARSE_ERROR));
         }
 
         let max_depth = opts.effective_max_depth();
         let mut indices = Vec::new();
-        crate::scan::scan(buf, &mut indices).map_err(|_| qjson_err::QJSON_PARSE_ERROR)?;
+        crate::scan::scan(buf, &mut indices)
+            .map_err(|offset| ParseError::new(qjson_err::QJSON_PARSE_ERROR, offset))?;
         indices.push(u32::MAX);
 
         if opts.is_eager() {
-            crate::validate::validate_trailing(buf, &indices)?;
-            crate::validate::validate_eager_values(buf, &indices, max_depth)?;
+            crate::validate::validate_trailing_with_offset(buf, &indices)?;
+            crate::validate::validate_eager_values_with_offset(buf, &indices, max_depth)?;
         } else {
-            crate::validate::validate_depth(buf, &indices, max_depth)?;
+            crate::validate::validate_depth_with_offset(buf, &indices, max_depth)?;
         }
 
         Ok(Self {

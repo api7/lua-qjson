@@ -26,9 +26,9 @@ fn fuzz_one(data: &[u8]) {
     };
 
     let opts = Options { mode: QJSON_MODE_LAZY, max_depth: FUZZ_MAX_DEPTH };
-    let mut err: c_int = -1;
+    let mut err = qjson_error::default();
     let doc = unsafe { qjson_parse_ex(data.as_ptr(), data.len(), &opts, &mut err) };
-    assert!(!doc.is_null(), "qjson lazy rejected serde-accepted input with err={err}: {data:?}");
+    assert!(!doc.is_null(), "qjson lazy rejected serde-accepted input with err={err:?}: {data:?}");
 
     let actual = unsafe {
         let mut root: qjson_cursor = std::mem::zeroed();

@@ -2,7 +2,7 @@ use std::os::raw::c_int;
 use std::ptr;
 
 use qjson::error::qjson_err;
-use qjson::ffi::{qjson_doc, qjson_free, qjson_get_str, qjson_parse_ex};
+use qjson::ffi::{qjson_doc, qjson_error, qjson_free, qjson_get_str, qjson_parse_ex};
 use qjson::options::{Options, QJSON_MODE_EAGER, QJSON_MODE_LAZY};
 
 const OK: c_int = qjson_err::QJSON_OK as c_int;
@@ -12,12 +12,12 @@ const INVALID_UTF8: c_int = qjson_err::QJSON_INVALID_UTF8 as c_int;
 
 fn parse_with_mode(json: &[u8], mode: u32) -> Result<*mut qjson_doc, c_int> {
     let opts = Options { mode, max_depth: 0 };
-    let mut err: c_int = -1;
+    let mut err = qjson_error::default();
     let doc = unsafe { qjson_parse_ex(json.as_ptr(), json.len(), &opts, &mut err) };
     if doc.is_null() {
-        Err(err)
+        Err(err.code)
     } else {
-        assert_eq!(err, OK);
+        assert_eq!(err.code, OK);
         Ok(doc)
     }
 }

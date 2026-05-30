@@ -1,7 +1,7 @@
 #![no_main]
 
 use std::hint::black_box;
-use std::os::raw::{c_char, c_int};
+use std::os::raw::c_char;
 use std::ptr;
 
 use arbitrary::{Arbitrary, Unstructured};
@@ -10,7 +10,7 @@ use qjson::ffi::{
     qjson_cursor, qjson_cursor_field, qjson_cursor_get_bool, qjson_cursor_get_f64,
     qjson_cursor_get_i64, qjson_cursor_get_str, qjson_cursor_index,
     qjson_cursor_object_entry_at, qjson_doc, qjson_free, qjson_get_bool, qjson_get_f64,
-    qjson_get_i64, qjson_get_str, qjson_open, qjson_parse,
+    qjson_error, qjson_get_i64, qjson_get_str, qjson_open, qjson_parse,
 };
 
 const MAX_OPS: usize = 256;
@@ -59,7 +59,7 @@ impl State {
     unsafe fn parse(&mut self, json: &[u8]) {
         self.free();
 
-        let mut err: c_int = -1;
+        let mut err = qjson_error::default();
         self.doc = qjson_parse(json.as_ptr(), json.len(), &mut err);
         black_box(err);
 

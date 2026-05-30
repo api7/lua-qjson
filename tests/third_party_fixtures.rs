@@ -13,9 +13,9 @@ fn repo_root() -> PathBuf {
 }
 
 fn parse(s: &[u8]) -> *mut qjson_doc {
-    let mut err: c_int = -1;
+    let mut err = qjson_error::default();
     let d = unsafe { qjson_parse(s.as_ptr(), s.len(), &mut err) };
-    assert_eq!(err, qjson_err::QJSON_OK as c_int);
+    assert_eq!(err.code, qjson_err::QJSON_OK as c_int);
     assert!(!d.is_null());
     d
 }

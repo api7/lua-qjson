@@ -1,12 +1,12 @@
-use std::os::raw::c_int;
 use std::ptr;
 
 use qjson::ffi::{
-    qjson_cursor, qjson_cursor_object_entry_at, qjson_doc, qjson_free, qjson_open, qjson_parse,
+    qjson_cursor, qjson_cursor_object_entry_at, qjson_doc, qjson_error, qjson_free, qjson_open,
+    qjson_parse,
 };
 
 unsafe fn open_root(json: &[u8]) -> (*mut qjson_doc, qjson_cursor) {
-    let mut err: c_int = -1;
+    let mut err = qjson_error::default();
     let doc = qjson_parse(json.as_ptr(), json.len(), &mut err);
     assert!(!doc.is_null());
     let mut cur: qjson_cursor = std::mem::zeroed();
