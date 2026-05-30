@@ -177,14 +177,17 @@ end
 
 LazyArray.__index = read_array_index
 
--- Iterator function for lazy_object_iter: advances through object entries by
--- integer index, returning key/value pairs in source order.
+local function new_object_iter(view)
+    local it = ffi.new("qjson_iter[1]")
+    local rc = C.qjson_iter_init(view._cur, it)
+    check(rc)
+    return it
+end
+
+-- Iterator function for lazy_object_iter: advances through object entries in
+-- source order without restarting from the container opener.
 local function lazy_object_iter(state, _prev_key)
-    local i = state.i
-    state.i = i + 1
-    local rc = C.qjson_cursor_object_entry_at(
-        state.view._cur, i, strp_box, size_box, child_box
-    )
+    local rc = C.qjson_iter_next(state.it, strp_box, size_box, child_box)
     if rc == QJSON_NOT_FOUND then return nil end
     check(rc)
     local k = ffi.string(strp_box[0], size_box[0])
@@ -222,7 +225,7 @@ function LazyObject.__pairs(t)
             if k then return k, values[k] end
         end
     end
-    return lazy_object_iter, { view = t, i = 0, seen = {} }, nil
+    return lazy_object_iter, { view = t, it = new_object_iter(t), seen = {} }, nil
 end
 
 local function lazy_array_iter(state, _prev_i)
@@ -286,16 +289,15 @@ end
 -- Returns a sequence of {k, v} pairs. The view is not mutated here; mutation
 -- happens in __newindex after the walk completes successfully.
 local function materialize_object_contents(view)
-    local i = 0
     local pairs_out = {}
+    local it = new_object_iter(view)
     while true do
-        local rc = C.qjson_cursor_object_entry_at(view._cur, i, strp_box, size_box, child_box)
+        local rc = C.qjson_iter_next(it, strp_box, size_box, child_box)
         if rc == QJSON_NOT_FOUND then break end
         check(rc)
         local k = ffi.string(strp_box[0], size_box[0])
         local v = decode_cursor(view, child_box)
         pairs_out[#pairs_out+1] = {k, v}
-        i = i + 1
     end
     return pairs_out
 end
@@ -328,9 +330,9 @@ local function ensure_object_order_state(view)
     keys = {}
     local values = {}
     local seen = {}
-    local i = 0
+    local it = new_object_iter(view)
     while true do
-        local rc = C.qjson_cursor_object_entry_at(view._cur, i, strp_box, size_box, child_box)
+        local rc = C.qjson_iter_next(it, strp_box, size_box, child_box)
         if rc == QJSON_NOT_FOUND then break end
         check(rc)
         local key = ffi.string(strp_box[0], size_box[0])
@@ -354,7 +356,6 @@ local function ensure_object_order_state(view)
             val = decode_cursor(view, child_box)
         end
         values[key] = val
-        i = i + 1
     end
 
     rawset(view, ORDER_KEYS, keys)

@@ -51,6 +51,12 @@ typedef struct {
     uint32_t       _reserved1;
 } qjson_cursor;
 
+typedef struct {
+    const qjson_doc* doc;
+    uint32_t       idx_current;
+    uint32_t       idx_end;
+} qjson_iter;
+
 const char* qjson_strerror(int code);
 
 qjson_doc* qjson_parse(const uint8_t* buf, size_t len, int* err_out);
@@ -83,6 +89,10 @@ int qjson_cursor_bytes    (const qjson_cursor*, size_t* byte_start, size_t* byte
 int qjson_cursor_object_entry_at(const qjson_cursor*, size_t i,
                                 const uint8_t** key_ptr, size_t* key_len,
                                 qjson_cursor* value_out);
+int qjson_iter_init(const qjson_cursor*, qjson_iter* it);
+int qjson_iter_next(qjson_iter* it,
+                    const uint8_t** key_ptr, size_t* key_len,
+                    qjson_cursor* value_out);
 
 #ifdef __cplusplus
 }

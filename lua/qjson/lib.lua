@@ -8,6 +8,11 @@ typedef struct {
 } qjson_cursor;
 
 typedef struct {
+    const qjson_doc* doc;
+    uint32_t idx_current, idx_end;
+} qjson_iter;
+
+typedef struct {
     uint32_t mode;
     uint32_t max_depth;
 } qjson_options;
@@ -41,6 +46,10 @@ int qjson_cursor_bytes(const qjson_cursor*, size_t* byte_start, size_t* byte_end
 int qjson_cursor_object_entry_at(const qjson_cursor*, size_t i,
                                 const uint8_t** key_ptr, size_t* key_len,
                                 qjson_cursor* value_out);
+int qjson_iter_init(const qjson_cursor*, qjson_iter* it);
+int qjson_iter_next(qjson_iter* it,
+                    const uint8_t** key_ptr, size_t* key_len,
+                    qjson_cursor* value_out);
 ]]
 
 local tried = {}
@@ -70,6 +79,8 @@ local required_symbols = {
     "qjson_cursor_len",
     "qjson_cursor_bytes",
     "qjson_cursor_object_entry_at",
+    "qjson_iter_init",
+    "qjson_iter_next",
 }
 
 local function try_load(name)
