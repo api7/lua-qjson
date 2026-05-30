@@ -3,7 +3,8 @@
 //!
 //! Combines three checks into one byte walk:
 //!   1. RFC 8259 §7: no raw control characters (b < 0x20).
-//!   2. RFC 8259 §7: every `\` escape is one of `" \ / b f n r t` or `\uXXXX`.
+//!   2. RFC 8259 §7: every `\` escape is one of `" \ / b f n r t` or `\uXXXX`,
+//!      with UTF-16 surrogate escapes paired correctly.
 //!   3. RFC 3629: valid UTF-8 (rejects overlong encodings and surrogates,
 //!      matching `std::str::from_utf8` for full corpus parity).
 //!
@@ -58,21 +59,49 @@ fn validate_escape(span: &[u8], i: usize) -> Result<usize, qjson_err> {
     match span[i] {
         b'"' | b'\\' | b'/' | b'b' | b'f' | b'n' | b'r' | b't' => Ok(i + 1),
         b'u' => {
-            // Must be followed by exactly 4 hex digits.
             let hex_start = i + 1;
             let hex_end = hex_start + 4;
             if hex_end > span.len() {
                 return Err(qjson_err::QJSON_INVALID_STRING);
             }
-            for &h in &span[hex_start..hex_end] {
-                if !h.is_ascii_hexdigit() {
+            let unit = parse_hex4(&span[hex_start..hex_end])?;
+
+            if (0xD800..=0xDBFF).contains(&unit) {
+                let low_escape = hex_end;
+                let low_hex_start = low_escape + 2;
+                let low_hex_end = low_hex_start + 4;
+                if low_hex_end > span.len() || &span[low_escape..low_escape + 2] != b"\\u" {
                     return Err(qjson_err::QJSON_INVALID_STRING);
                 }
+                let low = parse_hex4(&span[low_hex_start..low_hex_end])?;
+                if !(0xDC00..=0xDFFF).contains(&low) {
+                    return Err(qjson_err::QJSON_INVALID_STRING);
+                }
+                return Ok(low_hex_end);
             }
+
+            if (0xDC00..=0xDFFF).contains(&unit) {
+                return Err(qjson_err::QJSON_INVALID_STRING);
+            }
+
             Ok(hex_end)
         }
         _ => Err(qjson_err::QJSON_INVALID_STRING),
     }
+}
+
+fn parse_hex4(bytes: &[u8]) -> Result<u16, qjson_err> {
+    let mut v = 0u16;
+    for &h in bytes {
+        v <<= 4;
+        v |= match h {
+            b'0'..=b'9' => (h - b'0') as u16,
+            b'a'..=b'f' => (h - b'a' + 10) as u16,
+            b'A'..=b'F' => (h - b'A' + 10) as u16,
+            _ => return Err(qjson_err::QJSON_INVALID_STRING),
+        };
+    }
+    Ok(v)
 }
 
 /// At entry `i` points to a byte with the high bit set. Validate the

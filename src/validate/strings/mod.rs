@@ -25,7 +25,8 @@ static VALIDATE_FN: OnceCell<ValidateFn> = OnceCell::new();
 
 /// Verify that the raw span (excluding surrounding quotes) contains no
 /// unescaped control characters (0x00..=0x1F), every backslash escape is
-/// RFC 8259 §7 compliant, and the byte sequence is valid UTF-8 per RFC 3629.
+/// RFC 8259 §7 compliant with well-formed UTF-16 surrogate pairs, and the
+/// byte sequence is valid UTF-8 per RFC 3629.
 pub(crate) fn validate_string_span(span: &[u8]) -> Result<(), qjson_err> {
     let f = *VALIDATE_FN.get_or_init(|| {
         #[cfg(all(target_arch = "x86_64", feature = "avx2"))]
@@ -58,6 +59,7 @@ mod tests {
     #[test] fn ascii_ok()         { assert!(validate_string_span(b"hello").is_ok()); }
     #[test] fn utf8_ok()          { assert!(validate_string_span("中文".as_bytes()).is_ok()); }
     #[test] fn escapes_ok()       { assert!(validate_string_span(b"a\\nb\\u00e9").is_ok()); }
+    #[test] fn surrogate_pair_escape_ok() { assert!(validate_string_span(b"\\uD83D\\uDE00").is_ok()); }
     #[test] fn tab_raw_bad()      { assert_eq!(validate_string_span(b"a\tb").unwrap_err(), qjson_err::QJSON_INVALID_STRING); }
     #[test] fn null_raw_bad()     { assert_eq!(validate_string_span(b"a\x00b").unwrap_err(), qjson_err::QJSON_INVALID_STRING); }
     #[test] fn newline_raw_bad()  { assert_eq!(validate_string_span(b"a\nb").unwrap_err(), qjson_err::QJSON_INVALID_STRING); }
@@ -141,6 +143,16 @@ mod tests {
     fn u_escape_non_hex_bad() {
         assert_eq!(validate_string_span(b"\\u00ZZ").unwrap_err(), qjson_err::QJSON_INVALID_STRING);
         assert_eq!(validate_string_span(b"\\uGHIJ").unwrap_err(), qjson_err::QJSON_INVALID_STRING);
+    }
+
+    #[test]
+    fn surrogate_escape_must_be_paired() {
+        assert_eq!(validate_string_span(b"\\uD800").unwrap_err(), qjson_err::QJSON_INVALID_STRING);
+        assert_eq!(validate_string_span(b"\\uDBFF").unwrap_err(), qjson_err::QJSON_INVALID_STRING);
+        assert_eq!(validate_string_span(b"\\uDC00").unwrap_err(), qjson_err::QJSON_INVALID_STRING);
+        assert_eq!(validate_string_span(b"\\uDFFF").unwrap_err(), qjson_err::QJSON_INVALID_STRING);
+        assert_eq!(validate_string_span(b"\\uD800\\u0041").unwrap_err(), qjson_err::QJSON_INVALID_STRING);
+        assert_eq!(validate_string_span(b"\\uD800x").unwrap_err(), qjson_err::QJSON_INVALID_STRING);
     }
 
     #[test]
