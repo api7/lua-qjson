@@ -23,13 +23,70 @@ A `Makefile` wraps the common workflows; run `make help` to see `build`, `test`,
 luarocks install lua-qjson
 ```
 
-The rock builds the Rust native library during installation, so Rust/Cargo
-and LuaJIT must be available on the target system. The Lua module name remains
-`qjson`:
+The rock builds the Rust native library during installation, so Rust/Cargo and
+LuaJIT must be available in the environment that runs `luarocks install`. The
+Lua module name remains `qjson`:
 
 ```lua
 local qjson = require("qjson")
 ```
+
+## Production deployment (no Rust at runtime)
+
+Rust/Cargo is only a build-time dependency. For production images, install the
+rock into a staging tree in a builder stage, then copy that tree into a runtime
+stage that contains LuaJIT but no Rust toolchain.
+
+The runtime file set is small:
+
+| Installed path | Purpose |
+|---|---|
+| `/usr/local/lib/lua/5.1/qjson.so` | Compiled native library |
+| `/usr/local/share/lua/5.1/qjson.lua` | Public Lua module |
+| `/usr/local/share/lua/5.1/qjson/lib.lua` | FFI loader |
+| `/usr/local/share/lua/5.1/qjson/table.lua` | Lazy table API and encoder |
+
+The runtime also needs LuaJIT, plus the normal OS shared libraries required by
+LuaJIT and the native module.
+
+Example multi-stage Dockerfile:
+
+```Dockerfile
+FROM rust:1-bookworm AS qjson-builder
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        ca-certificates \
+        git \
+        libluajit-5.1-dev \
+        luarocks \
+        luajit \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN luarocks --lua-version=5.1 install --tree=/qjson-rock lua-qjson
+
+FROM debian:bookworm-slim AS runtime
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates luajit \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=qjson-builder /qjson-rock/ /usr/local/
+
+RUN ! command -v cargo \
+    && ! command -v rustc \
+    && luajit -e 'local qjson = require("qjson"); local doc = qjson.parse("{\"ok\":true}"); assert(doc:get_bool("ok") == true)'
+```
+
+For local release testing from a checkout, use the same staging pattern with
+the rockspec:
+
+```sh
+luarocks --lua-version=5.1 make --tree=/tmp/qjson-rock rockspec/lua-qjson-0.1.0-1.rockspec
+```
+
+Then copy `/tmp/qjson-rock` into the runtime filesystem root that LuaJIT uses
+for `/usr/local`.
 
 ## Testing
 
