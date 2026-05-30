@@ -124,6 +124,14 @@ describe("__len (LJ52 only)", function()
 end)
 
 describe("__pairs / qjson.pairs over LazyObject", function()
+    local function make_object(n)
+        local parts = {}
+        for i = 1, n do
+            parts[#parts + 1] = string.format('"k%d":%d', i, i)
+        end
+        return "{" .. table.concat(parts, ",") .. "}"
+    end
+
     it("iterates string keys in source order", function()
         local t = qjson.decode('{"a":1,"b":2,"c":3}')
         local keys = {}
@@ -134,6 +142,31 @@ describe("__pairs / qjson.pairs over LazyObject", function()
         end
         assert.are.same({"a","b","c"}, keys)
         assert.are.same({1, 2, 3}, values)
+    end)
+
+    for _, n in ipairs({1, 10, 100}) do
+        it("iterates " .. n .. " keys in source order", function()
+            local t = qjson.decode(make_object(n))
+            local seen = 0
+            for k, v in qjson.pairs(t) do
+                seen = seen + 1
+                assert.are.equal("k" .. seen, k)
+                assert.are.equal(seen, v)
+            end
+            assert.are.equal(n, seen)
+        end)
+    end
+
+    it("allows early break without disturbing later access", function()
+        local t = qjson.decode(make_object(100))
+        local first_key, first_value
+        for k, v in qjson.pairs(t) do
+            first_key, first_value = k, v
+            break
+        end
+        assert.are.equal("k1", first_key)
+        assert.are.equal(1, first_value)
+        assert.are.equal(100, t.k100)
     end)
 
     it("returns nested containers as lazy proxies, not materialized", function()

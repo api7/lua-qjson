@@ -17,8 +17,10 @@
 //! - A `*const qjson_cursor` must point to a cursor produced by one of
 //!   [`qjson_open`], [`qjson_cursor_open`], [`qjson_cursor_field`], or
 //!   [`qjson_cursor_index`], and whose `doc` field is still alive.
-//! - A pointer/length pair returned by any `*_get_str` is invalidated by
-//!   the next `*_get_str` call on the same document (scratch buffer reuse).
+//! - A pointer/length pair returned by any `*_get_str`,
+//!   `qjson_cursor_object_entry_at`, or `qjson_iter_next` call is invalidated
+//!   by the next string-returning call on the same document (scratch buffer
+//!   reuse).
 //!
 //! Every export catches Rust panics at the FFI boundary and converts them
 //! to `QJSON_OOM`; a panic must not be allowed to unwind across the boundary.
@@ -415,6 +417,15 @@ pub struct qjson_cursor {
     pub _reserved1: u32,
 }
 
+/// Stateful object iterator. Pure positional state; no heap resources.
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub struct qjson_iter {
+    pub doc:         *const qjson_doc,
+    pub idx_current: u32,
+    pub idx_end:     u32,
+}
+
 /// Turn a `*const qjson_cursor` into `(&'static Document<'static>, Cursor)` for Rust use.
 unsafe fn cursor_to_internal(c: *const qjson_cursor) -> Result<(&'static Document<'static>, Cursor), qjson_err> {
     if c.is_null() { return Err(qjson_err::QJSON_INVALID_ARG); }
@@ -435,6 +446,14 @@ fn internal_to_cursor(doc: *const qjson_doc, cur: Cursor) -> qjson_cursor {
         _reserved0: 0,
         _reserved1: 0,
     }
+}
+
+unsafe fn iter_doc(it: *const qjson_iter) -> Result<&'static Document<'static>, qjson_err> {
+    if it.is_null() { return Err(qjson_err::QJSON_INVALID_ARG); }
+    let ii = &*it;
+    if ii.doc.is_null() { return Err(qjson_err::QJSON_INVALID_ARG); }
+    let d: &Document = &(*(ii.doc as *mut qjson_doc)).0;
+    Ok(std::mem::transmute::<&Document<'_>, &'static Document<'static>>(d))
 }
 
 /// Resolve `path` against the root of `doc` and write the resulting cursor
@@ -816,6 +835,118 @@ pub unsafe extern "C" fn qjson_cursor_object_entry_at(
                 *key_ptr = p;
                 *key_len = n;
                 *value_out = internal_to_cursor((*c).doc, value_cur);
+                qjson_err::QJSON_OK as c_int
+            }
+            Err(e) => e as c_int,
+        }
+    })
+}
+
+/// Initialize a stateful iterator over the object pointed to by `*c`.
+///
+/// Returns `QJSON_TYPE_MISMATCH` when the cursor is not an object. For an
+/// empty object, initialization succeeds and the first `qjson_iter_next`
+/// returns `QJSON_NOT_FOUND`.
+///
+/// # Safety
+///
+/// See the module-level [shared safety contract](self#shared-safety-contract).
+/// `c` must point to a live cursor and `it` must be non-NULL and writable.
+#[no_mangle]
+pub unsafe extern "C" fn qjson_iter_init(
+    c: *const qjson_cursor, it: *mut qjson_iter,
+) -> c_int {
+    ffi_catch!({
+        if it.is_null() {
+            return qjson_err::QJSON_INVALID_ARG as c_int;
+        }
+        let (d, cur) = match cursor_to_internal(c) {
+            Ok(x) => x, Err(e) => return e as c_int,
+        };
+        let pos = d.indices[cur.idx_start as usize] as usize;
+        if d.buf.get(pos).copied() != Some(b'{') {
+            return qjson_err::QJSON_TYPE_MISMATCH as c_int;
+        }
+
+        let closer_pos = d.indices[cur.idx_end as usize] as usize;
+        let mut p = pos + 1;
+        while p < closer_pos && matches!(d.buf[p], b' ' | b'\t' | b'\n' | b'\r') {
+            p += 1;
+        }
+        let idx_current = if p == closer_pos { cur.idx_end } else { cur.idx_start + 1 };
+        *it = qjson_iter {
+            doc: (*c).doc,
+            idx_current,
+            idx_end: cur.idx_end,
+        };
+        qjson_err::QJSON_OK as c_int
+    })
+}
+
+/// Advance a stateful object iterator by one key/value pair.
+///
+/// On success, writes the decoded key and a cursor for the value. Returns
+/// `QJSON_NOT_FOUND` once exhausted. The returned key pointer follows the same
+/// scratch lifetime contract as `qjson_cursor_object_entry_at` and is
+/// invalidated by the next string-returning call on the same document.
+///
+/// # Safety
+///
+/// See the module-level [shared safety contract](self#shared-safety-contract).
+/// `it`, `key_ptr`, `key_len`, and `value_out` must be non-NULL and writable.
+#[no_mangle]
+pub unsafe extern "C" fn qjson_iter_next(
+    it: *mut qjson_iter,
+    key_ptr: *mut *const u8, key_len: *mut usize,
+    value_out: *mut qjson_cursor,
+) -> c_int {
+    ffi_catch!({
+        if it.is_null() || key_ptr.is_null() || key_len.is_null() || value_out.is_null() {
+            return qjson_err::QJSON_INVALID_ARG as c_int;
+        }
+        let d = match iter_doc(it) {
+            Ok(x) => x, Err(e) => return e as c_int,
+        };
+        let ii = &mut *it;
+        if ii.idx_current >= ii.idx_end {
+            return qjson_err::QJSON_NOT_FOUND as c_int;
+        }
+
+        let key_idx_start = ii.idx_current;
+        let open_pos = d.indices[key_idx_start as usize] as usize;
+        let close_pos = d.indices[(key_idx_start + 1) as usize] as usize;
+        let colon_pos = d.indices[(key_idx_start + 2) as usize] as usize;
+        if d.buf.get(open_pos).copied() != Some(b'"')
+            || d.buf.get(close_pos).copied() != Some(b'"')
+            || d.buf.get(colon_pos).copied() != Some(b':')
+        {
+            return qjson_err::QJSON_PARSE_ERROR as c_int;
+        }
+
+        let value_idx_start = key_idx_start + 3;
+        let (cursor_end, skip_end) = match crate::cursor::find_value_span(d, value_idx_start) {
+            Ok(x) => x, Err(e) => return e as c_int,
+        };
+        let after_pos = d.indices[skip_end as usize] as usize;
+        let after = match d.buf.get(after_pos).copied() {
+            Some(b) => b,
+            None => return qjson_err::QJSON_PARSE_ERROR as c_int,
+        };
+
+        let mut scratch = d.scratch.borrow_mut();
+        match string::decode_string(d.buf, open_pos + 1, close_pos, &mut scratch, d.eager_validated) {
+            Ok((p, n)) => {
+                *key_ptr = p;
+                *key_len = n;
+                *value_out = internal_to_cursor(ii.doc, Cursor {
+                    idx_start: value_idx_start,
+                    idx_end:   cursor_end,
+                });
+                match after {
+                    b',' => ii.idx_current = skip_end + 1,
+                    b'}' => ii.idx_current = ii.idx_end,
+                    _ => return qjson_err::QJSON_PARSE_ERROR as c_int,
+                }
                 qjson_err::QJSON_OK as c_int
             }
             Err(e) => e as c_int,
