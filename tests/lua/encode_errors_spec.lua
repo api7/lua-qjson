@@ -1,4 +1,5 @@
 local qjson = require("qjson")
+local ffi = require("ffi")
 
 local function assert_encode_error(value, message)
     assert.has_error(function()
@@ -17,6 +18,19 @@ describe("qjson.encode error coverage", function()
         assert_encode_error(function() end, "qjson.encode: unsupported value type: function")
         assert_encode_error(coroutine.create(function() end), "qjson.encode: unsupported value type: thread")
         assert_encode_error(newproxy(false), "qjson.encode: unsupported value type: userdata")
+        assert_encode_error(ffi.new("double", 1.25), "qjson.encode: unsupported value type: cdata")
+    end)
+
+    it("encodes int64 and uint64 cdata as decimal JSON integers", function()
+        assert.are.equal('{"i":9007199254740993}', qjson.encode({ i = 9007199254740993LL }))
+        assert.are.equal('{"u":18446744073709551615}', qjson.encode({ u = 18446744073709551615ULL }))
+    end)
+
+    it("round-trips decoded 64-bit integer cdata through encode", function()
+        local doc = qjson.parse('{"i":9007199254740993,"u":18446744073709551615}')
+
+        assert.are.equal('{"i":9007199254740993}', qjson.encode({ i = doc:get_i64("i") }))
+        assert.are.equal('{"u":18446744073709551615}', qjson.encode({ u = doc:get_u64("u") }))
     end)
 
     it("rejects non-string object keys", function()

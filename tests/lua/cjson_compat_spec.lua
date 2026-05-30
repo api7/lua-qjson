@@ -67,7 +67,7 @@ describe("qjson lua-cjson compatibility smoke", function()
 
     it("agrees on integer field", function()
         local s = '{"a":42}'
-        assert.are.equal(cjson.decode(s).a, qjson.parse(s):get_i64("a"))
+        assert.are.equal(cjson.decode(s).a, tonumber(qjson.parse(s):get_i64("a")))
     end)
 
     it("agrees on float field", function()

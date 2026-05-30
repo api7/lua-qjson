@@ -67,6 +67,7 @@ void     qjson_free (qjson_doc* doc);
 int qjson_get_str  (qjson_doc*, const char* path, size_t path_len,
                   const uint8_t** out_ptr, size_t* out_len);
 int qjson_get_i64  (qjson_doc*, const char* path, size_t path_len, int64_t* out);
+int qjson_get_u64  (qjson_doc*, const char* path, size_t path_len, uint64_t* out);
 int qjson_get_f64  (qjson_doc*, const char* path, size_t path_len, double*  out);
 int qjson_get_bool (qjson_doc*, const char* path, size_t path_len, int*     out);
 int qjson_is_null  (qjson_doc*, const char* path, size_t path_len, int*     out);
@@ -81,6 +82,7 @@ int qjson_cursor_index    (const qjson_cursor*, size_t i, qjson_cursor* out);
 int qjson_cursor_get_str  (const qjson_cursor*, const char* path, size_t path_len,
                          const uint8_t** out_ptr, size_t* out_len);
 int qjson_cursor_get_i64  (const qjson_cursor*, const char* path, size_t path_len, int64_t* out);
+int qjson_cursor_get_u64  (const qjson_cursor*, const char* path, size_t path_len, uint64_t* out);
 int qjson_cursor_get_f64  (const qjson_cursor*, const char* path, size_t path_len, double*  out);
 int qjson_cursor_get_bool (const qjson_cursor*, const char* path, size_t path_len, int*     out);
 int qjson_cursor_typeof   (const qjson_cursor*, const char* path, size_t path_len, int*     out);

@@ -113,9 +113,15 @@ local model = doc:get_str("body.model")
 
 -- Cursor (avoid re-walking shared prefix):
 local body = doc:open("body")
-local model = body:get_str("model")
-local temp  = body:get_f64("temperature")
+local model      = body:get_str("model")
+local temp       = body:get_f64("temperature") -- Lua number (double)
+local request_id = body:get_i64("request_id")  -- int64_t cdata, lossless
 ```
+
+`get_i64` returns LuaJIT `int64_t` cdata and `get_u64` returns `uint64_t`
+cdata, preserving JSON integers that do not fit exactly in a Lua `number`.
+Use `get_f64` for the convenient Lua-number path, or `tonumber(...)` when a
+64-bit cdata value is known to fit in double precision.
 
 ### Lazy table API (`qjson.decode` / `qjson.encode`)
 
@@ -140,11 +146,11 @@ local s = qjson.encode(t)                  -- drop-in replacement for cjson.enco
 ```
 
 `qjson.encode` works on lazy proxies (re-emitting unmodified subtrees as the
-original JSON bytes), real Lua tables (matching `cjson.encode` output), and
-mixed trees. Callers cannot pass a lazy proxy directly to `cjson.encode`
-(cjson bypasses metamethods in C); use `qjson.encode` instead, or call
-`qjson.materialize(t)` to get a plain Lua table that any third-party encoder
-can handle.
+original JSON bytes), real Lua tables (matching `cjson.encode` output), mixed
+trees, and LuaJIT `int64_t` / `uint64_t` cdata values. Callers cannot pass a
+lazy proxy directly to `cjson.encode` (cjson bypasses metamethods in C); use
+`qjson.encode` instead, or call `qjson.materialize(t)` to get a plain Lua table
+that any third-party encoder can handle.
 
 **LuaJIT compat-52 caveat.** `for k, v in pairs/ipairs(t)` and `#t` on a lazy
 proxy rely on `__pairs` / `__ipairs` / `__len`, which LuaJIT only invokes when

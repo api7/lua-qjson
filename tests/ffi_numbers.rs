@@ -94,6 +94,75 @@ fn get_i64_just_over_max_overflows() {
 }
 
 #[test]
+fn get_i64_returns_type_mismatch_for_non_numbers() {
+    let d = parse(b"{\"b\":true,\"s\":\"1\",\"n\":null}");
+    let mut v: i64 = 0;
+    for p in [b"b".as_slice(), b"s".as_slice(), b"n".as_slice()] {
+        let rc = unsafe { qjson_get_i64(d, p.as_ptr() as *const i8, p.len(), &mut v) };
+        assert_eq!(rc, 3); // TYPE_MISMATCH
+    }
+    unsafe { qjson_free(d) };
+}
+
+#[test]
+fn get_u64_max() {
+    let json = format!("{{\"a\":{}}}", u64::MAX);
+    let d = parse(json.as_bytes());
+    let mut v: u64 = 0;
+    let p = b"a";
+    let rc = unsafe { qjson_get_u64(d, p.as_ptr() as *const i8, p.len(), &mut v) };
+    assert_eq!(rc, 0);
+    assert_eq!(v, u64::MAX);
+    unsafe { qjson_free(d) };
+}
+
+#[test]
+fn get_u64_rejects_negative_and_overflow() {
+    let d = parse(b"{\"neg\":-1,\"too_big\":18446744073709551616}");
+    let mut v: u64 = 0;
+    let p = b"neg";
+    let rc = unsafe { qjson_get_u64(d, p.as_ptr() as *const i8, p.len(), &mut v) };
+    assert_eq!(rc, 4); // OUT_OF_RANGE
+    let p = b"too_big";
+    let rc = unsafe { qjson_get_u64(d, p.as_ptr() as *const i8, p.len(), &mut v) };
+    assert_eq!(rc, 4); // OUT_OF_RANGE
+    unsafe { qjson_free(d) };
+}
+
+#[test]
+fn get_u64_rejects_float_and_non_numbers() {
+    let d = parse(b"{\"f\":1.5,\"b\":true,\"s\":\"1\",\"n\":null}");
+    let mut v: u64 = 0;
+    for p in [b"f".as_slice(), b"b".as_slice(), b"s".as_slice(), b"n".as_slice()] {
+        let rc = unsafe { qjson_get_u64(d, p.as_ptr() as *const i8, p.len(), &mut v) };
+        assert_eq!(rc, 3); // TYPE_MISMATCH
+    }
+    unsafe { qjson_free(d) };
+}
+
+#[test]
+fn cursor_get_u64_max() {
+    let json = format!("{{\"root\":{{\"a\":{}}}}}", u64::MAX);
+    let d = parse(json.as_bytes());
+    let mut cur = qjson_cursor {
+        doc: std::ptr::null(),
+        idx_start: 0,
+        idx_end: 0,
+        _reserved0: 0,
+        _reserved1: 0,
+    };
+    let p = b"root";
+    let rc = unsafe { qjson_open(d, p.as_ptr() as *const i8, p.len(), &mut cur) };
+    assert_eq!(rc, 0);
+    let mut v: u64 = 0;
+    let p = b"a";
+    let rc = unsafe { qjson_cursor_get_u64(&cur, p.as_ptr() as *const i8, p.len(), &mut v) };
+    assert_eq!(rc, 0);
+    assert_eq!(v, u64::MAX);
+    unsafe { qjson_free(d) };
+}
+
+#[test]
 fn get_f64_large_magnitude() {
     let d = parse(b"{\"a\":1.7e308}");
     let mut v: f64 = 0.0;

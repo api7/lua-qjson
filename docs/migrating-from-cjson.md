@@ -48,6 +48,12 @@ local usage = doc:open("usage")
 local input_tokens = usage and usage:get_i64("input_tokens")
 ```
 
+Typed integer getters are lossless. `get_i64` returns LuaJIT `int64_t` cdata,
+and `get_u64` returns `uint64_t` cdata for unsigned IDs such as Snowflakes or
+database `unsigned bigint` values. This avoids LuaJIT's double precision limit
+for JSON integers above 2^53. Use `get_f64(path)` for the Lua-number behavior,
+or wrap `tonumber(doc:get_i64(path))` only when the value is known to fit.
+
 For code that passes decoded data to a third-party encoder, validator, or helper
 that expects an ordinary Lua table, materialize first:
 
@@ -60,6 +66,9 @@ third_party_library.accept_table(qjson.materialize(proxy))
 
 Do not pass a qjson lazy proxy directly to `cjson.encode`. lua-cjson is written
 in C and does not honor the metamethods qjson uses for lazy reads.
+
+`qjson.encode` also accepts LuaJIT `int64_t` and `uint64_t` cdata values and
+emits them as decimal JSON integers without `LL` or `ULL` suffixes.
 
 ## Behavior differences
 
