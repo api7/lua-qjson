@@ -18,7 +18,10 @@ impl Cursor {
         // Find the closing index of the outermost container.
         // indices has a u32::MAX sentinel at the end.
         let n = doc.indices.len() as u32;
-        debug_assert!(n >= 2);
+        debug_assert!(n >= 1);
+        if n == 1 {
+            return Cursor { idx_start: 0, idx_end: 1 };
+        }
         Cursor { idx_start: 0, idx_end: n - 2 }
     }
 

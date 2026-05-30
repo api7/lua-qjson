@@ -1,7 +1,10 @@
 use std::ffi::CStr;
 use std::os::raw::c_int;
 
-use qjson::ffi::{qjson_doc, qjson_free, qjson_parse, qjson_strerror};
+use qjson::ffi::{
+    qjson_cursor, qjson_cursor_get_i64, qjson_doc, qjson_free, qjson_get_i64, qjson_open,
+    qjson_parse, qjson_strerror,
+};
 
 #[test]
 fn parse_and_free_roundtrip() {
@@ -10,6 +13,37 @@ fn parse_and_free_roundtrip() {
     let doc: *mut qjson_doc = unsafe { qjson_parse(json.as_ptr(), json.len(), &mut err) };
     assert!(!doc.is_null());
     assert_eq!(err, 0);
+    unsafe { qjson_free(doc); }
+}
+
+#[test]
+fn root_scalar_is_accessible_through_ffi() {
+    let json = b"4";
+    let mut err: c_int = -1;
+    let doc: *mut qjson_doc = unsafe { qjson_parse(json.as_ptr(), json.len(), &mut err) };
+    assert!(!doc.is_null());
+    assert_eq!(err, 0);
+
+    let mut direct = 0i64;
+    let rc = unsafe { qjson_get_i64(doc, std::ptr::null(), 0, &mut direct) };
+    assert_eq!(rc, 0);
+    assert_eq!(direct, 4);
+
+    let mut cur = qjson_cursor {
+        doc: std::ptr::null(),
+        idx_start: 0,
+        idx_end: 0,
+        _reserved0: 0,
+        _reserved1: 0,
+    };
+    let rc = unsafe { qjson_open(doc, std::ptr::null(), 0, &mut cur) };
+    assert_eq!(rc, 0);
+
+    let mut via_cursor = 0i64;
+    let rc = unsafe { qjson_cursor_get_i64(&cur, std::ptr::null(), 0, &mut via_cursor) };
+    assert_eq!(rc, 0);
+    assert_eq!(via_cursor, 4);
+
     unsafe { qjson_free(doc); }
 }
 
