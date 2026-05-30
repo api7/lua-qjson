@@ -11,6 +11,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Add a standalone GitHub Actions supply-chain audit job using `cargo-audit`.
 - Add this changelog as the canonical human-readable release history.
 - Add deterministic exhaustive Unicode escape, surrogate, raw byte, and Lua string encode roundtrip coverage.
+- Run Lua CI integration tests under both upstream LuaJIT and OpenResty LuaJIT.
 
 ## [0.1.0] - 2026-05-19
 
