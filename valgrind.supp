@@ -1,0 +1,50 @@
+# Narrow LuaJIT false-positive suppressions for Memcheck. Keep qjson/Rust frames
+# unsuppressed so the valgrind step remains useful as an FFI integration canary.
+
+{
+   LuaJIT optimized string compare Addr4 lj_str_cmp
+   Memcheck:Addr4
+   fun:lj_str_cmp
+}
+
+{
+   LuaJIT optimized string compare Addr1 lj_str_cmp
+   Memcheck:Addr1
+   fun:lj_str_cmp
+}
+
+{
+   LuaJIT optimized string compare Addr4 lj_str_new
+   Memcheck:Addr4
+   fun:lj_str_new
+}
+
+{
+   LuaJIT optimized string compare Addr1 lj_str_new
+   Memcheck:Addr1
+   fun:lj_str_new
+}
+
+{
+   LuaJIT optimized string compare Cond lj_str_new
+   Memcheck:Cond
+   fun:lj_str_new
+}
+
+{
+   LuaJIT optimized string compare Addr4 str_fastcmp
+   Memcheck:Addr4
+   fun:str_fastcmp
+}
+
+{
+   LuaJIT optimized string compare Addr1 str_fastcmp
+   Memcheck:Addr1
+   fun:str_fastcmp
+}
+
+{
+   LuaJIT optimized string compare Cond str_fastcmp
+   Memcheck:Cond
+   fun:str_fastcmp
+}

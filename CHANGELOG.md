@@ -12,6 +12,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Add this changelog as the canonical human-readable release history.
 - Add deterministic exhaustive Unicode escape, surrogate, raw byte, and Lua string encode roundtrip coverage.
 - Run Lua CI integration tests under both upstream LuaJIT and OpenResty LuaJIT.
+- Add optional Miri, ASan, and LuaJIT valgrind CI coverage for the FFI boundary.
 
 ## [0.1.0] - 2026-05-19
 

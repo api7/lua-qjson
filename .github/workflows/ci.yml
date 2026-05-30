@@ -102,6 +102,47 @@ jobs:
       - name: Run lazy parse fuzz target
         run: cargo +nightly fuzz run fuzz_parse_lazy -- -max_total_time=60
 
+  sanitizers:
+    name: Sanitizers (Rust nightly)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Rust (nightly)
+        run: |
+          rustup toolchain install nightly --profile minimal --no-self-update
+          rustup +nightly target add x86_64-unknown-linux-gnu
+          rustup +nightly component add miri
+
+      - name: Cache cargo registry & target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: sanitizers-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.toml', 'Cargo.lock') }}
+          restore-keys: |
+            sanitizers-${{ runner.os }}-${{ runner.arch }}-
+
+      - name: Miri FFI tests (scalar scanner)
+        run: |
+          cargo +nightly miri test --target x86_64-unknown-linux-gnu --no-default-features --test ffi_smoke
+          cargo +nightly miri test --target x86_64-unknown-linux-gnu --no-default-features --test ffi_cursor
+          cargo +nightly miri test --target x86_64-unknown-linux-gnu --no-default-features --test ffi_strings
+          cargo +nightly miri test --target x86_64-unknown-linux-gnu --no-default-features --test ffi_ops_interleave
+
+      - name: ASan FFI smoke tests
+        continue-on-error: true
+        env:
+          RUSTFLAGS: -Z sanitizer=address
+        run: |
+          cargo +nightly test --release --target x86_64-unknown-linux-gnu --test ffi_smoke
+          cargo +nightly test --release --target x86_64-unknown-linux-gnu --test ffi_strings
+          cargo +nightly test --release --target x86_64-unknown-linux-gnu --test ffi_ops_interleave
+
   lua:
     name: Lua integration tests (${{ matrix.runtime.name }})
     runs-on: ubuntu-latest
@@ -113,9 +154,11 @@ jobs:
           - name: upstream LuaJIT
             lua_version: "luajit-2.1.0-beta3"
             validate_rockspec: true
+            valgrind: true
           - name: OpenResty LuaJIT
             lua_version: "luajit-openresty"
             validate_rockspec: false
+            valgrind: false
     steps:
       - uses: actions/checkout@v4
         with:
@@ -146,6 +189,12 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y lua5.1 liblua5.1-0-dev luarocks
+
+      - name: Install valgrind
+        if: matrix.runtime.valgrind
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y valgrind
 
       - name: Build cdylib
         run: cargo build --release
@@ -183,6 +232,30 @@ jobs:
           LD_LIBRARY_PATH="$PWD/target/release" \
             busted --lua="$LUAJIT_BIN" tests/lua \
               --lpath='./lua/?.lua'
+
+      - name: Run busted tests under valgrind (upstream LuaJIT)
+        if: matrix.runtime.valgrind
+        continue-on-error: true
+        env:
+          LUAJIT_BIN: ${{ steps.luajit.outputs.path }}
+          LUA_INIT: if jit then jit.off() end
+        run: |
+          # Valgrind is a supplemental end-to-end canary for the real LuaJIT
+          # FFI path. Disable JIT compilation so Memcheck observes the
+          # interpreter + FFI boundary instead of LuaJIT's generated traces.
+          # Trace children so the LuaRocks busted launcher re-execs into the
+          # selected LuaJIT binary under Memcheck.
+          LD_LIBRARY_PATH="$PWD/target/release" \
+            valgrind \
+              --trace-children=yes \
+              --error-exitcode=1 \
+              --leak-check=full \
+              --show-leak-kinds=definite,indirect,possible \
+              --errors-for-leak-kinds=definite,indirect,possible \
+              --num-callers=24 \
+              --suppressions=valgrind.supp \
+              busted --lua="$LUAJIT_BIN" tests/lua \
+                --lpath='./lua/?.lua'
 
       - name: Validate LuaRocks package
         if: matrix.runtime.validate_rockspec
