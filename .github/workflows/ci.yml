@@ -48,6 +48,39 @@ jobs:
       - name: Test with test-panic feature
         run: cargo test --features test-panic --release
 
+  fuzz:
+    name: Fuzz regression guard
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Rust (nightly)
+        run: |
+          rustup toolchain install nightly --profile minimal --no-self-update
+
+      - name: Cache cargo registry & fuzz target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ~/.cargo/bin/cargo-fuzz
+            fuzz/target
+          key: fuzz-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.toml', 'fuzz/Cargo.toml') }}
+          restore-keys: |
+            fuzz-${{ runner.os }}-${{ runner.arch }}-
+
+      - name: Install cargo-fuzz
+        run: |
+          if ! command -v cargo-fuzz >/dev/null 2>&1; then
+            cargo install --locked cargo-fuzz
+          fi
+
+      - name: Run eager parse fuzz target
+        run: cargo +nightly fuzz run fuzz_parse_eager -- -max_total_time=60
+
   lua:
     name: Lua integration tests
     runs-on: ubuntu-latest
