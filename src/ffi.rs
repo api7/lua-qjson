@@ -379,8 +379,16 @@ pub unsafe extern "C" fn qjson_get_bool(
 /// scalar's bytes sit between `find_scalar_start(cur.idx_start)` and that
 /// structural char, with trailing whitespace stripped.
 unsafe fn scalar_byte_range(d: &Document<'_>, cur: Cursor) -> Result<(usize, usize), qjson_err> {
-    let start = d.find_scalar_start(cur.idx_start)?;
-    let end = d.indices[cur.idx_start as usize] as usize;
+    let start = if d.is_root_scalar_cursor(cur) {
+        d.root_scalar_start()
+    } else {
+        d.find_scalar_start(cur.idx_start)?
+    };
+    let end = if d.is_root_scalar_cursor(cur) {
+        d.buf.len()
+    } else {
+        d.indices[cur.idx_start as usize] as usize
+    };
     if end < start { return Err(qjson_err::QJSON_PARSE_ERROR); }
     let mut e = end;
     while e > start && matches!(d.buf[e - 1], b' '|b'\t'|b'\n'|b'\r') { e -= 1; }
@@ -730,6 +738,15 @@ pub unsafe extern "C" fn qjson_cursor_bytes(
         let (d, cur) = match cursor_to_internal(c) {
             Ok(x) => x, Err(e) => return e as c_int,
         };
+        if d.is_root_scalar_cursor(cur) {
+            let (s, e) = match scalar_byte_range(d, cur) {
+                Ok(x) => x, Err(e) => return e as c_int,
+            };
+            *byte_start = s;
+            *byte_end = e;
+            return qjson_err::QJSON_OK as c_int;
+        }
+
         let pos = d.indices[cur.idx_start as usize] as usize;
         let lead = match d.buf.get(pos) {
             Some(b) => *b,

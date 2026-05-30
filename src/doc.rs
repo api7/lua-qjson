@@ -52,8 +52,24 @@ use crate::cursor::{Cursor, find_value_span};
 use crate::error::qjson_type;
 
 impl<'a> Document<'a> {
+    pub(crate) fn is_root_scalar_cursor(&self, cur: Cursor) -> bool {
+        cur.idx_start == 0 && self.indices.len() == 1 && self.indices[0] == u32::MAX
+    }
+
+    pub(crate) fn root_scalar_start(&self) -> usize {
+        let mut p = 0;
+        while p < self.buf.len() && matches!(self.buf[p], b' '|b'\t'|b'\n'|b'\r') {
+            p += 1;
+        }
+        p
+    }
+
     /// Inspect a cursor and return its JSON value type.
     pub(crate) fn type_of(&self, cur: Cursor) -> Result<qjson_type, qjson_err> {
+        if self.is_root_scalar_cursor(cur) {
+            return self.scalar_type_at(self.root_scalar_start());
+        }
+
         let pos = *self.indices.get(cur.idx_start as usize)
             .ok_or(qjson_err::QJSON_PARSE_ERROR)? as usize;
         let lead = self.buf.get(pos).copied().ok_or(qjson_err::QJSON_PARSE_ERROR)?;
@@ -66,13 +82,17 @@ impl<'a> Document<'a> {
                 // structural char AFTER the scalar; the scalar's first byte
                 // lives between the previous structural char and this one.
                 let scalar_start = self.find_scalar_start(cur.idx_start)?;
-                match self.buf.get(scalar_start).copied() {
-                    Some(b't') | Some(b'f') => Ok(qjson_type::QJSON_T_BOOL),
-                    Some(b'n')              => Ok(qjson_type::QJSON_T_NULL),
-                    Some(b'-') | Some(b'0'..=b'9') => Ok(qjson_type::QJSON_T_NUM),
-                    _ => Err(qjson_err::QJSON_PARSE_ERROR),
-                }
+                self.scalar_type_at(scalar_start)
             }
+        }
+    }
+
+    fn scalar_type_at(&self, scalar_start: usize) -> Result<qjson_type, qjson_err> {
+        match self.buf.get(scalar_start).copied() {
+            Some(b't') | Some(b'f') => Ok(qjson_type::QJSON_T_BOOL),
+            Some(b'n')              => Ok(qjson_type::QJSON_T_NULL),
+            Some(b'-') | Some(b'0'..=b'9') => Ok(qjson_type::QJSON_T_NUM),
+            _ => Err(qjson_err::QJSON_PARSE_ERROR),
         }
     }
 
@@ -96,6 +116,10 @@ impl<'a> Document<'a> {
     /// Returns `QJSON_TYPE_MISMATCH` for non-object cursors, `QJSON_NOT_FOUND`
     /// when `i` is past the end.
     pub(crate) fn nth_object_entry(&self, cur: Cursor, n: usize) -> Result<(u32, Cursor), qjson_err> {
+        if self.is_root_scalar_cursor(cur) {
+            return Err(qjson_err::QJSON_TYPE_MISMATCH);
+        }
+
         let pos = self.indices[cur.idx_start as usize] as usize;
         let b = *self.buf.get(pos).ok_or(qjson_err::QJSON_PARSE_ERROR)?;
         if b != b'{' {
@@ -139,6 +163,10 @@ impl<'a> Document<'a> {
     /// Count direct children of the container at `cur`.
     /// Returns QJSON_TYPE_MISMATCH for non-container cursors.
     pub(crate) fn cursor_len(&self, cur: Cursor) -> Result<usize, qjson_err> {
+        if self.is_root_scalar_cursor(cur) {
+            return Err(qjson_err::QJSON_TYPE_MISMATCH);
+        }
+
         let pos = self.indices[cur.idx_start as usize] as usize;
         let b = *self.buf.get(pos).ok_or(qjson_err::QJSON_PARSE_ERROR)?;
         if b != b'{' && b != b'[' {
