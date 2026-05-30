@@ -13,6 +13,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Use versioned `CHANGELOG.md` entries as GitHub Release notes and document the changelog update policy for public behavior changes.
 - Add deterministic exhaustive Unicode escape, surrogate, raw byte, and Lua string encode roundtrip coverage.
 - Run Lua CI integration tests under both upstream LuaJIT and OpenResty LuaJIT.
+- Add optional Miri, ASan, and LuaJIT valgrind CI coverage for the FFI boundary.
 
 ## [0.1.0] - 2026-05-19
 
