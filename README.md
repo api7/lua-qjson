@@ -4,6 +4,13 @@ Rust-implemented fast JSON decoder exposed to LuaJIT via FFI. Optimized for the 
 
 See [CHANGELOG.md](CHANGELOG.md) for release notes.
 
+## Documentation
+
+- [Migrating from lua-cjson](docs/migrating-from-cjson.md) maps common
+  `cjson.*` calls to qjson and calls out behavior differences.
+- [CONTRIBUTING.md](CONTRIBUTING.md) covers local setup, tests, linting, and
+  release/contribution conventions.
+
 ## Status
 
 Initial implementation complete: scalar, AVX2/PCLMUL, and ARM64 NEON/PMULL structural scanners (runtime-dispatched); root-path and cursor APIs; escape-decoded strings; integer/float/bool/typeof/len accessors; FFI panic barrier; and a LuaJIT wrapper. Rust unit/integration tests and Lua busted tests run in CI. The benchmark harness compares against lua-cjson and lua-resty-simdjson on x86_64; ARM64 NEON/PMULL is correctness-tested via the scanner cross-check suite, with a parse + access benchmark on Apple M4 reported in `docs/benchmarks.md` (cjson comparison only).
