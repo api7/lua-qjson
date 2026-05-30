@@ -16,6 +16,7 @@ Run the PR-length regression guard:
 
 ```sh
 cargo +nightly fuzz run fuzz_parse_eager -- -max_total_time=60
+cargo +nightly fuzz run fuzz_depth -- -max_total_time=60
 ```
 
 The `fuzz_parse_eager` target compares qjson EAGER parse accept/reject behavior
@@ -26,6 +27,12 @@ range and escaped unpaired UTF-16 surrogates. The latter is guarded by an
 input-level surrogate check because serde may report a leading surrogate as an
 unexpected end of hex escape; qjson rejects those strings later if decoded.
 
+The `fuzz_depth` target is non-differential. It pins qjson's nesting contract:
+depth `N` is accepted and `N+1` returns `QJSON_NESTING_TOO_DEEP` at both the
+default depth (`1024`) and the clamped ceiling (`4096`). Accepted boundary
+inputs are also walked through the FFI cursor API to exercise Phase 2 without
+recursive descent.
+
 The committed corpus under `fuzz/corpus/fuzz_parse_eager/` is seeded from
 JSONTestSuite `y_*`/`n_*`, cJSON fuzzing inputs, and benchmark fixtures. Crash
 artifacts and coverage output are ignored; minimize and promote only useful
@@ -35,6 +42,7 @@ Before releases, run the same target much longer than the CI guard, for example:
 
 ```sh
 cargo +nightly fuzz run fuzz_parse_eager -- -max_total_time=3600
+cargo +nightly fuzz run fuzz_depth -- -max_total_time=3600
 ```
 
 CI intentionally runs only a short 60-second fuzzing pass so pull requests get a
