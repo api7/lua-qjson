@@ -1,5 +1,129 @@
 # Contributing
 
+Thanks for helping improve qjson. The project is a Rust JSON decoder exposed to
+LuaJIT through FFI, so changes often need both Rust and Lua verification.
+
+## Development setup
+
+Clone submodules before running the full test suite. The tests use vendored
+JSON fixture corpora, and the benchmark target can build the vendored lua-cjson
+module.
+
+```sh
+git submodule update --init --recursive
+make build
+```
+
+Lua integration tests require LuaJIT, busted, and lua-cjson. You can either
+install busted/lua-cjson with LuaRocks for Lua 5.1/LuaJIT, or build the vendored
+lua-cjson module when you only need a local `cjson.so`:
+
+```sh
+make vendor/lua-cjson/cjson.so
+```
+
+If multiple Lua versions are installed, make sure the `busted` executable comes
+from the LuaJIT or Lua 5.1 LuaRocks tree, not from a different Lua version.
+
+## Running tests
+
+The canonical PR gate is:
+
+```sh
+make test
+```
+
+That runs `cargo build --release`, `cargo test --release`, and the Lua busted
+suite with the release cdylib on the dynamic loader path.
+
+For narrower checks, use:
+
+```sh
+cargo test --release
+cargo test --release --no-default-features
+cargo test --features test-panic --release
+```
+
+Run a single Rust integration test with:
+
+```sh
+cargo test --release --test ffi_smoke parse_and_free_roundtrip
+```
+
+Run the Lua suite directly with:
+
+```sh
+cargo build --release
+LD_LIBRARY_PATH=./target/release \
+  busted --lua="$(command -v luajit)" tests/lua --lpath='./lua/?.lua'
+```
+
+On macOS, the release cdylib is named `libqjson.dylib`; if the direct Lua test
+command cannot find qjson, add the dylib template to `LUA_CPATH`:
+
+```sh
+DYLD_LIBRARY_PATH=./target/release \
+LUA_CPATH='./vendor/lua-cjson/?.so;./target/release/lib?.dylib;./target/release/lib?.so;./?.so;;' \
+  busted --lua="$(command -v luajit)" tests/lua --lpath='./lua/?.lua'
+```
+
+## Linting and formatting
+
+Run clippy with warnings denied:
+
+```sh
+make lint
+```
+
+`cargo fmt --check` is intentionally not part of the lint gate. Some Rust files
+use manual column alignment in struct definitions and compact literals that
+default rustfmt would reflow. Keep formatting consistent with nearby code.
+
+## Commit messages
+
+Use concise conventional-style prefixes when they fit the change, for example:
+
+```text
+docs: add cjson migration guide
+test: cover lazy string validation
+fix: preserve cursor byte spans
+```
+
+Release commits are stricter because `.github/workflows/release.yml` validates
+the title. A release commit must be:
+
+```text
+feat: release vX.Y.Z
+```
+
+or, for prereleases:
+
+```text
+feat: release vX.Y.Z-prerelease
+```
+
+## Issues and discussions
+
+Use GitHub Issues for actionable bugs, regressions, feature requests, missing
+documentation, and follow-up work with concrete acceptance criteria. Use GitHub
+Discussions for open-ended API design or migration questions when Discussions
+are enabled; otherwise open an issue and make the exploratory status clear in
+the description.
+
+## FFI enum sync rule
+
+The public error and type codes are duplicated for Rust, C, and Lua consumers.
+When adding, removing, or renumbering any code, keep these files in sync in the
+same change:
+
+- `src/error.rs`
+- `include/qjson.h`
+- `lua/qjson.lua`
+
+Add or update tests that prove the new value can cross the FFI boundary and is
+visible from Lua when applicable. Renumbering existing codes is a breaking
+change and must be called out in `CHANGELOG.md`.
+
 ## Changelog policy
 
 Any pull request that changes public behavior must add an entry under the
