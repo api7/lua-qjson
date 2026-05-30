@@ -16,6 +16,10 @@ test_safety
 *.swp
 *.swo
 
+# Local agent/tooling state
+.opencode
+docs/superpowers/
+
 # OS junk
 .DS_Store
 Thumbs.db
