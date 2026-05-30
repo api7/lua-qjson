@@ -64,6 +64,31 @@ jobs:
       - name: Test with test-panic feature
         run: cargo test --features test-panic --release
 
+  lua-lint:
+    name: Lua lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install LuaJIT
+        uses: leafo/gh-actions-lua@v13
+        with:
+          luaVersion: "luajit-2.1.0-beta3"
+
+      - name: Install LuaRocks
+        uses: leafo/gh-actions-luarocks@v4
+        with:
+          luarocksVersion: "3.11.1"
+
+      - name: Install luacheck
+        run: |
+          luarocks install https://luarocks.org/argparse-0.7.2-1.src.rock
+          luarocks install https://luarocks.org/luafilesystem-1.9.0-1.src.rock
+          luarocks install https://luarocks.org/luacheck-1.2.0-1.src.rock
+
+      - name: Run Lua lint
+        run: make lua-lint
+
   fuzz:
     name: Fuzz regression guard
     runs-on: ubuntu-latest

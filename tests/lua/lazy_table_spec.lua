@@ -159,11 +159,8 @@ describe("__pairs / qjson.pairs over LazyObject", function()
 
     it("allows early break without disturbing later access", function()
         local t = qjson.decode(make_object(100))
-        local first_key, first_value
-        for k, v in qjson.pairs(t) do
-            first_key, first_value = k, v
-            break
-        end
+        local iter, state, initial = qjson.pairs(t)
+        local first_key, first_value = iter(state, initial)
         assert.are.equal("k1", first_key)
         assert.are.equal(1, first_value)
         assert.are.equal(100, t.k100)
