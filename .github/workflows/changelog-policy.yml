@@ -1,0 +1,50 @@
+name: Changelog Policy
+
+on:
+  pull_request:
+    paths:
+      - "src/**"
+      - "lua/**"
+      - "include/**"
+      - "CHANGELOG.md"
+      - ".github/workflows/changelog-policy.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  advisory:
+    name: Advisory changelog check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Warn when source changes omit CHANGELOG.md
+        shell: bash
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+
+          mapfile -t changed_paths < <(git diff --name-only "$BASE_SHA...$HEAD_SHA")
+          source_changed=false
+          changelog_changed=false
+
+          for path in "${changed_paths[@]}"; do
+              case "$path" in
+                  src/*|lua/*|include/*)
+                      source_changed=true
+                      ;;
+                  CHANGELOG.md)
+                      changelog_changed=true
+                      ;;
+              esac
+          done
+
+          if [ "$source_changed" = true ] && [ "$changelog_changed" = false ]; then
+              echo "::warning file=CHANGELOG.md,title=CHANGELOG.md not updated::PRs that change public behavior must add an entry under [Unreleased]. This advisory check is non-blocking because pure internal refactors may not need one."
+          fi

@@ -1,5 +1,17 @@
 # Contributing
 
+## Changelog policy
+
+Any pull request that changes public behavior must add an entry under the
+`[Unreleased]` section in `CHANGELOG.md`. Public behavior includes changes to
+the Lua API, FFI surface, documented semantics, validation behavior, error/type
+codes, release packaging, or any user-visible compatibility/performance
+contract.
+
+Pure internal refactors do not need a changelog entry. If a pull request touches
+`src/`, `lua/`, or `include/` without changing public behavior, call that out in
+the PR description so reviewers can intentionally skip the changelog update.
+
 ## Fuzzing
 
 qjson parses arbitrary bytes at an API gateway trust boundary. The Rust decoder
