@@ -2,7 +2,7 @@ local ffi = require("ffi")
 
 local C = require("qjson.lib")
 
-local err_box  = ffi.new("int[1]")
+local err_box  = ffi.new("qjson_error[1]")
 local i64_box  = ffi.new("int64_t[1]")
 local f64_box  = ffi.new("double[1]")
 local bool_box = ffi.new("int[1]")
@@ -51,6 +51,15 @@ local opts_box = ffi.new("qjson_options[1]")
 
 local MODE_EAGER = 0
 local MODE_LAZY  = 1
+local SIZE_MAX   = ffi.cast("size_t", -1)
+
+local function parse_error_message(err)
+    local msg = ffi.string(C.qjson_strerror(err.code))
+    if err.offset ~= SIZE_MAX then
+        msg = msg .. " at byte " .. tostring(tonumber(err.offset))
+    end
+    return msg
+end
 
 function _M.parse(json_str, opts)
     local ptr
@@ -73,7 +82,7 @@ function _M.parse(json_str, opts)
         ptr = C.qjson_parse_ex(json_str, #json_str, opts_box, err_box)
     end
     if ptr == nil then
-        error("qjson: " .. ffi.string(C.qjson_strerror(err_box[0])))
+        error("qjson: " .. parse_error_message(err_box[0]))
     end
     return setmetatable({
         _ptr  = ffi.gc(ptr, C.qjson_free),

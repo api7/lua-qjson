@@ -1,28 +1,27 @@
 use std::ffi::CStr;
-use std::os::raw::c_int;
 
 use qjson::ffi::{
     qjson_cursor, qjson_cursor_get_i64, qjson_doc, qjson_free, qjson_get_i64, qjson_open,
-    qjson_parse, qjson_strerror,
+    qjson_error, qjson_parse, qjson_strerror,
 };
 
 #[test]
 fn parse_and_free_roundtrip() {
     let json = b"{\"a\":1}";
-    let mut err: c_int = -1;
+    let mut err = qjson_error::default();
     let doc: *mut qjson_doc = unsafe { qjson_parse(json.as_ptr(), json.len(), &mut err) };
     assert!(!doc.is_null());
-    assert_eq!(err, 0);
+    assert_eq!(err.code, 0);
     unsafe { qjson_free(doc); }
 }
 
 #[test]
 fn root_scalar_is_accessible_through_ffi() {
     let json = b"4";
-    let mut err: c_int = -1;
+    let mut err = qjson_error::default();
     let doc: *mut qjson_doc = unsafe { qjson_parse(json.as_ptr(), json.len(), &mut err) };
     assert!(!doc.is_null());
-    assert_eq!(err, 0);
+    assert_eq!(err.code, 0);
 
     let mut direct = 0i64;
     let rc = unsafe { qjson_get_i64(doc, std::ptr::null(), 0, &mut direct) };
@@ -50,18 +49,18 @@ fn root_scalar_is_accessible_through_ffi() {
 #[test]
 fn parse_error_returns_null() {
     let bad = b"{";
-    let mut err: c_int = -1;
+    let mut err = qjson_error::default();
     let doc = unsafe { qjson_parse(bad.as_ptr(), bad.len(), &mut err) };
     assert!(doc.is_null());
-    assert_eq!(err, 1); // QJSON_PARSE_ERROR
+    assert_eq!(err.code, 1); // QJSON_PARSE_ERROR
 }
 
 #[test]
 fn parse_null_buffer_returns_invalid_arg() {
-    let mut err: c_int = -1;
+    let mut err = qjson_error::default();
     let doc = unsafe { qjson_parse(std::ptr::null(), 0, &mut err) };
     assert!(doc.is_null());
-    assert_eq!(err, 7); // QJSON_INVALID_ARG
+    assert_eq!(err.code, 7); // QJSON_INVALID_ARG
 }
 
 #[test]

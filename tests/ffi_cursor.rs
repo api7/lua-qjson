@@ -2,7 +2,7 @@ use std::os::raw::c_int;
 use qjson::ffi::*;
 
 fn parse(s: &[u8]) -> *mut qjson_doc {
-    let mut err: c_int = -1;
+    let mut err = qjson_error::default();
     let d = unsafe { qjson_parse(s.as_ptr(), s.len(), &mut err) };
     assert!(!d.is_null());
     d

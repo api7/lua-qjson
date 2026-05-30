@@ -1,5 +1,9 @@
 #![allow(non_camel_case_types)]
 
+use std::os::raw::c_int;
+
+pub const QJSON_NO_OFFSET: usize = usize::MAX;
+
 #[repr(C)]
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum qjson_err {
@@ -18,6 +22,51 @@ pub enum qjson_err {
     QJSON_INVALID_NUMBER      = 12,
     QJSON_INVALID_STRING      = 13,
     QJSON_INVALID_UTF8        = 14,
+}
+
+#[repr(C)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct qjson_error {
+    pub code:   c_int,
+    pub offset: usize,
+}
+
+impl qjson_error {
+    pub fn new(code: qjson_err, offset: usize) -> Self {
+        Self { code: code as c_int, offset }
+    }
+
+    pub fn no_offset(code: qjson_err) -> Self {
+        Self::new(code, QJSON_NO_OFFSET)
+    }
+}
+
+impl Default for qjson_error {
+    fn default() -> Self {
+        Self::no_offset(qjson_err::QJSON_OK)
+    }
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub(crate) struct ParseError {
+    pub code:   qjson_err,
+    pub offset: usize,
+}
+
+impl ParseError {
+    pub(crate) fn new(code: qjson_err, offset: usize) -> Self {
+        Self { code, offset }
+    }
+
+    pub(crate) fn no_offset(code: qjson_err) -> Self {
+        Self::new(code, QJSON_NO_OFFSET)
+    }
+}
+
+impl From<ParseError> for qjson_error {
+    fn from(err: ParseError) -> Self {
+        Self::new(err.code, err.offset)
+    }
 }
 
 #[repr(C)]

@@ -18,8 +18,11 @@ proptest! {
         let mut b = Vec::new();
         let ra = ScalarScanner::scan(input.as_bytes(), &mut a);
         let rb = Avx2Scanner::scan(input.as_bytes(), &mut b);
-        // Both scanners must agree on Ok vs Err (and on the error offset).
-        prop_assert_eq!(&ra, &rb, "scan results differ for {:?}", input);
+        // Both scanners must agree on Ok vs Err and on the error offset.
+        prop_assert_eq!(ra.is_ok(), rb.is_ok(), "scan result kind differs for {:?}", input);
+        if let (Err(ae), Err(be)) = (&ra, &rb) {
+            prop_assert_eq!(ae, be, "scan error offsets differ for {:?}", input);
+        }
         // On success, indices must be identical. On error, the partial
         // emit may differ: the fused scalar (scan_and_validate) aborts at
         // the first bracket mismatch, while AVX2 emits all structural
@@ -88,8 +91,11 @@ proptest! {
         let mut b = Vec::new();
         let ra = ScalarScanner::scan(input.as_bytes(), &mut a);
         let rb = NeonScanner::scan(input.as_bytes(), &mut b);
-        // Both scanners must agree on Ok vs Err (and on the error offset).
-        prop_assert_eq!(&ra, &rb, "scan results differ for {:?}", input);
+        // Both scanners must agree on Ok vs Err and on the error offset.
+        prop_assert_eq!(ra.is_ok(), rb.is_ok(), "scan result kind differs for {:?}", input);
+        if let (Err(ae), Err(be)) = (&ra, &rb) {
+            prop_assert_eq!(ae, be, "scan error offsets differ for {:?}", input);
+        }
         // On success, indices must be identical. On error, the partial
         // emit may differ between fused-scalar and two-pass NEON because
         // the fused path stops at the first bracket error while NEON emits

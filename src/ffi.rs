@@ -32,6 +32,7 @@ use std::ptr;
 
 use crate::doc::Document;
 use crate::error::qjson_err;
+pub use crate::error::qjson_error;
 
 macro_rules! ffi_catch {
     ($body:block) => {{
@@ -82,9 +83,9 @@ pub unsafe extern "C" fn qjson_strerror(code: c_int) -> *const c_char {
 /// # Safety
 ///
 /// - `buf` must point to `len` readable bytes, or be NULL (in which case the
-///   function returns NULL with `*err_out = QJSON_INVALID_ARG`).
+///   function returns NULL with `err_out->code = QJSON_INVALID_ARG`).
 /// - `err_out` may be NULL. When non-NULL it receives `QJSON_OK` on success or
-///   an error code on failure.
+///   an error code plus byte offset on failure.
 /// - The buffer must remain valid and unmodified for the lifetime of the
 ///   returned `qjson_doc*`; the document borrows it.
 /// - On success, the returned pointer must be freed exactly once with
@@ -93,7 +94,7 @@ pub unsafe extern "C" fn qjson_strerror(code: c_int) -> *const c_char {
 pub unsafe extern "C" fn qjson_parse(
     buf:     *const u8,
     len:     usize,
-    err_out: *mut c_int,
+    err_out: *mut qjson_error,
 ) -> *mut qjson_doc {
     let default = crate::options::Options::default();
     qjson_parse_ex(buf, len, &default as *const _, err_out)
@@ -112,11 +113,11 @@ pub unsafe extern "C" fn qjson_parse_ex(
     buf:     *const u8,
     len:     usize,
     opts:    *const crate::options::Options,
-    err_out: *mut c_int,
+    err_out: *mut qjson_error,
 ) -> *mut qjson_doc {
     let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         if buf.is_null() {
-            if !err_out.is_null() { *err_out = qjson_err::QJSON_INVALID_ARG as c_int; }
+            write_parse_error(err_out, qjson_error::no_offset(qjson_err::QJSON_INVALID_ARG));
             return ptr::null_mut();
         }
         let opts_owned = if opts.is_null() {
@@ -125,13 +126,13 @@ pub unsafe extern "C" fn qjson_parse_ex(
             *opts
         };
         let slice: &'static [u8] = std::slice::from_raw_parts(buf, len);
-        match Document::parse_with_options(slice, &opts_owned) {
+        match Document::parse_with_options_detailed(slice, &opts_owned) {
             Ok(d) => {
-                if !err_out.is_null() { *err_out = qjson_err::QJSON_OK as c_int; }
+                write_parse_error(err_out, qjson_error::default());
                 Box::into_raw(Box::new(qjson_doc(d)))
             }
             Err(e) => {
-                if !err_out.is_null() { *err_out = e as c_int; }
+                write_parse_error(err_out, e.into());
                 ptr::null_mut()
             }
         }
@@ -139,9 +140,16 @@ pub unsafe extern "C" fn qjson_parse_ex(
     match r {
         Ok(p) => p,
         Err(_) => {
-            if !err_out.is_null() { *err_out = qjson_err::QJSON_OOM as c_int; }
+            write_parse_error(err_out, qjson_error::no_offset(qjson_err::QJSON_OOM));
             std::ptr::null_mut()
         }
+    }
+}
+
+#[inline]
+unsafe fn write_parse_error(err_out: *mut qjson_error, err: qjson_error) {
+    if !err_out.is_null() {
+        *err_out = err;
     }
 }
 

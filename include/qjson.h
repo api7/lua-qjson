@@ -26,6 +26,11 @@ typedef enum {
     QJSON_INVALID_UTF8        = 14
 } qjson_err;
 
+typedef struct {
+    int    code;
+    size_t offset;
+} qjson_error;
+
 typedef enum {
     QJSON_T_NULL = 0, QJSON_T_BOOL = 1, QJSON_T_NUM = 2,
     QJSON_T_STR  = 3, QJSON_T_ARR  = 4, QJSON_T_OBJ = 5
@@ -59,9 +64,9 @@ typedef struct {
 
 const char* qjson_strerror(int code);
 
-qjson_doc* qjson_parse(const uint8_t* buf, size_t len, int* err_out);
+qjson_doc* qjson_parse(const uint8_t* buf, size_t len, qjson_error* err_out);
 qjson_doc* qjson_parse_ex(const uint8_t* buf, size_t len,
-                      const qjson_options* opts, int* err_out);
+                      const qjson_options* opts, qjson_error* err_out);
 void     qjson_free (qjson_doc* doc);
 
 int qjson_get_str  (qjson_doc*, const char* path, size_t path_len,

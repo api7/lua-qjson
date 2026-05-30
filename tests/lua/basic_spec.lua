@@ -16,6 +16,25 @@ describe("qjson basic", function()
         assert.has_error(function() d:get_str("a") end)
     end)
 
+    it("parse errors include byte offsets", function()
+        local cases = {
+            { json = "{",                 fragment = "JSON parse error at byte 1" },
+            { json = "[}",                fragment = "JSON parse error at byte 1" },
+            { json = "[01]",              fragment = "invalid number format (RFC 8259) at byte 1" },
+            { json = "{\"a\":\"\255\"}", fragment = "invalid UTF-8 in string at byte 5" },
+            { json = "{}garbage",         fragment = "trailing content after root value at byte 2" },
+        }
+
+        for _, case in ipairs(cases) do
+            local ok, err = pcall(qjson.parse, case.json)
+            assert.is_false(ok)
+            assert.is_truthy(
+                string.find(tostring(err), case.fragment, 1, true),
+                tostring(err)
+            )
+        end
+    end)
+
     it("supports nested paths", function()
         local d = qjson.parse('{"body":{"model":"gpt"}}')
         assert.are.equal("gpt", d:get_str("body.model"))
