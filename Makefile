@@ -11,6 +11,9 @@ LUAJIT_PREFIX ?= $(shell dirname $$(dirname $$(command -v $(LUAJIT) 2>/dev/null 
 LUAJIT_INC    ?= $(LUAJIT_PREFIX)/include/luajit-2.1
 QJSON_PROP_CASES ?= 200
 QJSON_PROP_SEED  ?= 760076
+QJSON_MUT_PROP_CASES ?= 200
+QJSON_MUT_PROP_SEED  ?= 104104
+QJSON_MUT_PROP_STEPS ?= 24
 
 LIB_DIR := $(CURDIR)/target/release
 ifeq ($(shell uname),Darwin)
@@ -19,7 +22,7 @@ else
 LUA_ENV := LD_LIBRARY_PATH=$(LIB_DIR) LUA_PATH='$(LUA_PATH)' LUA_CPATH='$(LUA_CPATH)'
 endif
 
-.PHONY: help build test lua-property-test lint lua-lint bench clean
+.PHONY: help build test lua-property-test lua-mutation-property-test lint lua-lint bench clean
 
 help: ## Show this help
 	@# FS uses [^#]* (not .*) so a description containing `##` isn't truncated.
@@ -36,6 +39,11 @@ test: build ## Run cargo tests + busted Lua tests
 lua-property-test: build ## Run deterministic Lua encode/materialize property tests
 	QJSON_PROP_CASES=$(QJSON_PROP_CASES) QJSON_PROP_SEED=$(QJSON_PROP_SEED) \
 		$(LUA_ENV) busted --lua=$(LUAJIT) tests/lua/encode_property_spec.lua --lpath='./lua/?.lua'
+
+lua-mutation-property-test: build ## Run deterministic Lua lazy-mutation property tests
+	QJSON_MUT_PROP_CASES=$(QJSON_MUT_PROP_CASES) QJSON_MUT_PROP_SEED=$(QJSON_MUT_PROP_SEED) \
+	QJSON_MUT_PROP_STEPS=$(QJSON_MUT_PROP_STEPS) \
+		$(LUA_ENV) busted --lua=$(LUAJIT) tests/lua/lazy_mutation_property_spec.lua --lpath='./lua/?.lua'
 
 lint: ## Run clippy with -D warnings
 	cargo clippy --release --all-targets -- -D warnings
