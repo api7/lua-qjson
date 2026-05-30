@@ -143,17 +143,19 @@ jobs:
           luaVersion: ${{ matrix.runtime.lua_version }}
 
       - name: Install LuaRocks
-        uses: leafo/gh-actions-luarocks@v4
-        with:
-          luarocksVersion: "3.11.1"
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y lua5.1 liblua5.1-0-dev luarocks
 
       - name: Build cdylib
         run: cargo build --release
 
       - name: Install Lua dependencies
         run: |
-          luarocks install busted
-          luarocks install lua-cjson
+          # Ubuntu LuaRocks targets Lua 5.1 by default; LuaJIT is ABI-compatible
+          # with 5.1 so rocks built for 5.1 load fine under each matrix runtime.
+          sudo luarocks install busted
+          sudo luarocks install lua-cjson
 
       - name: Resolve LuaJIT executable
         id: luajit
