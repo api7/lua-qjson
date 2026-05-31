@@ -1,0 +1,42 @@
+name: Setup Lua
+description: Install a Lua runtime, LuaRocks, and optional LuaRocks packages.
+
+inputs:
+  lua-version:
+    description: Runtime version accepted by leafo/gh-actions-lua.
+    required: true
+  luarocks-version:
+    description: LuaRocks version to install.
+    required: false
+    default: "3.11.1"
+  install-luarocks:
+    description: Install LuaRocks with leafo/gh-actions-luarocks.
+    required: false
+    default: "true"
+  packages:
+    description: Whitespace-separated LuaRocks packages to install.
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - name: Install Lua
+      uses: leafo/gh-actions-lua@v13
+      with:
+        luaVersion: ${{ inputs.lua-version }}
+
+    - name: Install LuaRocks
+      if: inputs.install-luarocks == 'true'
+      uses: leafo/gh-actions-luarocks@v4
+      with:
+        luarocksVersion: ${{ inputs.luarocks-version }}
+
+    - name: Install LuaRocks packages
+      if: inputs.install-luarocks == 'true' && inputs.packages != ''
+      shell: bash
+      run: |
+        set -euo pipefail
+        for package in ${{ inputs.packages }}; do
+            luarocks install "$package"
+        done
