@@ -13,17 +13,30 @@ describe("qjson basic", function()
     end)
 
     it("errors on type mismatch", function()
+        local d = qjson.parse('{"user":{"age":1}}')
+        assert.has_error(
+            function() d:get_str("user.age") end,
+            "qjson: type mismatch: expected string, got number at byte 15"
+        )
+    end)
+
+    it("does not invent an expected null type when no expected type is provided", function()
         local d = qjson.parse('{"a":1}')
-        assert.has_error(function() d:get_str("a") end)
+        local a = d:open("a")
+        local ok, err = pcall(function() a:open("x") end)
+        assert.is_false(ok)
+        assert.is_truthy(string.find(tostring(err), "qjson: type mismatch", 1, true), tostring(err))
+        assert.is_falsy(string.find(tostring(err), "expected null", 1, true), tostring(err))
     end)
 
     it("parse errors include byte offsets", function()
         local cases = {
-            { json = "{",                 fragment = "JSON parse error at byte 1" },
-            { json = "[}",                fragment = "JSON parse error at byte 1" },
-            { json = "[01]",              fragment = "invalid number format (RFC 8259) at byte 1" },
+            { json = "[}",                fragment = "parse error at byte 1: unexpected '}', expected value" },
+            { json = '{"a":1,,',          fragment = "parse error at byte 7: unexpected ',', expected value" },
+            { json = "[01]",              fragment = "invalid number '01' at byte 1" },
             { json = "{\"a\":\"\255\"}", fragment = "invalid UTF-8 in string at byte 5" },
-            { json = "{}garbage",         fragment = "trailing content after root value at byte 2" },
+            { json = "{}garbage",         fragment = "trailing content 'garbage' after root value at byte 2" },
+            { json = string.rep("[", 1025), fragment = "nesting too deep at byte 1024 (max 1024)" },
         }
 
         for _, case in ipairs(cases) do
@@ -34,6 +47,14 @@ describe("qjson basic", function()
                 tostring(err)
             )
         end
+    end)
+
+    it("lazy string decode errors report the string content offset", function()
+        local d = qjson.parse('{"s":"\\001"}', { lazy = true })
+        assert.has_error(
+            function() d:get_str("s") end,
+            "qjson: invalid string content at byte 6"
+        )
     end)
 
     it("supports nested paths", function()
@@ -83,11 +104,15 @@ describe("qjson basic", function()
 
     it("reports integer range and type errors consistently", function()
         local d = qjson.parse('{"u":18446744073709551615,"neg":-1,"f":1.5,"b":true,"s":"1","n":null}')
-        assert.has_error(function() d:get_i64("u") end, "qjson: numeric out of range")
-        assert.has_error(function() d:get_u64("neg") end, "qjson: numeric out of range")
+        assert.has_error(function() d:get_i64("u") end, "qjson: out of range at byte 5")
+        assert.has_error(function() d:get_u64("neg") end, "qjson: out of range at byte 32")
         for _, path in ipairs({"f", "b", "s", "n"}) do
-            assert.has_error(function() d:get_i64(path) end, "qjson: type mismatch at path")
-            assert.has_error(function() d:get_u64(path) end, "qjson: type mismatch at path")
+            local ok_i64, err_i64 = pcall(function() d:get_i64(path) end)
+            local ok_u64, err_u64 = pcall(function() d:get_u64(path) end)
+            assert.is_false(ok_i64)
+            assert.is_false(ok_u64)
+            assert.is_truthy(string.find(tostring(err_i64), "expected number", 1, true), tostring(err_i64))
+            assert.is_truthy(string.find(tostring(err_u64), "expected number", 1, true), tostring(err_u64))
         end
     end)
 
@@ -106,5 +131,13 @@ describe("qjson basic", function()
         local d = qjson.parse('{"o":{"a":1,"b":2,"c":3},"a":[1,2,3,4]}')
         assert.are.equal(3, d:len("o"))
         assert.are.equal(4, d:len("a"))
+    end)
+
+    it("len type mismatch reports an array/object expectation", function()
+        local d = qjson.parse('{"n":1}')
+        assert.has_error(
+            function() d:len("n") end,
+            "qjson: type mismatch: expected array/object, got number at byte 5"
+        )
     end)
 end)

@@ -31,7 +31,7 @@ use std::os::raw::{c_char, c_int};
 use std::ptr;
 
 use crate::doc::Document;
-use crate::error::qjson_err;
+use crate::error::{QJSON_NO_OFFSET, qjson_err};
 pub use crate::error::qjson_error;
 
 macro_rules! ffi_catch {
@@ -46,6 +46,27 @@ macro_rules! ffi_catch {
 
 /// Opaque type exported to C as `qjson_doc*`.
 pub struct qjson_doc(pub(crate) Document<'static>);
+
+fn err_from_i32(code: c_int) -> Option<qjson_err> {
+    match code {
+        0 => Some(qjson_err::QJSON_OK),
+        1 => Some(qjson_err::QJSON_PARSE_ERROR),
+        2 => Some(qjson_err::QJSON_NOT_FOUND),
+        3 => Some(qjson_err::QJSON_TYPE_MISMATCH),
+        4 => Some(qjson_err::QJSON_OUT_OF_RANGE),
+        5 => Some(qjson_err::QJSON_DECODE_FAILED),
+        6 => Some(qjson_err::QJSON_INVALID_PATH),
+        7 => Some(qjson_err::QJSON_INVALID_ARG),
+        8 => Some(qjson_err::QJSON_OOM),
+        9 => Some(qjson_err::QJSON_NESTING_TOO_DEEP),
+        10 => Some(qjson_err::QJSON_TRAILING_CONTENT),
+        11 => Some(qjson_err::QJSON_NUMBER_OUT_OF_RANGE),
+        12 => Some(qjson_err::QJSON_INVALID_NUMBER),
+        13 => Some(qjson_err::QJSON_INVALID_STRING),
+        14 => Some(qjson_err::QJSON_INVALID_UTF8),
+        _ => None,
+    }
+}
 
 /// Return a static NUL-terminated message for the given error code.
 ///
@@ -76,6 +97,64 @@ pub unsafe extern "C" fn qjson_strerror(code: c_int) -> *const c_char {
          _ => b"unknown error code\0",
     };
     s.as_ptr() as *const c_char
+}
+
+/// Format an error code with optional byte offset / context.
+///
+/// # Safety
+///
+/// `buf` must point to `buf_len` readable bytes when non-NULL. `out` must point
+/// to `out_len` writable bytes when non-NULL. Returns the required/written byte
+/// length excluding the trailing NUL.
+#[no_mangle]
+pub unsafe extern "C" fn qjson_format_error(
+    code: c_int,
+    offset: usize,
+    extra: usize,
+    buf: *const c_char,
+    buf_len: usize,
+    out: *mut c_char,
+    out_len: usize,
+) -> usize {
+    let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let input = if buf.is_null() || buf_len == 0 {
+            &[][..]
+        } else {
+            std::slice::from_raw_parts(buf as *const u8, buf_len)
+        };
+        let msg = match err_from_i32(code) {
+            Some(err) => crate::error::format_error(err, offset, extra, input),
+            None => "unknown error code".to_string(),
+        };
+        let needed = msg.len();
+        if out_len <= needed || out.is_null() {
+            return needed;
+        }
+        ptr::copy_nonoverlapping(msg.as_ptr(), out as *mut u8, needed);
+        *(out as *mut u8).add(needed) = 0;
+        needed
+    }));
+    r.unwrap_or_default()
+}
+
+/// Return the most recent access error byte offset recorded on this document.
+/// `SIZE_MAX` means no location is currently recorded.
+///
+/// # Safety
+///
+/// `doc` must be NULL or a live pointer returned by `qjson_parse`.
+#[no_mangle]
+pub unsafe extern "C" fn qjson_doc_last_error_offset(doc: *const qjson_doc) -> usize {
+    let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        if doc.is_null() {
+            return QJSON_NO_OFFSET;
+        }
+        (*doc).0.last_error_offset()
+    }));
+    match r {
+        Ok(offset) => offset,
+        Err(_) => QJSON_NO_OFFSET,
+    }
 }
 
 /// Parse a JSON buffer into a document (Phase 1: structural scan).
@@ -187,6 +266,55 @@ unsafe fn resolve_root_path(
     Ok((std::mem::transmute::<&Document<'_>, &'static Document<'static>>(d), cur))
 }
 
+#[inline]
+unsafe fn clear_doc_error_offset_if_available(doc: *mut qjson_doc) {
+    if !doc.is_null() {
+        (*doc).0.clear_last_error_offset();
+    }
+}
+
+#[inline]
+unsafe fn clear_cursor_doc_error_offset_if_available(c: *const qjson_cursor) {
+    if c.is_null() {
+        return;
+    }
+    let cc = &*c;
+    if cc.doc.is_null() {
+        return;
+    }
+    (*(cc.doc as *mut qjson_doc)).0.clear_last_error_offset();
+}
+
+#[inline]
+unsafe fn clear_iter_doc_error_offset_if_available(it: *const qjson_iter) {
+    if it.is_null() {
+        return;
+    }
+    let ii = &*it;
+    if ii.doc.is_null() {
+        return;
+    }
+    (*(ii.doc as *mut qjson_doc)).0.clear_last_error_offset();
+}
+
+fn cursor_value_start_offset(d: &Document<'_>, cur: Cursor) -> Option<usize> {
+    if d.is_root_scalar_cursor(cur) {
+        return Some(d.root_scalar_start());
+    }
+    let pos = *d.indices.get(cur.idx_start as usize)? as usize;
+    match d.buf.get(pos).copied() {
+        Some(b'"' | b'{' | b'[') => Some(pos),
+        Some(_) => d.find_scalar_start(cur.idx_start).ok(),
+        None => None,
+    }
+}
+
+fn set_doc_error_offset_for_cursor(d: &Document<'_>, cur: Cursor) {
+    if let Some(offset) = cursor_value_start_offset(d, cur) {
+        d.set_last_error_offset(offset);
+    }
+}
+
 /// Write the JSON value type at `path` into `*type_out` (see [`qjson_type`]).
 ///
 /// # Safety
@@ -199,11 +327,15 @@ pub unsafe extern "C" fn qjson_typeof(
     doc: *mut qjson_doc, path: *const c_char, path_len: usize, type_out: *mut c_int,
 ) -> c_int {
     ffi_catch!({
+        clear_doc_error_offset_if_available(doc);
         if type_out.is_null() { return qjson_err::QJSON_INVALID_ARG as c_int; }
         match resolve_root_path(doc, path, path_len) {
             Ok((d, cur)) => match d.type_of(cur) {
                 Ok(t) => { *type_out = t as c_int; qjson_err::QJSON_OK as c_int }
-                Err(e) => e as c_int,
+                Err(e) => {
+                    set_doc_error_offset_for_cursor(d, cur);
+                    e as c_int
+                }
             },
             Err(e) => e as c_int,
         }
@@ -222,12 +354,16 @@ pub unsafe extern "C" fn qjson_is_null(
     doc: *mut qjson_doc, path: *const c_char, path_len: usize, out: *mut c_int,
 ) -> c_int {
     ffi_catch!({
+        clear_doc_error_offset_if_available(doc);
         if out.is_null() { return qjson_err::QJSON_INVALID_ARG as c_int; }
         match resolve_root_path(doc, path, path_len) {
             Ok((d, cur)) => match d.type_of(cur) {
                 Ok(qjson_type::QJSON_T_NULL) => { *out = 1; qjson_err::QJSON_OK as c_int }
                 Ok(_)                    => { *out = 0; qjson_err::QJSON_OK as c_int }
-                Err(e) => e as c_int,
+                Err(e) => {
+                    set_doc_error_offset_for_cursor(d, cur);
+                    e as c_int
+                }
             },
             Err(e) => e as c_int,
         }
@@ -247,11 +383,15 @@ pub unsafe extern "C" fn qjson_len(
     doc: *mut qjson_doc, path: *const c_char, path_len: usize, out: *mut usize,
 ) -> c_int {
     ffi_catch!({
+        clear_doc_error_offset_if_available(doc);
         if out.is_null() { return qjson_err::QJSON_INVALID_ARG as c_int; }
         match resolve_root_path(doc, path, path_len) {
             Ok((d, cur)) => match d.cursor_len(cur) {
                 Ok(n) => { *out = n; qjson_err::QJSON_OK as c_int }
-                Err(e) => e as c_int,
+                Err(e) => {
+                    set_doc_error_offset_for_cursor(d, cur);
+                    e as c_int
+                }
             },
             Err(e) => e as c_int,
         }
@@ -281,6 +421,7 @@ pub unsafe extern "C" fn qjson_get_str(
     out_ptr: *mut *const u8, out_len: *mut usize,
 ) -> c_int {
     ffi_catch!({
+        clear_doc_error_offset_if_available(doc);
         if out_ptr.is_null() || out_len.is_null() {
             return qjson_err::QJSON_INVALID_ARG as c_int;
         }
@@ -289,6 +430,7 @@ pub unsafe extern "C" fn qjson_get_str(
         };
         let pos = d.indices[cur.idx_start as usize] as usize;
         if d.buf.get(pos).copied() != Some(b'"') {
+            set_doc_error_offset_for_cursor(d, cur);
             return qjson_err::QJSON_TYPE_MISMATCH as c_int;
         }
         // String ends at the close quote, whose indices position is idx_start + 1.
@@ -297,7 +439,10 @@ pub unsafe extern "C" fn qjson_get_str(
         let mut scratch = d.scratch.borrow_mut();
         match string::decode_string(d.buf, pos + 1, close, &mut scratch, d.eager_validated) {
             Ok((p, n)) => { *out_ptr = p; *out_len = n; qjson_err::QJSON_OK as c_int }
-            Err(e) => e as c_int,
+            Err(e) => {
+                d.set_last_error_offset(pos + 1);
+                e as c_int
+            }
         }
     })
 }
@@ -315,16 +460,24 @@ pub unsafe extern "C" fn qjson_get_i64(
     doc: *mut qjson_doc, path: *const c_char, path_len: usize, out: *mut i64,
 ) -> c_int {
     ffi_catch!({
+        clear_doc_error_offset_if_available(doc);
         if out.is_null() { return qjson_err::QJSON_INVALID_ARG as c_int; }
         let (d, cur) = match resolve_root_path(doc, path, path_len) {
             Ok(x) => x, Err(e) => return e as c_int,
         };
         let bytes = match number_bytes(d, cur) {
-            Ok(b) => b, Err(e) => return e as c_int,
+            Ok(b) => b,
+            Err(e) => {
+                set_doc_error_offset_for_cursor(d, cur);
+                return e as c_int;
+            }
         };
         match number::parse_i64(bytes, d.eager_validated) {
             Ok(v) => { *out = v; qjson_err::QJSON_OK as c_int }
-            Err(e) => e as c_int,
+            Err(e) => {
+                set_doc_error_offset_for_cursor(d, cur);
+                e as c_int
+            }
         }
     })
 }
@@ -342,16 +495,24 @@ pub unsafe extern "C" fn qjson_get_u64(
     doc: *mut qjson_doc, path: *const c_char, path_len: usize, out: *mut u64,
 ) -> c_int {
     ffi_catch!({
+        clear_doc_error_offset_if_available(doc);
         if out.is_null() { return qjson_err::QJSON_INVALID_ARG as c_int; }
         let (d, cur) = match resolve_root_path(doc, path, path_len) {
             Ok(x) => x, Err(e) => return e as c_int,
         };
         let bytes = match number_bytes(d, cur) {
-            Ok(b) => b, Err(e) => return e as c_int,
+            Ok(b) => b,
+            Err(e) => {
+                set_doc_error_offset_for_cursor(d, cur);
+                return e as c_int;
+            }
         };
         match number::parse_u64(bytes, d.eager_validated) {
             Ok(v) => { *out = v; qjson_err::QJSON_OK as c_int }
-            Err(e) => e as c_int,
+            Err(e) => {
+                set_doc_error_offset_for_cursor(d, cur);
+                e as c_int
+            }
         }
     })
 }
@@ -368,16 +529,24 @@ pub unsafe extern "C" fn qjson_get_f64(
     doc: *mut qjson_doc, path: *const c_char, path_len: usize, out: *mut f64,
 ) -> c_int {
     ffi_catch!({
+        clear_doc_error_offset_if_available(doc);
         if out.is_null() { return qjson_err::QJSON_INVALID_ARG as c_int; }
         let (d, cur) = match resolve_root_path(doc, path, path_len) {
             Ok(x) => x, Err(e) => return e as c_int,
         };
         let bytes = match scalar_bytes(d, cur) {
-            Ok(b) => b, Err(e) => return e as c_int,
+            Ok(b) => b,
+            Err(e) => {
+                set_doc_error_offset_for_cursor(d, cur);
+                return e as c_int;
+            }
         };
         match number::parse_f64(bytes, d.eager_validated) {
             Ok(v) => { *out = v; qjson_err::QJSON_OK as c_int }
-            Err(e) => e as c_int,
+            Err(e) => {
+                set_doc_error_offset_for_cursor(d, cur);
+                e as c_int
+            }
         }
     })
 }
@@ -395,17 +564,25 @@ pub unsafe extern "C" fn qjson_get_bool(
     doc: *mut qjson_doc, path: *const c_char, path_len: usize, out: *mut c_int,
 ) -> c_int {
     ffi_catch!({
+        clear_doc_error_offset_if_available(doc);
         if out.is_null() { return qjson_err::QJSON_INVALID_ARG as c_int; }
         let (d, cur) = match resolve_root_path(doc, path, path_len) {
             Ok(x) => x, Err(e) => return e as c_int,
         };
         let bytes = match scalar_bytes(d, cur) {
-            Ok(b) => b, Err(e) => return e as c_int,
+            Ok(b) => b,
+            Err(e) => {
+                set_doc_error_offset_for_cursor(d, cur);
+                return e as c_int;
+            }
         };
         match bytes {
             b"true"  => { *out = 1; qjson_err::QJSON_OK as c_int }
             b"false" => { *out = 0; qjson_err::QJSON_OK as c_int }
-            _ => qjson_err::QJSON_TYPE_MISMATCH as c_int,
+            _ => {
+                set_doc_error_offset_for_cursor(d, cur);
+                qjson_err::QJSON_TYPE_MISMATCH as c_int
+            }
         }
     })
 }
@@ -511,6 +688,7 @@ pub unsafe extern "C" fn qjson_open(
     doc: *mut qjson_doc, path: *const c_char, path_len: usize, out: *mut qjson_cursor,
 ) -> c_int {
     ffi_catch!({
+        clear_doc_error_offset_if_available(doc);
         if out.is_null() { return qjson_err::QJSON_INVALID_ARG as c_int; }
         match resolve_root_path(doc, path, path_len) {
             Ok((_, cur)) => {
@@ -536,6 +714,7 @@ pub unsafe extern "C" fn qjson_cursor_open(
     c: *const qjson_cursor, path: *const c_char, path_len: usize, out: *mut qjson_cursor,
 ) -> c_int {
     ffi_catch!({
+        clear_cursor_doc_error_offset_if_available(c);
         if out.is_null() { return qjson_err::QJSON_INVALID_ARG as c_int; }
         let (d, cur) = match cursor_to_internal(c) { Ok(x) => x, Err(e) => return e as c_int };
         let p: &[u8] = if path.is_null() { &[] } else {
@@ -543,7 +722,10 @@ pub unsafe extern "C" fn qjson_cursor_open(
         };
         match cur.resolve(d, p) {
             Ok(child) => { *out = internal_to_cursor((*c).doc, child); qjson_err::QJSON_OK as c_int }
-            Err(e) => e as c_int,
+            Err(e) => {
+                set_doc_error_offset_for_cursor(d, cur);
+                e as c_int
+            }
         }
     })
 }
@@ -562,13 +744,18 @@ pub unsafe extern "C" fn qjson_cursor_field(
     c: *const qjson_cursor, key: *const c_char, key_len: usize, out: *mut qjson_cursor,
 ) -> c_int {
     ffi_catch!({
+        clear_cursor_doc_error_offset_if_available(c);
         if out.is_null() || (key.is_null() && key_len != 0) {
             return qjson_err::QJSON_INVALID_ARG as c_int;
         }
         let (d, cur) = match cursor_to_internal(c) { Ok(x) => x, Err(e) => return e as c_int };
         let k = if key.is_null() { &[][..] } else { std::slice::from_raw_parts(key as *const u8, key_len) };
         let child = match crate::cursor::resolve_single_key(d, cur, k) {
-            Ok(x) => x, Err(e) => return e as c_int,
+            Ok(x) => x,
+            Err(e) => {
+                set_doc_error_offset_for_cursor(d, cur);
+                return e as c_int;
+            }
         };
         *out = internal_to_cursor((*c).doc, child);
         qjson_err::QJSON_OK as c_int
@@ -587,11 +774,16 @@ pub unsafe extern "C" fn qjson_cursor_index(
     c: *const qjson_cursor, i: usize, out: *mut qjson_cursor,
 ) -> c_int {
     ffi_catch!({
+        clear_cursor_doc_error_offset_if_available(c);
         if out.is_null() { return qjson_err::QJSON_INVALID_ARG as c_int; }
         if i > u32::MAX as usize { return qjson_err::QJSON_INVALID_ARG as c_int; }
         let (d, cur) = match cursor_to_internal(c) { Ok(x) => x, Err(e) => return e as c_int };
         let child = match crate::cursor::resolve_single_idx(d, cur, i as u32) {
-            Ok(x) => x, Err(e) => return e as c_int,
+            Ok(x) => x,
+            Err(e) => {
+                set_doc_error_offset_for_cursor(d, cur);
+                return e as c_int;
+            }
         };
         *out = internal_to_cursor((*c).doc, child);
         qjson_err::QJSON_OK as c_int
@@ -617,6 +809,7 @@ pub unsafe extern "C" fn qjson_cursor_get_str(
     out_ptr: *mut *const u8, out_len: *mut usize,
 ) -> c_int {
     ffi_catch!({
+        clear_cursor_doc_error_offset_if_available(c);
         if out_ptr.is_null() || out_len.is_null() {
             return qjson_err::QJSON_INVALID_ARG as c_int;
         }
@@ -624,9 +817,16 @@ pub unsafe extern "C" fn qjson_cursor_get_str(
         let p: &[u8] = if path.is_null() { &[] } else {
             std::slice::from_raw_parts(path as *const u8, path_len)
         };
-        let cur = match cur.resolve(d, p) { Ok(x) => x, Err(e) => return e as c_int };
+        let cur = match cur.resolve(d, p) {
+            Ok(x) => x,
+            Err(e) => {
+                set_doc_error_offset_for_cursor(d, cur);
+                return e as c_int;
+            }
+        };
         let pos = d.indices[cur.idx_start as usize] as usize;
         if d.buf.get(pos).copied() != Some(b'"') {
+            set_doc_error_offset_for_cursor(d, cur);
             return qjson_err::QJSON_TYPE_MISMATCH as c_int;
         }
         let close = d.indices[(cur.idx_start + 1) as usize] as usize;
@@ -634,7 +834,10 @@ pub unsafe extern "C" fn qjson_cursor_get_str(
         let mut scratch = d.scratch.borrow_mut();
         match string::decode_string(d.buf, pos + 1, close, &mut scratch, d.eager_validated) {
             Ok((p, n)) => { *out_ptr = p; *out_len = n; qjson_err::QJSON_OK as c_int }
-            Err(e) => e as c_int,
+            Err(e) => {
+                d.set_last_error_offset(pos + 1);
+                e as c_int
+            }
         }
     })
 }
@@ -653,16 +856,32 @@ pub unsafe extern "C" fn qjson_cursor_get_i64(
     c: *const qjson_cursor, path: *const c_char, path_len: usize, out: *mut i64,
 ) -> c_int {
     ffi_catch!({
+        clear_cursor_doc_error_offset_if_available(c);
         if out.is_null() { return qjson_err::QJSON_INVALID_ARG as c_int; }
         let (d, cur) = match cursor_to_internal(c) { Ok(x) => x, Err(e) => return e as c_int };
         let p: &[u8] = if path.is_null() { &[] } else {
             std::slice::from_raw_parts(path as *const u8, path_len)
         };
-        let cur = match cur.resolve(d, p) { Ok(x) => x, Err(e) => return e as c_int };
-        let bytes = match number_bytes(d, cur) { Ok(b) => b, Err(e) => return e as c_int };
+        let cur = match cur.resolve(d, p) {
+            Ok(x) => x,
+            Err(e) => {
+                set_doc_error_offset_for_cursor(d, cur);
+                return e as c_int;
+            }
+        };
+        let bytes = match number_bytes(d, cur) {
+            Ok(b) => b,
+            Err(e) => {
+                set_doc_error_offset_for_cursor(d, cur);
+                return e as c_int;
+            }
+        };
         match number::parse_i64(bytes, d.eager_validated) {
             Ok(v) => { *out = v; qjson_err::QJSON_OK as c_int }
-            Err(e) => e as c_int,
+            Err(e) => {
+                set_doc_error_offset_for_cursor(d, cur);
+                e as c_int
+            }
         }
     })
 }
@@ -681,16 +900,32 @@ pub unsafe extern "C" fn qjson_cursor_get_u64(
     c: *const qjson_cursor, path: *const c_char, path_len: usize, out: *mut u64,
 ) -> c_int {
     ffi_catch!({
+        clear_cursor_doc_error_offset_if_available(c);
         if out.is_null() { return qjson_err::QJSON_INVALID_ARG as c_int; }
         let (d, cur) = match cursor_to_internal(c) { Ok(x) => x, Err(e) => return e as c_int };
         let p: &[u8] = if path.is_null() { &[] } else {
             std::slice::from_raw_parts(path as *const u8, path_len)
         };
-        let cur = match cur.resolve(d, p) { Ok(x) => x, Err(e) => return e as c_int };
-        let bytes = match number_bytes(d, cur) { Ok(b) => b, Err(e) => return e as c_int };
+        let cur = match cur.resolve(d, p) {
+            Ok(x) => x,
+            Err(e) => {
+                set_doc_error_offset_for_cursor(d, cur);
+                return e as c_int;
+            }
+        };
+        let bytes = match number_bytes(d, cur) {
+            Ok(b) => b,
+            Err(e) => {
+                set_doc_error_offset_for_cursor(d, cur);
+                return e as c_int;
+            }
+        };
         match number::parse_u64(bytes, d.eager_validated) {
             Ok(v) => { *out = v; qjson_err::QJSON_OK as c_int }
-            Err(e) => e as c_int,
+            Err(e) => {
+                set_doc_error_offset_for_cursor(d, cur);
+                e as c_int
+            }
         }
     })
 }
@@ -708,16 +943,32 @@ pub unsafe extern "C" fn qjson_cursor_get_f64(
     c: *const qjson_cursor, path: *const c_char, path_len: usize, out: *mut f64,
 ) -> c_int {
     ffi_catch!({
+        clear_cursor_doc_error_offset_if_available(c);
         if out.is_null() { return qjson_err::QJSON_INVALID_ARG as c_int; }
         let (d, cur) = match cursor_to_internal(c) { Ok(x) => x, Err(e) => return e as c_int };
         let p: &[u8] = if path.is_null() { &[] } else {
             std::slice::from_raw_parts(path as *const u8, path_len)
         };
-        let cur = match cur.resolve(d, p) { Ok(x) => x, Err(e) => return e as c_int };
-        let bytes = match scalar_bytes(d, cur) { Ok(b) => b, Err(e) => return e as c_int };
+        let cur = match cur.resolve(d, p) {
+            Ok(x) => x,
+            Err(e) => {
+                set_doc_error_offset_for_cursor(d, cur);
+                return e as c_int;
+            }
+        };
+        let bytes = match scalar_bytes(d, cur) {
+            Ok(b) => b,
+            Err(e) => {
+                set_doc_error_offset_for_cursor(d, cur);
+                return e as c_int;
+            }
+        };
         match number::parse_f64(bytes, d.eager_validated) {
             Ok(v) => { *out = v; qjson_err::QJSON_OK as c_int }
-            Err(e) => e as c_int,
+            Err(e) => {
+                set_doc_error_offset_for_cursor(d, cur);
+                e as c_int
+            }
         }
     })
 }
@@ -736,17 +987,33 @@ pub unsafe extern "C" fn qjson_cursor_get_bool(
     c: *const qjson_cursor, path: *const c_char, path_len: usize, out: *mut c_int,
 ) -> c_int {
     ffi_catch!({
+        clear_cursor_doc_error_offset_if_available(c);
         if out.is_null() { return qjson_err::QJSON_INVALID_ARG as c_int; }
         let (d, cur) = match cursor_to_internal(c) { Ok(x) => x, Err(e) => return e as c_int };
         let p: &[u8] = if path.is_null() { &[] } else {
             std::slice::from_raw_parts(path as *const u8, path_len)
         };
-        let cur = match cur.resolve(d, p) { Ok(x) => x, Err(e) => return e as c_int };
-        let bytes = match scalar_bytes(d, cur) { Ok(b) => b, Err(e) => return e as c_int };
+        let cur = match cur.resolve(d, p) {
+            Ok(x) => x,
+            Err(e) => {
+                set_doc_error_offset_for_cursor(d, cur);
+                return e as c_int;
+            }
+        };
+        let bytes = match scalar_bytes(d, cur) {
+            Ok(b) => b,
+            Err(e) => {
+                set_doc_error_offset_for_cursor(d, cur);
+                return e as c_int;
+            }
+        };
         match bytes {
             b"true"  => { *out = 1; qjson_err::QJSON_OK as c_int }
             b"false" => { *out = 0; qjson_err::QJSON_OK as c_int }
-            _ => qjson_err::QJSON_TYPE_MISMATCH as c_int,
+            _ => {
+                set_doc_error_offset_for_cursor(d, cur);
+                qjson_err::QJSON_TYPE_MISMATCH as c_int
+            }
         }
     })
 }
@@ -764,15 +1031,25 @@ pub unsafe extern "C" fn qjson_cursor_typeof(
     c: *const qjson_cursor, path: *const c_char, path_len: usize, type_out: *mut c_int,
 ) -> c_int {
     ffi_catch!({
+        clear_cursor_doc_error_offset_if_available(c);
         if type_out.is_null() { return qjson_err::QJSON_INVALID_ARG as c_int; }
         let (d, cur) = match cursor_to_internal(c) { Ok(x) => x, Err(e) => return e as c_int };
         let p: &[u8] = if path.is_null() { &[] } else {
             std::slice::from_raw_parts(path as *const u8, path_len)
         };
-        let cur = match cur.resolve(d, p) { Ok(x) => x, Err(e) => return e as c_int };
+        let cur = match cur.resolve(d, p) {
+            Ok(x) => x,
+            Err(e) => {
+                set_doc_error_offset_for_cursor(d, cur);
+                return e as c_int;
+            }
+        };
         match d.type_of(cur) {
             Ok(t) => { *type_out = t as c_int; qjson_err::QJSON_OK as c_int }
-            Err(e) => e as c_int,
+            Err(e) => {
+                set_doc_error_offset_for_cursor(d, cur);
+                e as c_int
+            }
         }
     })
 }
@@ -791,15 +1068,25 @@ pub unsafe extern "C" fn qjson_cursor_len(
     c: *const qjson_cursor, path: *const c_char, path_len: usize, out: *mut usize,
 ) -> c_int {
     ffi_catch!({
+        clear_cursor_doc_error_offset_if_available(c);
         if out.is_null() { return qjson_err::QJSON_INVALID_ARG as c_int; }
         let (d, cur) = match cursor_to_internal(c) { Ok(x) => x, Err(e) => return e as c_int };
         let p: &[u8] = if path.is_null() { &[] } else {
             std::slice::from_raw_parts(path as *const u8, path_len)
         };
-        let cur = match cur.resolve(d, p) { Ok(x) => x, Err(e) => return e as c_int };
+        let cur = match cur.resolve(d, p) {
+            Ok(x) => x,
+            Err(e) => {
+                set_doc_error_offset_for_cursor(d, cur);
+                return e as c_int;
+            }
+        };
         match d.cursor_len(cur) {
             Ok(n) => { *out = n; qjson_err::QJSON_OK as c_int }
-            Err(e) => e as c_int,
+            Err(e) => {
+                set_doc_error_offset_for_cursor(d, cur);
+                e as c_int
+            }
         }
     })
 }
@@ -821,6 +1108,7 @@ pub unsafe extern "C" fn qjson_cursor_bytes(
     c: *const qjson_cursor, byte_start: *mut usize, byte_end: *mut usize,
 ) -> c_int {
     ffi_catch!({
+        clear_cursor_doc_error_offset_if_available(c);
         if byte_start.is_null() || byte_end.is_null() {
             return qjson_err::QJSON_INVALID_ARG as c_int;
         }
@@ -886,6 +1174,7 @@ pub unsafe extern "C" fn qjson_cursor_object_entry_at(
     value_out: *mut qjson_cursor,
 ) -> c_int {
     ffi_catch!({
+        clear_cursor_doc_error_offset_if_available(c);
         if key_ptr.is_null() || key_len.is_null() || value_out.is_null() {
             return qjson_err::QJSON_INVALID_ARG as c_int;
         }
@@ -893,7 +1182,11 @@ pub unsafe extern "C" fn qjson_cursor_object_entry_at(
             Ok(x) => x, Err(e) => return e as c_int,
         };
         let (key_idx_start, value_cur) = match d.nth_object_entry(cur, i) {
-            Ok(x) => x, Err(e) => return e as c_int,
+            Ok(x) => x,
+            Err(e) => {
+                set_doc_error_offset_for_cursor(d, cur);
+                return e as c_int;
+            }
         };
         // Decode the key: it sits at indices[key_idx_start..=key_idx_start+1]
         // — open quote at key_idx_start, close quote at key_idx_start+1.
@@ -907,7 +1200,10 @@ pub unsafe extern "C" fn qjson_cursor_object_entry_at(
                 *value_out = internal_to_cursor((*c).doc, value_cur);
                 qjson_err::QJSON_OK as c_int
             }
-            Err(e) => e as c_int,
+            Err(e) => {
+                d.set_last_error_offset(open_pos);
+                e as c_int
+            }
         }
     })
 }
@@ -927,6 +1223,7 @@ pub unsafe extern "C" fn qjson_iter_init(
     c: *const qjson_cursor, it: *mut qjson_iter,
 ) -> c_int {
     ffi_catch!({
+        clear_cursor_doc_error_offset_if_available(c);
         if it.is_null() {
             return qjson_err::QJSON_INVALID_ARG as c_int;
         }
@@ -935,6 +1232,7 @@ pub unsafe extern "C" fn qjson_iter_init(
         };
         let pos = d.indices[cur.idx_start as usize] as usize;
         if d.buf.get(pos).copied() != Some(b'{') {
+            d.set_last_error_offset(pos);
             return qjson_err::QJSON_TYPE_MISMATCH as c_int;
         }
 
@@ -971,6 +1269,7 @@ pub unsafe extern "C" fn qjson_iter_next(
     value_out: *mut qjson_cursor,
 ) -> c_int {
     ffi_catch!({
+        clear_iter_doc_error_offset_if_available(it);
         if it.is_null() || key_ptr.is_null() || key_len.is_null() || value_out.is_null() {
             return qjson_err::QJSON_INVALID_ARG as c_int;
         }
@@ -1019,7 +1318,10 @@ pub unsafe extern "C" fn qjson_iter_next(
                 }
                 qjson_err::QJSON_OK as c_int
             }
-            Err(e) => e as c_int,
+            Err(e) => {
+                d.set_last_error_offset(open_pos);
+                e as c_int
+            }
         }
     })
 }

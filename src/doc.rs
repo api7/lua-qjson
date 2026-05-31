@@ -1,6 +1,6 @@
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 
-use crate::error::{ParseError, qjson_err};
+use crate::error::{ParseError, QJSON_NO_OFFSET, qjson_err};
 use crate::skip_cache::SkipCache;
 
 pub struct Document<'a> {
@@ -9,6 +9,7 @@ pub struct Document<'a> {
     pub(crate) eager_validated: bool,
     pub(crate) scratch: RefCell<Vec<u8>>,
     pub(crate) skip:    RefCell<SkipCache>,
+    pub(crate) last_error_offset: Cell<usize>,
 }
 
 impl<'a> Document<'a> {
@@ -35,8 +36,23 @@ impl<'a> Document<'a> {
 
         let max_depth = opts.effective_max_depth();
         let mut indices = Vec::new();
-        crate::scan::scan(buf, &mut indices)
-            .map_err(|offset| ParseError::new(qjson_err::QJSON_PARSE_ERROR, offset))?;
+        if let Err(offset) = crate::scan::scan(buf, &mut indices) {
+            if offset == buf.len() && !scan_error_ended_inside_string(buf, &indices) {
+                indices.push(u32::MAX);
+                if opts.is_eager() {
+                    return match crate::validate::validate_eager_values_with_offset(
+                        buf,
+                        &indices,
+                        max_depth,
+                    ) {
+                        Err(err) => Err(err),
+                        Ok(()) => Err(ParseError::new(qjson_err::QJSON_PARSE_ERROR, offset)),
+                    };
+                }
+                crate::validate::validate_depth_with_offset(buf, &indices, max_depth)?;
+            }
+            return Err(ParseError::new(qjson_err::QJSON_PARSE_ERROR, offset));
+        }
         indices.push(u32::MAX);
 
         if opts.is_eager() {
@@ -52,14 +68,37 @@ impl<'a> Document<'a> {
             eager_validated: opts.is_eager(),
             scratch: RefCell::new(Vec::new()),
             skip:    RefCell::new(SkipCache::new()),
+            last_error_offset: Cell::new(QJSON_NO_OFFSET),
         })
     }
+}
+
+fn scan_error_ended_inside_string(buf: &[u8], indices: &[u32]) -> bool {
+    let mut in_string = false;
+    for &idx in indices {
+        if buf.get(idx as usize).copied() == Some(b'"') {
+            in_string = !in_string;
+        }
+    }
+    in_string
 }
 
 use crate::cursor::{Cursor, find_value_span};
 use crate::error::qjson_type;
 
 impl<'a> Document<'a> {
+    pub(crate) fn clear_last_error_offset(&self) {
+        self.last_error_offset.set(QJSON_NO_OFFSET);
+    }
+
+    pub(crate) fn set_last_error_offset(&self, offset: usize) {
+        self.last_error_offset.set(offset);
+    }
+
+    pub(crate) fn last_error_offset(&self) -> usize {
+        self.last_error_offset.get()
+    }
+
     pub(crate) fn is_root_scalar_cursor(&self, cur: Cursor) -> bool {
         cur.idx_start == 0 && self.indices.len() == 1 && self.indices[0] == u32::MAX
     }

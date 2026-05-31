@@ -22,6 +22,10 @@ typedef struct {
 } qjson_options;
 
 const char* qjson_strerror(int code);
+size_t qjson_format_error(int code, size_t offset, size_t extra,
+                          const char* buf, size_t buf_len,
+                          char* out, size_t out_len);
+size_t qjson_doc_last_error_offset(const qjson_doc* doc);
 qjson_doc* qjson_parse   (const uint8_t* buf, size_t len, qjson_error* err_out);
 qjson_doc* qjson_parse_ex(const uint8_t* buf, size_t len,
                        const qjson_options* opts, qjson_error* err_out);
@@ -63,6 +67,8 @@ local attempts = {}
 local last_error
 local required_symbols = {
     "qjson_strerror",
+    "qjson_format_error",
+    "qjson_doc_last_error_offset",
     "qjson_parse",
     "qjson_parse_ex",
     "qjson_free",
