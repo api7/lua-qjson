@@ -184,7 +184,7 @@ per-instance configuration.
 
 ## Supported sparse-array configuration
 
-qjson now supports lua-cjson style sparse-array controls via
+qjson now supports lua-cjson-style sparse-array controls via
 `qjson.encode_sparse_array(convert, ratio, safe)`.
 
 - Getter mode (`qjson.encode_sparse_array()`) returns the current triplet.

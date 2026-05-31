@@ -207,6 +207,20 @@ describe("qjson.encode_sparse_array lua-cjson compatible controls", function()
         end, "bad argument #3 to qjson.encode_sparse_array (expected non-negative integer)")
     end)
 
+    it("keeps sparse-array settings unchanged when setter validation fails", function()
+        qjson.encode_sparse_array(false, 5, 7)
+
+        assert_sparse_array_arg_error(function()
+            qjson.encode_sparse_array(true, -1, 9)
+        end, "bad argument #2 to qjson.encode_sparse_array (expected non-negative integer)")
+        assert.same({false, 5, 7}, {qjson.encode_sparse_array()})
+
+        assert_sparse_array_arg_error(function()
+            qjson.encode_sparse_array(true, 6, math.huge)
+        end, "bad argument #3 to qjson.encode_sparse_array (expected non-negative integer)")
+        assert.same({false, 5, 7}, {qjson.encode_sparse_array()})
+    end)
+
     it("rejects too many arguments", function()
         assert_sparse_array_arg_error(function()
             qjson.encode_sparse_array(false, 2, 10, true)

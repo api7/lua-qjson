@@ -630,17 +630,27 @@ function _M.encode_sparse_array(convert, ratio, safe, ...)
     if select("#", ...) > 0 then
         error("bad argument #4 to qjson.encode_sparse_array (found too many arguments)", 2)
     end
+
+    local new_convert = ENCODE_SPARSE_CONVERT
+    local new_ratio = ENCODE_SPARSE_RATIO
+    local new_safe = ENCODE_SPARSE_SAFE
+
     if convert ~= nil then
-        ENCODE_SPARSE_CONVERT = convert ~= false
+        new_convert = convert ~= false
     end
     if ratio ~= nil then
         validate_non_negative_integer(ratio, 2)
-        ENCODE_SPARSE_RATIO = ratio
+        new_ratio = ratio
     end
     if safe ~= nil then
         validate_non_negative_integer(safe, 3)
-        ENCODE_SPARSE_SAFE = safe
+        new_safe = safe
     end
+
+    ENCODE_SPARSE_CONVERT = new_convert
+    ENCODE_SPARSE_RATIO = new_ratio
+    ENCODE_SPARSE_SAFE = new_safe
+
     return ENCODE_SPARSE_CONVERT, ENCODE_SPARSE_RATIO, ENCODE_SPARSE_SAFE
 end
 
