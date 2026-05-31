@@ -47,40 +47,20 @@ jobs:
             mut-prop-${{ runner.os }}-
 
       - name: Install LuaJIT
-        uses: leafo/gh-actions-lua@v13
+        uses: ./.github/actions/setup-lua
         with:
-          luaVersion: "luajit-2.1.0-beta3"
-
-      - name: Install LuaRocks
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y lua5.1 liblua5.1-0-dev luarocks
+          lua-version: "luajit-2.1.0-beta3"
+          install-luarocks: "false"
 
       - name: Build cdylib (release)
         run: cargo build --release
 
       - name: Install Lua dependencies
-        run: |
-          # Ubuntu LuaRocks targets Lua 5.1 by default; LuaJIT is ABI-compatible.
-          sudo luarocks install busted
-          sudo luarocks install lua-cjson
+        run: .github/scripts/install-lua-test-deps.sh
 
       - name: Resolve LuaJIT executable
         id: luajit
-        run: |
-          set -euo pipefail
-          for candidate in luajit luajit-2.1.0-beta3 lua; do
-            if command -v "$candidate" >/dev/null 2>&1; then
-              lua_bin="$(command -v "$candidate")"
-              if "$lua_bin" -e 'assert(jit, "LuaJIT required")' >/dev/null 2>&1; then
-                echo "path=$lua_bin" >> "$GITHUB_OUTPUT"
-                "$lua_bin" -e 'print(jit.version)'
-                exit 0
-              fi
-            fi
-          done
-          echo "LuaJIT executable not found" >&2
-          exit 1
+        run: .github/scripts/resolve-luajit.sh
 
       - name: Resolve stress parameters
         id: params

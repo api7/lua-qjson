@@ -5,6 +5,13 @@ on:
     branches: [master, main]
   pull_request:
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 env:
   CARGO_TERM_COLOR: always
 
@@ -14,16 +21,98 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check dependency file changes
+        id: audit_changes
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PUSH_BEFORE_SHA: ${{ github.event.before }}
+          CURRENT_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+              base="$PR_BASE_SHA"
+              head="$CURRENT_SHA"
+              range="$base...$head"
+          else
+              base="$PUSH_BEFORE_SHA"
+              head="$CURRENT_SHA"
+              range="$base..$head"
+          fi
+
+          if [ -z "$base" ] || [[ "$base" =~ ^0+$ ]]; then
+              echo "run=true" >> "$GITHUB_OUTPUT"
+              echo "No usable base SHA; running cargo audit."
+              exit 0
+          fi
+
+          if ! changed_paths="$(git diff --name-only "$range")"; then
+              echo "run=true" >> "$GITHUB_OUTPUT"
+              echo "Could not diff $range; running cargo audit."
+              exit 0
+          fi
+
+          if grep -Eq '^(Cargo\.toml|Cargo\.lock)$' <<<"$changed_paths"; then
+              echo "run=true" >> "$GITHUB_OUTPUT"
+              echo "Dependency files changed; running cargo audit."
+          else
+              echo "run=false" >> "$GITHUB_OUTPUT"
+              echo "Cargo.toml/Cargo.lock unchanged; skipping cargo audit."
+          fi
+
+      - name: Install cargo-audit
+        if: steps.audit_changes.outputs.run == 'true'
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit
+
+      - name: Security audit
+        if: steps.audit_changes.outputs.run == 'true'
+        run: cargo audit
+
+      - name: Report skipped audit
+        if: steps.audit_changes.outputs.run != 'true'
+        run: echo "cargo audit skipped because dependency manifests did not change"
+
+  build:
+    name: Build release cdylib (linux)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       - name: Install Rust (stable)
         run: |
           rustup toolchain install stable --profile minimal --no-self-update
           rustup default stable
 
-      - name: Security audit
-        run: |
-          cargo install cargo-audit --locked
-          cargo audit
+      - name: Cache cargo registry & target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: build-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.toml', 'Cargo.lock') }}
+          restore-keys: |
+            build-${{ runner.os }}-${{ runner.arch }}-
+
+      - name: Build cdylib
+        run: cargo build --release
+
+      - name: Upload release cdylib
+        uses: actions/upload-artifact@v4
+        with:
+          name: qjson-linux-release
+          path: target/release/libqjson.so
+          if-no-files-found: error
+          retention-days: 1
 
   rust:
     name: Rust tests (${{ matrix.os }})
@@ -48,12 +137,9 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: cargo-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.toml') }}
+          key: cargo-test-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.toml', 'Cargo.lock') }}
           restore-keys: |
-            cargo-${{ runner.os }}-${{ runner.arch }}-
-
-      - name: Build (release)
-        run: cargo build --release
+            cargo-test-${{ runner.os }}-${{ runner.arch }}-
 
       - name: Test (release)
         run: cargo test --release
@@ -62,10 +148,36 @@ jobs:
         run: cargo test --release --no-default-features
 
       - name: Test debug scalar-only
+        if: matrix.os == 'ubuntu-latest'
         run: cargo test --no-default-features
 
       - name: Test with test-panic feature
+        if: matrix.os == 'ubuntu-latest'
         run: cargo test --features test-panic --release
+
+      - name: Install LuaJIT for package validation
+        if: matrix.os == 'macos-14'
+        uses: ./.github/actions/setup-lua
+        with:
+          lua-version: "luajit-2.1.0-beta3"
+
+      - name: Resolve LuaJIT executable for package validation
+        if: matrix.os == 'macos-14'
+        id: mac_luajit
+        run: .github/scripts/resolve-luajit.sh
+
+      - name: Validate LuaRocks package (macOS)
+        if: matrix.os == 'macos-14'
+        env:
+          LUAJIT_BIN: ${{ steps.mac_luajit.outputs.path }}
+        run: |
+          rm -rf /tmp/lua-qjson-rock
+          ROCKSPEC="$(.github/scripts/latest-rockspec.py)"
+          luarocks make "$ROCKSPEC" --tree /tmp/lua-qjson-rock
+          eval "$(luarocks path --tree /tmp/lua-qjson-rock)"
+          unset LD_LIBRARY_PATH
+          unset DYLD_LIBRARY_PATH
+          "$LUAJIT_BIN" -e 'local qjson = require("qjson"); local doc = qjson.parse("{\"a\":42}"); assert(doc:get_i64("a") == 42)'
 
   lua-lint:
     name: Lua lint
@@ -73,27 +185,20 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install LuaJIT
-        uses: leafo/gh-actions-lua@v13
+      - name: Install Lua lint toolchain
+        uses: ./.github/actions/setup-lua
         with:
-          luaVersion: "luajit-2.1.0-beta3"
-
-      - name: Install LuaRocks
-        uses: leafo/gh-actions-luarocks@v4
-        with:
-          luarocksVersion: "3.11.1"
-
-      - name: Install luacheck
-        run: |
-          luarocks install https://luarocks.org/argparse-0.7.2-1.src.rock
-          luarocks install https://luarocks.org/luafilesystem-1.9.0-1.src.rock
-          luarocks install https://luarocks.org/luacheck-1.2.0-1.src.rock
+          lua-version: "luajit-2.1.0-beta3"
+          packages: >-
+            https://luarocks.org/argparse-0.7.2-1.src.rock
+            https://luarocks.org/luafilesystem-1.9.0-1.src.rock
+            https://luarocks.org/luacheck-1.2.0-1.src.rock
 
       - name: Run Lua lint
         run: make lua-lint
 
   fuzz:
-    name: Fuzz regression guard
+    name: Fuzz corpus replay
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -112,7 +217,7 @@ jobs:
             ~/.cargo/git
             ~/.cargo/bin/cargo-fuzz
             fuzz/target
-          key: fuzz-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.toml', 'fuzz/Cargo.toml') }}
+          key: fuzz-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.toml', 'Cargo.lock', 'fuzz/Cargo.toml') }}
           restore-keys: |
             fuzz-${{ runner.os }}-${{ runner.arch }}-
 
@@ -122,14 +227,12 @@ jobs:
             cargo install --locked cargo-fuzz
           fi
 
-      - name: Run fuzz targets
+      - name: Replay fuzz corpora
         run: |
-          cargo +nightly fuzz run fuzz_parse_eager -- -max_total_time=60
-          cargo +nightly fuzz run fuzz_depth -- -max_total_time=60
-          cargo +nightly fuzz run fuzz_ffi_ops -- -max_total_time=60
-
-      - name: Run lazy parse fuzz target
-        run: cargo +nightly fuzz run fuzz_parse_lazy -- -max_total_time=60
+          cargo +nightly fuzz run fuzz_parse_eager -- -runs=0
+          cargo +nightly fuzz run fuzz_depth -- -runs=0
+          cargo +nightly fuzz run fuzz_ffi_ops -- -runs=0
+          cargo +nightly fuzz run fuzz_parse_lazy -- -runs=0
 
   sanitizers:
     name: Sanitizers (Rust nightly)
@@ -175,7 +278,7 @@ jobs:
   lua:
     name: Lua integration tests (${{ matrix.runtime.name }})
     runs-on: ubuntu-latest
-    needs: rust
+    needs: build
     strategy:
       fail-fast: false
       matrix:
@@ -183,66 +286,35 @@ jobs:
           - name: upstream LuaJIT
             lua_version: "luajit-2.1.0-beta3"
             validate_rockspec: true
-          - name: OpenResty LuaJIT
-            lua_version: "luajit-openresty"
-            validate_rockspec: false
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
 
-      - name: Install Rust (stable)
+      - name: Download release cdylib
+        uses: actions/download-artifact@v4
+        with:
+          name: qjson-linux-release
+          path: target/release
+
+      - name: Install LuaJIT (${{ matrix.runtime.name }})
+        uses: ./.github/actions/setup-lua
+        with:
+          lua-version: ${{ matrix.runtime.lua_version }}
+          install-luarocks: "false"
+
+      - name: Install Lua dependencies
+        run: .github/scripts/install-lua-test-deps.sh
+
+      - name: Install Rust for package validation
+        if: matrix.runtime.validate_rockspec
         run: |
           rustup toolchain install stable --profile minimal --no-self-update
           rustup default stable
 
-      - name: Cache cargo registry & target
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: cargo-${{ runner.os }}-${{ hashFiles('Cargo.toml') }}
-          restore-keys: |
-            cargo-${{ runner.os }}-
-
-      - name: Install LuaJIT (${{ matrix.runtime.name }})
-        uses: leafo/gh-actions-lua@v13
-        with:
-          luaVersion: ${{ matrix.runtime.lua_version }}
-
-      - name: Install LuaRocks
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y lua5.1 liblua5.1-0-dev luarocks
-
-      - name: Build cdylib
-        run: cargo build --release
-
-      - name: Install Lua dependencies
-        run: |
-          # Ubuntu LuaRocks targets Lua 5.1 by default; LuaJIT is ABI-compatible
-          # with 5.1 so rocks built for 5.1 load fine under each matrix runtime.
-          sudo luarocks install busted
-          sudo luarocks install lua-cjson
-
       - name: Resolve LuaJIT executable
         id: luajit
-        run: |
-          set -euo pipefail
-          for candidate in luajit luajit-2.1.0-beta3 lua; do
-            if command -v "$candidate" >/dev/null 2>&1; then
-              lua_bin="$(command -v "$candidate")"
-              if "$lua_bin" -e 'assert(jit, "LuaJIT required")' >/dev/null 2>&1; then
-                echo "path=$lua_bin" >> "$GITHUB_OUTPUT"
-                "$lua_bin" -e 'print(jit.version)'
-                exit 0
-              fi
-            fi
-          done
-          echo "LuaJIT executable not found" >&2
-          exit 1
+        run: .github/scripts/resolve-luajit.sh
 
       - name: Run busted tests (${{ matrix.runtime.name }})
         env:
@@ -260,33 +332,7 @@ jobs:
           LUAJIT_BIN: ${{ steps.luajit.outputs.path }}
         run: |
           rm -rf /tmp/lua-qjson-rock
-          ROCKSPEC="$(python3 - <<'PY'
-          import re
-          from pathlib import Path
-
-          pattern = re.compile(r"^lua-qjson-(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?-(\d+)\.rockspec$")
-          def prerelease_key(value):
-              if value is None:
-                  return ()
-              key = []
-              for part in value.split("."):
-                  if part.isdigit():
-                      key.append((0, int(part)))
-                  else:
-                      key.append((1, part))
-              return tuple(key)
-
-          matches = []
-          for path in Path("rockspec").glob("lua-qjson-*.rockspec"):
-              match = pattern.match(path.name)
-              if match:
-                  major, minor, patch, prerelease, revision = match.groups()
-                  matches.append((int(major), int(minor), int(patch), prerelease is None, prerelease_key(prerelease), int(revision), str(path)))
-          if not matches:
-              raise SystemExit("no lua-qjson rockspec found")
-          print(max(matches)[-1])
-          PY
-          )"
+          ROCKSPEC="$(.github/scripts/latest-rockspec.py)"
           luarocks make "$ROCKSPEC" --tree /tmp/lua-qjson-rock
           eval "$(luarocks path --tree /tmp/lua-qjson-rock)"
           unset LD_LIBRARY_PATH
@@ -296,63 +342,33 @@ jobs:
   lua-valgrind:
     name: Lua valgrind memcheck (upstream LuaJIT)
     runs-on: ubuntu-latest
+    needs: build
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
 
-      - name: Install Rust (stable)
-        run: |
-          rustup toolchain install stable --profile minimal --no-self-update
-          rustup default stable
-
-      - name: Cache cargo registry & target
-        uses: actions/cache@v4
+      - name: Download release cdylib
+        uses: actions/download-artifact@v4
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: valgrind-${{ runner.os }}-${{ hashFiles('Cargo.toml') }}
-          restore-keys: |
-            valgrind-${{ runner.os }}-
+          name: qjson-linux-release
+          path: target/release
 
       - name: Install LuaJIT
-        uses: leafo/gh-actions-lua@v13
+        uses: ./.github/actions/setup-lua
         with:
-          luaVersion: "luajit-2.1.0-beta3"
-
-      - name: Install LuaRocks and valgrind
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y lua5.1 liblua5.1-0-dev luarocks valgrind
-
-      - name: Build cdylib
-        run: cargo build --release
+          lua-version: "luajit-2.1.0-beta3"
+          install-luarocks: "false"
 
       - name: Install Lua dependencies
-        run: |
-          # Ubuntu LuaRocks targets Lua 5.1 by default; LuaJIT is ABI-compatible
-          # with 5.1 so rocks built for 5.1 load fine under upstream LuaJIT.
-          sudo luarocks install busted
-          sudo luarocks install lua-cjson
+        run: .github/scripts/install-lua-test-deps.sh
+
+      - name: Install valgrind
+        run: sudo apt-get install -y valgrind
 
       - name: Resolve LuaJIT executable
         id: luajit
-        run: |
-          set -euo pipefail
-          for candidate in luajit luajit-2.1.0-beta3 lua; do
-            if command -v "$candidate" >/dev/null 2>&1; then
-              lua_bin="$(command -v "$candidate")"
-              if "$lua_bin" -e 'assert(jit, "LuaJIT required")' >/dev/null 2>&1; then
-                echo "path=$lua_bin" >> "$GITHUB_OUTPUT"
-                "$lua_bin" -e 'print(jit.version)'
-                exit 0
-              fi
-            fi
-          done
-          echo "LuaJIT executable not found" >&2
-          exit 1
+        run: .github/scripts/resolve-luajit.sh
 
       - name: Run busted tests under valgrind (upstream LuaJIT)
         env:
@@ -379,7 +395,7 @@ jobs:
   openresty:
     name: OpenResty runtime (${{ matrix.openresty.version }})
     runs-on: ubuntu-22.04
-    needs: rust
+    needs: build
     permissions:
       contents: read
     strategy:
@@ -388,99 +404,26 @@ jobs:
         openresty:
           - version: "1.21.4.4"
             image: "openresty/openresty:1.21.4.4-0-jammy"
+            full_busted: false
           - version: "1.27.1.2"
             image: "openresty/openresty:1.27.1.2-0-jammy"
+            full_busted: false
           - version: "1.29.2.4"
             image: "openresty/openresty:1.29.2.4-0-jammy"
+            full_busted: true
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
 
-      - name: Install Rust (stable)
-        run: |
-          rustup toolchain install stable --profile minimal --no-self-update
-          rustup default stable
-
-      - name: Cache cargo registry & target
-        uses: actions/cache@v4
+      - name: Download release cdylib
+        uses: actions/download-artifact@v4
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: openresty-${{ runner.os }}-${{ matrix.openresty.version }}-${{ hashFiles('Cargo.toml') }}
-          restore-keys: |
-            openresty-${{ runner.os }}-${{ matrix.openresty.version }}-
-            openresty-${{ runner.os }}-
-
-      - name: Build cdylib
-        run: cargo build --release
+          name: qjson-linux-release
+          path: target/release
 
       - name: Run OpenResty runtime checks
         env:
           OPENRESTY_IMAGE: ${{ matrix.openresty.image }}
+          OPENRESTY_FULL_BUSTED: ${{ matrix.openresty.full_busted }}
         run: .github/scripts/run-openresty-runtime.sh
-
-  package:
-    name: LuaRocks package (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-    needs: rust
-    strategy:
-      matrix:
-        os: [ubuntu-latest, macos-14]
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: recursive
-
-      - name: Install Rust (stable)
-        run: |
-          rustup toolchain install stable --profile minimal --no-self-update
-          rustup default stable
-
-      - name: Install LuaJIT
-        uses: leafo/gh-actions-lua@v13
-        with:
-          luaVersion: "luajit-2.1.0-beta3"
-
-      - name: Install LuaRocks
-        uses: leafo/gh-actions-luarocks@v4
-        with:
-          luarocksVersion: "3.11.1"
-
-      - name: Validate LuaRocks package
-        run: |
-          rm -rf /tmp/lua-qjson-rock
-          ROCKSPEC="$(python3 - <<'PY'
-          import re
-          from pathlib import Path
-
-          pattern = re.compile(r"^lua-qjson-(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?-(\d+)\.rockspec$")
-          def prerelease_key(value):
-              if value is None:
-                  return ()
-              key = []
-              for part in value.split("."):
-                  if part.isdigit():
-                      key.append((0, int(part)))
-                  else:
-                      key.append((1, part))
-              return tuple(key)
-
-          matches = []
-          for path in Path("rockspec").glob("lua-qjson-*.rockspec"):
-              match = pattern.match(path.name)
-              if match:
-                  major, minor, patch, prerelease, revision = match.groups()
-                  matches.append((int(major), int(minor), int(patch), prerelease is None, prerelease_key(prerelease), int(revision), str(path)))
-          if not matches:
-              raise SystemExit("no lua-qjson rockspec found")
-          print(max(matches)[-1])
-          PY
-          )"
-          luarocks make "$ROCKSPEC" --tree /tmp/lua-qjson-rock
-          eval "$(luarocks path --tree /tmp/lua-qjson-rock)"
-          unset LD_LIBRARY_PATH
-          unset DYLD_LIBRARY_PATH
-          lua -e 'assert(jit, "LuaJIT required"); local qjson = require("qjson"); local doc = qjson.parse("{\"a\":42}"); assert(doc:get_i64("a") == 42)'
