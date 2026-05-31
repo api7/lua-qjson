@@ -1,0 +1,145 @@
+name: Lua Full Valgrind Memcheck
+
+on:
+  schedule:
+    - cron: "47 4 * * 0"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  lua-valgrind-full:
+    name: Full Lua valgrind memcheck
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          persist-credentials: false
+
+      - name: Install Rust (stable)
+        run: |
+          rustup toolchain install stable --profile minimal --no-self-update
+          rustup default stable
+
+      - name: Cache cargo registry & target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: lua-valgrind-full-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.toml', 'Cargo.lock') }}
+          restore-keys: |
+            lua-valgrind-full-${{ runner.os }}-${{ runner.arch }}-
+
+      - name: Build cdylib (release)
+        run: cargo build --release
+
+      - name: Install LuaJIT
+        uses: ./.github/actions/setup-lua
+        with:
+          lua-version: "luajit-2.1.0-beta3"
+          install-luarocks: "false"
+
+      - name: Install Lua dependencies
+        run: .github/scripts/install-lua-test-deps.sh
+
+      - name: Install valgrind
+        run: sudo apt-get install -y valgrind
+
+      - name: Resolve LuaJIT executable
+        id: luajit
+        run: .github/scripts/resolve-luajit.sh
+
+      - name: Run full Lua suite under valgrind
+        env:
+          LUAJIT_BIN: ${{ steps.luajit.outputs.path }}
+          LUA_INIT: if jit then jit.off() end
+        run: |
+          LD_LIBRARY_PATH="$PWD/target/release" \
+            valgrind \
+              --trace-children=yes \
+              --error-exitcode=1 \
+              --leak-check=full \
+              --show-leak-kinds=definite,indirect,possible \
+              --errors-for-leak-kinds=definite,indirect,possible \
+              --num-callers=24 \
+              --suppressions=valgrind.supp \
+              busted --lua="$LUAJIT_BIN" tests/lua \
+                --lpath='./lua/?.lua'
+
+      - name: Open or update failure issue
+        if: failure() && github.event_name == 'schedule'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const title = 'Scheduled full Lua Valgrind memcheck failed';
+            const labels = [
+              { name: 'ci', color: '0e8a16', description: 'Continuous integration failure' },
+              { name: 'valgrind', color: '5319e7', description: 'Valgrind memory-check failure' },
+            ];
+            const { owner, repo } = context.repo;
+            const runUrl = `${context.serverUrl}/${owner}/${repo}/actions/runs/${context.runId}`;
+            const sha = context.sha;
+            const body = [
+              'The scheduled full Lua Valgrind memcheck failed.',
+              '',
+              `- Workflow: ${context.workflow}`,
+              `- Run: ${runUrl}`,
+              `- Commit: ${sha}`,
+              '',
+              'Please inspect the run log, reproduce locally if needed, and close this issue once the scheduled workflow is green again.',
+            ].join('\n');
+
+            for (const label of labels) {
+              try {
+                await github.rest.issues.getLabel({
+                  owner,
+                  repo,
+                  name: label.name,
+                });
+              } catch (error) {
+                if (error.status !== 404) {
+                  throw error;
+                }
+                await github.rest.issues.createLabel({
+                  owner,
+                  repo,
+                  name: label.name,
+                  color: label.color,
+                  description: label.description,
+                });
+              }
+            }
+
+            const { data: openIssues } = await github.rest.issues.listForRepo({
+              owner,
+              repo,
+              state: 'open',
+              per_page: 100,
+            });
+            const existing = openIssues.find((issue) => issue.title === title && !issue.pull_request);
+
+            if (existing) {
+              await github.rest.issues.createComment({
+                owner,
+                repo,
+                issue_number: existing.number,
+                body,
+              });
+            } else {
+              await github.rest.issues.create({
+                owner,
+                repo,
+                title,
+                body,
+                labels: labels.map((label) => label.name),
+              });
+            }

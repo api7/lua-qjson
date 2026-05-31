@@ -16,6 +16,72 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  changes:
+    name: Detect CI scope
+    runs-on: ubuntu-latest
+    outputs:
+      code: ${{ steps.scope.outputs.code }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Classify changed files
+        id: scope
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PUSH_BEFORE_SHA: ${{ github.event.before }}
+          CURRENT_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+              base="$PR_BASE_SHA"
+              head="$CURRENT_SHA"
+              range="$base...$head"
+          else
+              base="$PUSH_BEFORE_SHA"
+              head="$CURRENT_SHA"
+              range="$base..$head"
+          fi
+
+          if [ -z "$base" ] || [[ "$base" =~ ^0+$ ]]; then
+              echo "code=true" >> "$GITHUB_OUTPUT"
+              echo "No usable base SHA; running full CI."
+              exit 0
+          fi
+
+          if ! changed_paths="$(git diff --name-only "$range")"; then
+              echo "code=true" >> "$GITHUB_OUTPUT"
+              echo "Could not diff $range; running full CI."
+              exit 0
+          fi
+
+          echo "Changed paths:"
+          printf '%s\n' "$changed_paths"
+
+          code=false
+          while IFS= read -r path; do
+              [ -n "$path" ] || continue
+              case "$path" in
+                  README.md|CHANGELOG.md|CONTRIBUTING.md|LICENSE|LICENSE.*|AGENTS.md|docs/*|*.md)
+                      ;;
+                  *)
+                      code=true
+                      break
+                      ;;
+              esac
+          done <<< "$changed_paths"
+
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+          if [ "$code" = "true" ]; then
+              echo "Code or CI-sensitive files changed; running full CI."
+          else
+              echo "Only documentation files changed; skipping expensive CI jobs."
+          fi
+
   audit:
     name: Supply-chain audit
     runs-on: ubuntu-latest
@@ -82,6 +148,8 @@ jobs:
   build:
     name: Build release cdylib (linux)
     runs-on: ubuntu-latest
+    needs: changes
+    if: github.event_name != 'pull_request' || needs.changes.outputs.code == 'true'
     steps:
       - uses: actions/checkout@v4
         with:
@@ -117,6 +185,8 @@ jobs:
   rust:
     name: Rust tests (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    needs: changes
+    if: github.event_name != 'pull_request' || needs.changes.outputs.code == 'true'
     strategy:
       matrix:
         os: [ubuntu-latest, macos-14]
@@ -182,6 +252,8 @@ jobs:
   lua-lint:
     name: Lua lint
     runs-on: ubuntu-latest
+    needs: changes
+    if: github.event_name != 'pull_request' || needs.changes.outputs.code == 'true'
     steps:
       - uses: actions/checkout@v4
 
@@ -200,6 +272,8 @@ jobs:
   fuzz:
     name: Fuzz corpus replay
     runs-on: ubuntu-latest
+    needs: changes
+    if: github.event_name != 'pull_request' || needs.changes.outputs.code == 'true'
     steps:
       - uses: actions/checkout@v4
         with:
@@ -237,6 +311,8 @@ jobs:
   sanitizers:
     name: Sanitizers (Rust nightly)
     runs-on: ubuntu-latest
+    needs: changes
+    if: github.event_name != 'pull_request' || needs.changes.outputs.code == 'true'
     steps:
       - uses: actions/checkout@v4
         with:
@@ -343,6 +419,7 @@ jobs:
     name: Lua valgrind memcheck (upstream LuaJIT)
     runs-on: ubuntu-latest
     needs: build
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
         with:
@@ -370,7 +447,7 @@ jobs:
         id: luajit
         run: .github/scripts/resolve-luajit.sh
 
-      - name: Run busted tests under valgrind (upstream LuaJIT)
+      - name: Run smoke tests under valgrind (upstream LuaJIT)
         env:
           LUAJIT_BIN: ${{ steps.luajit.outputs.path }}
           LUA_INIT: if jit then jit.off() end
@@ -379,7 +456,8 @@ jobs:
           # Disable JIT compilation so Memcheck observes the interpreter + FFI
           # boundary instead of LuaJIT's generated traces. Trace children so
           # the LuaRocks busted launcher re-execs into the selected LuaJIT
-          # binary under Memcheck.
+          # binary under Memcheck. Keep PR coverage to focused smoke specs;
+          # full Lua Valgrind runs live in lua-valgrind-full.yml.
           LD_LIBRARY_PATH="$PWD/target/release" \
             valgrind \
               --trace-children=yes \
@@ -389,7 +467,15 @@ jobs:
               --errors-for-leak-kinds=definite,indirect,possible \
               --num-callers=24 \
               --suppressions=valgrind.supp \
-              busted --lua="$LUAJIT_BIN" tests/lua \
+              busted --lua="$LUAJIT_BIN" \
+                tests/lua/basic_spec.lua \
+                tests/lua/escape_spec.lua \
+                tests/lua/gc_spec.lua \
+                tests/lua/lazy_table_spec.lua \
+                tests/lua/ordered_encode_spec.lua \
+                tests/lua/encode_errors_spec.lua \
+                tests/lua/encode_cjson_compat_spec.lua \
+                tests/lua/options_spec.lua \
                 --lpath='./lua/?.lua'
 
   openresty:
