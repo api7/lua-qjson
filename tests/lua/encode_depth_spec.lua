@@ -1,12 +1,24 @@
 local qjson = require("qjson")
 
 describe("qjson encode depth guard", function()
-    it("raises an error on circular reference instead of crashing", function()
+    it("raises a circular reference error before reaching the max-depth guard", function()
         local t = {}
         t.self = t
         assert.has_error(function()
             qjson.encode(t)
-        end, "qjson.encode: max depth exceeded")
+        end, "qjson.encode: circular reference")
+    end)
+
+    it("allows shared table references that are not recursive cycles", function()
+        local child = { x = 1 }
+        local encoded = qjson.encode({
+            a = child,
+            b = child,
+        })
+        local decoded = qjson.decode(encoded)
+
+        assert.are.equal(1, decoded.a.x)
+        assert.are.equal(1, decoded.b.x)
     end)
 
     it("raises an error when nesting depth exceeds 1000", function()

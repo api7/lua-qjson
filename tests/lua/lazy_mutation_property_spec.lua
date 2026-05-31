@@ -845,7 +845,7 @@ describe("qjson lazy mutation deterministic regressions", function()
         t.a.self = t
         assert.has_error(function()
             qjson.encode(t)
-        end, "qjson.encode: max depth exceeded")
+        end, "qjson.encode: circular reference")
     end)
 
     it("documents sparse array hole semantics after lazy array mutation", function()
