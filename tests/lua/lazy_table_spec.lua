@@ -1,5 +1,31 @@
 local qjson = require("qjson")
 
+describe("qjson.decode — top-level scalars", function()
+    it("decodes top-level numbers", function()
+        assert.are.equal(42, qjson.decode("42"))
+        assert.are.equal(3.14, qjson.decode("3.14"))
+    end)
+
+    it("decodes top-level strings (including escapes)", function()
+        assert.are.equal("hello", qjson.decode('"hello"'))
+        assert.are.equal('line\n"break"', qjson.decode('"line\\n\\"break\\""'))
+    end)
+
+    it("decodes top-level booleans", function()
+        assert.is_true(qjson.decode("true"))
+        assert.is_false(qjson.decode("false"))
+    end)
+
+    it("decodes top-level null as qjson.null", function()
+        assert.are.equal(qjson.null, qjson.decode("null"))
+    end)
+
+    it("still errors for invalid JSON and empty input", function()
+        assert.has_error(function() qjson.decode("not-json") end)
+        assert.has_error(function() qjson.decode("") end)
+    end)
+end)
+
 describe("LazyObject __index — scalars", function()
     it("reads a string field", function()
         local t = qjson.decode('{"k":"hello"}')
