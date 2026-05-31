@@ -226,3 +226,21 @@ The property suite generates valid JSON containers, runs
 `decode -> materialize -> encode -> decode -> materialize`, checks structural
 equality, and probes the encoder max-depth boundary around 1000 nested
 containers.
+
+## Lua lazy mutation property tests
+
+Lazy mutation path coverage is in `tests/lua/lazy_mutation_property_spec.lua`
+and uses deterministic defaults in the Makefile so PR runs are reproducible:
+
+```sh
+make lua-mutation-property-test
+```
+
+Stress this focused suite locally by overriding case/step count and seed:
+
+```sh
+make lua-mutation-property-test \
+  QJSON_MUT_PROP_CASES=4000 \
+  QJSON_MUT_PROP_STEPS=200 \
+  QJSON_MUT_PROP_SEED=12345
+```
