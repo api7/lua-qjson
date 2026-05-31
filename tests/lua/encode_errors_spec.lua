@@ -19,11 +19,33 @@ describe("qjson.encode error coverage", function()
         assert_encode_error(coroutine.create(function() end), "qjson.encode: unsupported value type: thread")
         assert_encode_error(newproxy(false), "qjson.encode: unsupported value type: userdata")
         assert_encode_error(ffi.new("double", 1.25), "qjson.encode: unsupported value type: cdata")
+        assert_encode_error(ffi.new("struct { int x; }"), "qjson.encode: unsupported value type: cdata")
+        assert_encode_error(ffi.cast("void *", 1), "qjson.encode: unsupported value type: cdata")
     end)
 
     it("encodes int64 and uint64 cdata as decimal JSON integers", function()
+        assert.are.equal("9007199254740993", qjson.encode(9007199254740993LL))
+        assert.are.equal("18446744073709551615", qjson.encode(18446744073709551615ULL))
+        assert.are.equal(1, select("#", qjson.encode(9007199254740993LL)))
+        assert.are.equal(1, select("#", qjson.encode(18446744073709551615ULL)))
         assert.are.equal('{"i":9007199254740993}', qjson.encode({ i = 9007199254740993LL }))
         assert.are.equal('{"u":18446744073709551615}', qjson.encode({ u = 18446744073709551615ULL }))
+    end)
+
+    it("encodes 64-bit cdata boundary values without precision loss", function()
+        assert.are.equal("9223372036854775807", qjson.encode(9223372036854775807LL))
+        assert.are.equal("-9223372036854775808", qjson.encode(ffi.new("int64_t", -9223372036854775807LL - 1LL)))
+        assert.are.equal("18446744073709551615", qjson.encode(18446744073709551615ULL))
+        assert.are.equal("0", qjson.encode(0LL))
+        assert.are.equal("0", qjson.encode(0ULL))
+    end)
+
+    it("encodes nested int64 and uint64 cdata values", function()
+        assert.are.equal("[1,2]", qjson.encode({ 1LL, 2LL }))
+        assert.are.equal('[{"x":9007199254740993},{"y":18446744073709551615}]', qjson.encode({
+            { x = 9007199254740993LL },
+            { y = 18446744073709551615ULL },
+        }))
     end)
 
     it("round-trips decoded 64-bit integer cdata through encode", function()
@@ -31,6 +53,19 @@ describe("qjson.encode error coverage", function()
 
         assert.are.equal('{"i":9007199254740993}', qjson.encode({ i = doc:get_i64("i") }))
         assert.are.equal('{"u":18446744073709551615}', qjson.encode({ u = doc:get_u64("u") }))
+    end)
+
+    it("intentionally differs from lua-cjson by accepting int64 and uint64 cdata", function()
+        local cjson = require("cjson")
+
+        assert.has_error(function()
+            cjson.encode(9007199254740993LL)
+        end)
+        assert.has_error(function()
+            cjson.encode(18446744073709551615ULL)
+        end)
+        assert.are.equal("9007199254740993", qjson.encode(9007199254740993LL))
+        assert.are.equal("18446744073709551615", qjson.encode(18446744073709551615ULL))
     end)
 
     it("rejects non-string object keys", function()
