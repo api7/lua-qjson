@@ -48,3 +48,66 @@
    Memcheck:Cond
    fun:str_fastcmp
 }
+
+# The upstream LuaJIT binary installed by leafo/gh-actions-lua is stripped in
+# CI, so the same lj_str_new/str_fastcmp reports can surface as `???` in the
+# LuaJIT executable followed by exported Lua C API frames. Keep these patterns
+# scoped to LuaJIT/lua-cjson frames; qjson/Rust frames remain unsuppressed.
+
+{
+   Stripped LuaJIT string intern Cond via luaL_gsub
+   Memcheck:Cond
+   obj:*/.lua/bin/luajit-2.1.0-beta3
+   fun:lua_pushlstring
+   fun:luaL_gsub
+}
+
+{
+   Stripped LuaJIT string intern Cond via luaL_pushresult
+   Memcheck:Cond
+   obj:*/.lua/bin/luajit-2.1.0-beta3
+   fun:lua_pushlstring
+   fun:luaL_pushresult
+}
+
+{
+   Stripped LuaJIT string intern Cond via lua_pushstring
+   Memcheck:Cond
+   obj:*/.lua/bin/luajit-2.1.0-beta3
+   fun:lua_pushstring
+}
+
+{
+   Stripped LuaJIT string intern Cond via lua-cjson decode
+   Memcheck:Cond
+   obj:*/.lua/bin/luajit-2.1.0-beta3
+   fun:lua_pushlstring
+   fun:json_process_value
+}
+
+{
+   Stripped LuaJIT string intern Cond via lua-cjson encode
+   Memcheck:Cond
+   obj:*/.lua/bin/luajit-2.1.0-beta3
+   fun:lua_pushlstring
+   fun:json_encode
+}
+
+{
+   Stripped LuaJIT interpreter Cond before lua_pcall
+   Memcheck:Cond
+   obj:*/.lua/bin/luajit-2.1.0-beta3
+   obj:*/.lua/bin/luajit-2.1.0-beta3
+   obj:*/.lua/bin/luajit-2.1.0-beta3
+   fun:lua_pcall
+}
+
+{
+   Stripped LuaJIT interpreter Cond before lua_pcall with one extra frame
+   Memcheck:Cond
+   obj:*/.lua/bin/luajit-2.1.0-beta3
+   obj:*/.lua/bin/luajit-2.1.0-beta3
+   obj:*/.lua/bin/luajit-2.1.0-beta3
+   obj:*/.lua/bin/luajit-2.1.0-beta3
+   fun:lua_pcall
+}

@@ -183,11 +183,9 @@ jobs:
           - name: upstream LuaJIT
             lua_version: "luajit-2.1.0-beta3"
             validate_rockspec: true
-            valgrind: true
           - name: OpenResty LuaJIT
             lua_version: "luajit-openresty"
             validate_rockspec: false
-            valgrind: false
     steps:
       - uses: actions/checkout@v4
         with:
@@ -218,12 +216,6 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y lua5.1 liblua5.1-0-dev luarocks
-
-      - name: Install valgrind
-        if: matrix.runtime.valgrind
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y valgrind
 
       - name: Build cdylib
         run: cargo build --release
@@ -261,30 +253,6 @@ jobs:
           LD_LIBRARY_PATH="$PWD/target/release" \
             busted --lua="$LUAJIT_BIN" tests/lua \
               --lpath='./lua/?.lua'
-
-      - name: Run busted tests under valgrind (upstream LuaJIT)
-        if: matrix.runtime.valgrind
-        continue-on-error: true
-        env:
-          LUAJIT_BIN: ${{ steps.luajit.outputs.path }}
-          LUA_INIT: if jit then jit.off() end
-        run: |
-          # Valgrind is a supplemental end-to-end canary for the real LuaJIT
-          # FFI path. Disable JIT compilation so Memcheck observes the
-          # interpreter + FFI boundary instead of LuaJIT's generated traces.
-          # Trace children so the LuaRocks busted launcher re-execs into the
-          # selected LuaJIT binary under Memcheck.
-          LD_LIBRARY_PATH="$PWD/target/release" \
-            valgrind \
-              --trace-children=yes \
-              --error-exitcode=1 \
-              --leak-check=full \
-              --show-leak-kinds=definite,indirect,possible \
-              --errors-for-leak-kinds=definite,indirect,possible \
-              --num-callers=24 \
-              --suppressions=valgrind.supp \
-              busted --lua="$LUAJIT_BIN" tests/lua \
-                --lpath='./lua/?.lua'
 
       - name: Validate LuaRocks package
         if: matrix.runtime.validate_rockspec
@@ -324,6 +292,89 @@ jobs:
           unset LD_LIBRARY_PATH
           "$LUAJIT_BIN" -e 'local qjson = require("qjson"); local doc = qjson.parse("{\"a\":42}"); assert(doc:get_i64("a") == 42)'
           busted --lua="$LUAJIT_BIN" tests/lua
+
+  lua-valgrind:
+    name: Lua valgrind memcheck (upstream LuaJIT)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Rust (stable)
+        run: |
+          rustup toolchain install stable --profile minimal --no-self-update
+          rustup default stable
+
+      - name: Cache cargo registry & target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: valgrind-${{ runner.os }}-${{ hashFiles('Cargo.toml') }}
+          restore-keys: |
+            valgrind-${{ runner.os }}-
+
+      - name: Install LuaJIT
+        uses: leafo/gh-actions-lua@v13
+        with:
+          luaVersion: "luajit-2.1.0-beta3"
+
+      - name: Install LuaRocks and valgrind
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y lua5.1 liblua5.1-0-dev luarocks valgrind
+
+      - name: Build cdylib
+        run: cargo build --release
+
+      - name: Install Lua dependencies
+        run: |
+          # Ubuntu LuaRocks targets Lua 5.1 by default; LuaJIT is ABI-compatible
+          # with 5.1 so rocks built for 5.1 load fine under upstream LuaJIT.
+          sudo luarocks install busted
+          sudo luarocks install lua-cjson
+
+      - name: Resolve LuaJIT executable
+        id: luajit
+        run: |
+          set -euo pipefail
+          for candidate in luajit luajit-2.1.0-beta3 lua; do
+            if command -v "$candidate" >/dev/null 2>&1; then
+              lua_bin="$(command -v "$candidate")"
+              if "$lua_bin" -e 'assert(jit, "LuaJIT required")' >/dev/null 2>&1; then
+                echo "path=$lua_bin" >> "$GITHUB_OUTPUT"
+                "$lua_bin" -e 'print(jit.version)'
+                exit 0
+              fi
+            fi
+          done
+          echo "LuaJIT executable not found" >&2
+          exit 1
+
+      - name: Run busted tests under valgrind (upstream LuaJIT)
+        env:
+          LUAJIT_BIN: ${{ steps.luajit.outputs.path }}
+          LUA_INIT: if jit then jit.off() end
+        run: |
+          # Valgrind is an end-to-end canary for the real LuaJIT FFI path.
+          # Disable JIT compilation so Memcheck observes the interpreter + FFI
+          # boundary instead of LuaJIT's generated traces. Trace children so
+          # the LuaRocks busted launcher re-execs into the selected LuaJIT
+          # binary under Memcheck.
+          LD_LIBRARY_PATH="$PWD/target/release" \
+            valgrind \
+              --trace-children=yes \
+              --error-exitcode=1 \
+              --leak-check=full \
+              --show-leak-kinds=definite,indirect,possible \
+              --errors-for-leak-kinds=definite,indirect,possible \
+              --num-callers=24 \
+              --suppressions=valgrind.supp \
+              busted --lua="$LUAJIT_BIN" tests/lua \
+                --lpath='./lua/?.lua'
 
   openresty:
     name: OpenResty runtime (${{ matrix.openresty.version }})
