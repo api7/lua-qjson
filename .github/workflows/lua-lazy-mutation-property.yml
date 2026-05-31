@@ -25,7 +25,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - uses: actions/checkout@v4
         with:
           submodules: recursive
           persist-credentials: false
@@ -36,7 +36,7 @@ jobs:
           rustup default stable
 
       - name: Cache cargo registry & target
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
+        uses: actions/cache@v4
         with:
           path: |
             ~/.cargo/registry
@@ -47,7 +47,7 @@ jobs:
             mut-prop-${{ runner.os }}-
 
       - name: Install LuaJIT
-        uses: leafo/gh-actions-lua@6919171ccf181b826f44b9bca76307b577217377
+        uses: leafo/gh-actions-lua@v13
         with:
           luaVersion: "luajit-2.1.0-beta3"
 
