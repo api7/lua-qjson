@@ -633,10 +633,55 @@ end
 local encode
 
 local ENCODE_MAX_DEPTH = 1000
+local ENCODE_SPARSE_CONVERT = false
 local ENCODE_SPARSE_RATIO = 2
 local ENCODE_SPARSE_SAFE = 10
 local ENCODE_DEPTH_ERROR = "qjson.encode: max depth exceeded"
 local ENCODE_CYCLE_ERROR = "qjson.encode: circular reference"
+
+local function validate_non_negative_integer(value, arg_index)
+    if type(value) ~= "number"
+        or value ~= value
+        or value == math.huge
+        or value == -math.huge
+        or value < 0
+        or value ~= math.floor(value)
+    then
+        error(
+            "bad argument #" .. tostring(arg_index)
+                .. " to qjson.encode_sparse_array (expected non-negative integer)",
+            2
+        )
+    end
+end
+
+function _M.encode_sparse_array(convert, ratio, safe, ...)
+    if select("#", ...) > 0 then
+        error("bad argument #4 to qjson.encode_sparse_array (found too many arguments)", 2)
+    end
+
+    local new_convert = ENCODE_SPARSE_CONVERT
+    local new_ratio = ENCODE_SPARSE_RATIO
+    local new_safe = ENCODE_SPARSE_SAFE
+
+    if convert ~= nil then
+        new_convert = convert ~= false
+    end
+    if ratio ~= nil then
+        validate_non_negative_integer(ratio, 2)
+        new_ratio = ratio
+    end
+    if safe ~= nil then
+        validate_non_negative_integer(safe, 3)
+        new_safe = safe
+    end
+
+    ENCODE_SPARSE_CONVERT = new_convert
+    ENCODE_SPARSE_RATIO = new_ratio
+    ENCODE_SPARSE_SAFE = new_safe
+
+    return ENCODE_SPARSE_CONVERT, ENCODE_SPARSE_RATIO, ENCODE_SPARSE_SAFE
+end
 
 -- Emit a dirty LazyObject as JSON in ORDER_KEYS (first-appearance) order.
 -- A dirty object without ORDER state yet (e.g. dirtied only via a child
@@ -714,7 +759,13 @@ local function classify_plain_table(t)
     if not saw_key or not all_positive_integer_keys then
         return "object"
     end
-    if max > ENCODE_SPARSE_SAFE and max > count * ENCODE_SPARSE_RATIO then
+    if ENCODE_SPARSE_RATIO > 0
+        and max > ENCODE_SPARSE_SAFE
+        and max > count * ENCODE_SPARSE_RATIO
+    then
+        if ENCODE_SPARSE_CONVERT then
+            return "object"
+        end
         error("Cannot serialise table: excessively sparse array")
     end
     return "array", max

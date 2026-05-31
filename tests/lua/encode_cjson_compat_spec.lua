@@ -116,6 +116,136 @@ describe("qjson.encode lua-cjson compatible Lua inputs", function()
     end)
 end)
 
+describe("qjson.encode_sparse_array lua-cjson compatible controls", function()
+    local function reset_sparse_defaults()
+        qjson.encode_sparse_array(false, 2, 10)
+    end
+
+    local function assert_sparse_array_arg_error(fn, expected)
+        local ok, err = pcall(fn)
+        assert.is_false(ok)
+        assert.matches(expected, tostring(err), 1, true)
+    end
+
+    before_each(function()
+        reset_sparse_defaults()
+    end)
+
+    after_each(function()
+        reset_sparse_defaults()
+    end)
+
+    it("returns lua-cjson compatible defaults via getter", function()
+        assert.same({false, 2, 10}, {qjson.encode_sparse_array()})
+    end)
+
+    it("setter always returns a triplet and getter reflects current values", function()
+        assert.same({true, 2, 10}, {qjson.encode_sparse_array(true)})
+        assert.same({true, 2, 3}, {qjson.encode_sparse_array(nil, nil, 3)})
+        assert.same({true, 2, 3}, {qjson.encode_sparse_array()})
+    end)
+
+    it("only updates fields that are explicitly provided", function()
+        assert.same({true, 5, 7}, {qjson.encode_sparse_array(true, 5, 7)})
+        assert.same({true, 0, 7}, {qjson.encode_sparse_array(nil, 0, nil)})
+        assert.same({false, 0, 7}, {qjson.encode_sparse_array(false, nil, nil)})
+        assert.same({false, 0, 11}, {qjson.encode_sparse_array(nil, nil, 11)})
+    end)
+
+    it("treats any truthy convert input as true", function()
+        assert.same({true, 2, 10}, {qjson.encode_sparse_array("on")})
+        assert.same({true, 2, 10}, {qjson.encode_sparse_array()})
+    end)
+
+    it("defaults to rejecting excessively sparse arrays", function()
+        assert_encode_error({[1] = "one", [1000] = "thousand"}, "excessively sparse array")
+    end)
+
+    it("forbids any sparse holes when ratio=1 and safe=0", function()
+        qjson.encode_sparse_array(false, 1, 0)
+        assert_encode_error({[1] = 1, [3] = 3}, "excessively sparse array")
+        assert.are.equal("[1,2]", qjson.encode({[1] = 1, [2] = 2}))
+    end)
+
+    it("converts excessively sparse arrays to objects when convert=true", function()
+        qjson.encode_sparse_array(true)
+        assert_json_equal(qjson.encode({[1] = "one", [1000] = "thousand"}), '{"1":"one","1000":"thousand"}')
+    end)
+
+    it("disables excessive sparse checks when ratio=0 and fills null holes", function()
+        qjson.encode_sparse_array(false, 0, 10)
+        assert.are.equal("[1,null,null,null,null,6]", qjson.encode({[1] = 1, [6] = 6}))
+        assert.are.equal('[null,null,"v"]', qjson.encode({[3] = "v"}))
+    end)
+
+    it("applies safe threshold before triggering excessive sparse handling", function()
+        qjson.encode_sparse_array(false, 2, 7)
+        assert.are.equal('["a",null,null,null,null,null,"g"]', qjson.encode({[1] = "a", [7] = "g"}))
+
+        qjson.encode_sparse_array(true, 2, 5)
+        assert_json_equal(qjson.encode({[1] = "a", [7] = "g"}), '{"1":"a","7":"g"}')
+    end)
+
+    it("rejects invalid ratio and safe values", function()
+        assert_sparse_array_arg_error(function()
+            qjson.encode_sparse_array(nil, -1)
+        end, "bad argument #2 to qjson.encode_sparse_array (expected non-negative integer)")
+        assert_sparse_array_arg_error(function()
+            qjson.encode_sparse_array(nil, 1.5)
+        end, "bad argument #2 to qjson.encode_sparse_array (expected non-negative integer)")
+        assert_sparse_array_arg_error(function()
+            qjson.encode_sparse_array(nil, math.huge)
+        end, "bad argument #2 to qjson.encode_sparse_array (expected non-negative integer)")
+        assert_sparse_array_arg_error(function()
+            qjson.encode_sparse_array(nil, nil, -1)
+        end, "bad argument #3 to qjson.encode_sparse_array (expected non-negative integer)")
+        assert_sparse_array_arg_error(function()
+            qjson.encode_sparse_array(nil, nil, 1.2)
+        end, "bad argument #3 to qjson.encode_sparse_array (expected non-negative integer)")
+        assert_sparse_array_arg_error(function()
+            qjson.encode_sparse_array(nil, nil, math.huge)
+        end, "bad argument #3 to qjson.encode_sparse_array (expected non-negative integer)")
+    end)
+
+    it("keeps sparse-array settings unchanged when setter validation fails", function()
+        qjson.encode_sparse_array(false, 5, 7)
+
+        assert_sparse_array_arg_error(function()
+            qjson.encode_sparse_array(true, -1, 9)
+        end, "bad argument #2 to qjson.encode_sparse_array (expected non-negative integer)")
+        assert.same({false, 5, 7}, {qjson.encode_sparse_array()})
+
+        assert_sparse_array_arg_error(function()
+            qjson.encode_sparse_array(true, 6, math.huge)
+        end, "bad argument #3 to qjson.encode_sparse_array (expected non-negative integer)")
+        assert.same({false, 5, 7}, {qjson.encode_sparse_array()})
+    end)
+
+    it("rejects too many arguments", function()
+        assert_sparse_array_arg_error(function()
+            qjson.encode_sparse_array(false, 2, 10, true)
+        end, "bad argument #4 to qjson.encode_sparse_array (found too many arguments)")
+    end)
+
+    it("keeps default sparse-array encoding behavior compatible with lua-cjson", function()
+        local value = {[1] = "one", [5] = "five"}
+        assert_json_equal(qjson.encode(value), cjson.encode(value))
+    end)
+
+    it("does not let strict sparse settings affect empty_array_mt or lazy-array paths", function()
+        qjson.encode_sparse_array(false, 1, 0)
+
+        assert.are.equal("[]", qjson.encode(setmetatable({}, qjson.empty_array_mt)))
+
+        local lazy_clean = qjson.decode("[1,null,3]")
+        assert.are.equal("[1,null,3]", qjson.encode(lazy_clean))
+
+        local lazy_materialized = qjson.decode("[1,2]")
+        lazy_materialized[4] = 4
+        assert.are.equal("[1,2,null,4]", qjson.encode(lazy_materialized))
+    end)
+end)
+
 describe("qjson.encode qjson lazy proxy extensions", function()
     it("encodes 64-bit integer cdata as a qjson extension", function()
         assert.are.equal("9007199254740993", qjson.encode(9007199254740993LL))
