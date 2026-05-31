@@ -17,6 +17,7 @@ Use this guide when replacing `lua-cjson` in existing LuaJIT or OpenResty code.
 | `cjson.null` | `qjson.null` | Aliases `cjson.null` when lua-cjson is available; otherwise qjson provides its own sentinel. |
 | `cjson.empty_array_mt` | `qjson.empty_array_mt` | Aliases lua-cjson's empty-array metatable when available. |
 | `pairs(t)` / `ipairs(t)` on decoded data | `qjson.pairs(t)` / `qjson.ipairs(t)` | Works on all LuaJIT builds. Plain `pairs` / `ipairs` need LuaJIT 5.2-compat support. |
+| `next(t)` on decoded data | No direct lazy-proxy equivalent | Use `qjson.pairs`, `qjson.ipairs`, or `qjson.len`; materialize first if a library requires native `next`. |
 | `#t` on decoded data | `qjson.len(t)` | Works on all LuaJIT builds. Plain `#t` needs LuaJIT 5.2-compat support. |
 | Field reads after decode | `t.key`, `t[1]`, or `qjson.parse(json):get_*("path")` | Use `qjson.parse` and cursors for parse-once, extract-a-few-fields hot paths. |
 
@@ -108,6 +109,39 @@ local n = qjson.len(obj_or_arr)
 `qjson.materialize` converts proxies into plain Lua tables. Duplicate object keys
 collapse to the last value during materialization, matching the table shape that
 lua-cjson callers usually observe.
+
+### Native `next` is not supported on proxies
+
+Lua's native `next(t)` walks the raw table storage directly; it does not call
+`__pairs`, `__ipairs`, `__index`, or any qjson helper. On a qjson lazy proxy,
+that raw storage is implementation state and cache data, not the decoded JSON
+object or array. This means `next(proxy)` is not a valid way to iterate JSON
+fields, fetch the first entry, or test whether a decoded object is empty.
+
+Replace common `next` patterns with proxy-aware helpers:
+
+```lua
+-- Before, with cjson-decoded plain tables:
+if next(obj) == nil then
+    -- empty object
+end
+
+-- After, with qjson lazy proxies:
+if qjson.len(obj) == 0 then
+    -- empty object or array
+end
+
+for k, v in qjson.pairs(obj) do
+    -- object fields in source order
+end
+
+for i, v in qjson.ipairs(arr) do
+    -- array elements in order
+end
+```
+
+If code you do not control calls `next`, `rawget`, `rawset`, or otherwise expects
+ordinary table storage, pass `qjson.materialize(proxy)` instead of the proxy.
 
 ### Validation mode
 

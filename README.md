@@ -152,6 +152,13 @@ lazy proxy directly to `cjson.encode` (cjson bypasses metamethods in C); use
 `qjson.encode` instead, or call `qjson.materialize(t)` to get a plain Lua table
 that any third-party encoder can handle.
 
+**Native `next` caveat.** `next(t)` is not proxy-aware: it bypasses the
+`__pairs` / `__ipairs` hooks and may see qjson implementation fields instead of
+JSON fields. Do not use native `next` to iterate a lazy proxy or test whether it
+is empty. Use `qjson.pairs(t)`, `qjson.ipairs(t)`, or `qjson.len(t)` instead, or
+call `qjson.materialize(t)` before passing the value to code that requires
+ordinary Lua table traversal.
+
 **LuaJIT compat-52 caveat.** `for k, v in pairs/ipairs(t)` and `#t` on a lazy
 proxy rely on `__pairs` / `__ipairs` / `__len`, which LuaJIT only invokes when
 built with `LUAJIT_ENABLE_LUA52COMPAT` (OpenResty's default). On a stock LuaJIT
