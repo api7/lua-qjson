@@ -573,9 +573,7 @@ end
 
 local function encode_cdata(v)
     if ffi.istype(int64_ct, v) or ffi.istype(uint64_ct, v) then
-        local s = tostring(v)
-        s = s:gsub("ULL$", "")
-        s = s:gsub("LL$", "")
+        local s = tostring(v):gsub("[UuLl]+$", "")
         return s
     end
     error("qjson.encode: unsupported value type: cdata")
