@@ -2,6 +2,10 @@
 
 Rust-implemented fast JSON decoder exposed to LuaJIT via FFI. Optimized for the common case where a large JSON is parsed once and only a small number of fields are extracted before the document is discarded.
 
+Primary supported runtime is OpenResty LuaJIT. Stock LuaJIT is supported with
+the caveats documented below. Standard PUC Lua 5.1/5.2/5.3/5.4 is not
+supported because qjson depends on LuaJIT FFI.
+
 See [CHANGELOG.md](CHANGELOG.md) for release notes.
 
 ## Documentation
@@ -27,12 +31,21 @@ A `Makefile` wraps the common workflows; run `make help` to see `build`, `test`,
 ## Installing
 
 ```sh
-luarocks install lua-qjson
+luarocks --lua-version=5.1 install lua-qjson
 ```
 
-The rock builds the Rust native library during installation, so Rust/Cargo and
-LuaJIT must be available in the environment that runs `luarocks install`. The
-Lua module name remains `qjson`:
+Build/install requirements:
+
+- Rust/Cargo (the rock builds the native library during install)
+- LuaRocks targeting a Lua 5.1 / LuaJIT-compatible tree
+  (`--lua-version=5.1`)
+
+Runtime requirements:
+
+- OpenResty LuaJIT (intended runtime) or stock LuaJIT with the caveats below
+- Access to the installed qjson native library and Lua module files
+
+The Lua module name remains `qjson`:
 
 ```lua
 local qjson = require("qjson")
@@ -42,7 +55,8 @@ local qjson = require("qjson")
 
 Rust/Cargo is only a build-time dependency. For production images, install the
 rock into a staging tree in a builder stage, then copy that tree into a runtime
-stage that contains LuaJIT but no Rust toolchain.
+stage that contains OpenResty LuaJIT (preferred) or LuaJIT, but no Rust
+toolchain.
 
 The runtime file set is small:
 
@@ -53,8 +67,8 @@ The runtime file set is small:
 | `/usr/local/share/lua/5.1/qjson/lib.lua` | FFI loader |
 | `/usr/local/share/lua/5.1/qjson/table.lua` | Lazy table API and encoder |
 
-The runtime also needs LuaJIT, plus the normal OS shared libraries required by
-LuaJIT and the native module.
+The runtime also needs OpenResty LuaJIT (preferred) or LuaJIT, plus the normal
+OS shared libraries required by LuaJIT and the native module.
 
 Example multi-stage Dockerfile:
 
@@ -142,7 +156,7 @@ end
 
 t.extra = "x"
 
-local s = qjson.encode(t)                  -- drop-in replacement for cjson.encode
+local s = qjson.encode(t)                  -- cjson-compatible encode path for lazy proxies
 ```
 
 `qjson.encode` works on lazy proxies (re-emitting unmodified subtrees as the
@@ -161,9 +175,9 @@ ordinary Lua table traversal.
 
 **LuaJIT compat-52 caveat.** `for k, v in pairs/ipairs(t)` and `#t` on a lazy
 proxy rely on `__pairs` / `__ipairs` / `__len`, which LuaJIT only invokes when
-built with `LUAJIT_ENABLE_LUA52COMPAT` (OpenResty's default). On a stock LuaJIT
-5.1, use the explicit `qjson.pairs(t)`, `qjson.ipairs(t)`, and `qjson.len(t)` helpers
-— they work on both builds.
+built with `LUAJIT_ENABLE_LUA52COMPAT` (OpenResty's default and the intended
+runtime setup). On a stock LuaJIT 5.1, use the explicit `qjson.pairs(t)`,
+`qjson.ipairs(t)`, and `qjson.len(t)` helpers — they work on both builds.
 
 ## Testing — Lua
 
