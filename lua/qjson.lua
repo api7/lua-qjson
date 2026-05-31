@@ -216,6 +216,7 @@ end
 local _lazy = require("qjson.table")
 _M.decode         = _lazy.decode
 _M.encode         = _lazy.encode
+_M.encode_number_precision = _lazy.encode_number_precision
 _M.materialize    = _lazy.materialize
 _M.pairs          = _lazy.pairs
 _M.ipairs         = _lazy.ipairs
