@@ -352,6 +352,53 @@ local function fail_message(ctx, checkpoint, trace, extra)
     }, "\n")
 end
 
+local function model_debug_json(value)
+    local ok, encoded = pcall(model_encode, value)
+    if ok then
+        return encoded
+    end
+    return "<model_encode_error=" .. tostring(encoded) .. ">"
+end
+
+local function actual_debug_json(value)
+    if value == nil then
+        return "nil"
+    end
+
+    local debug_value = value
+    local note = nil
+    if type(value) == "table" then
+        local mt = getmetatable(value)
+        if mt == qjson._LazyObject or mt == qjson._LazyArray then
+            local ok, materialized = pcall(qjson.materialize, value)
+            if ok then
+                debug_value = materialized
+            else
+                note = "materialize_error=" .. tostring(materialized)
+            end
+        end
+    end
+
+    local ok, encoded = pcall(qjson.encode, debug_value)
+    if ok then
+        if note then
+            return encoded .. "\n" .. note
+        end
+        return encoded
+    end
+
+    if is_json_null(debug_value) then
+        return "null"
+    elseif type(debug_value) == "string" then
+        return encode_string(debug_value)
+    elseif type(debug_value) == "number" then
+        return encode_number(debug_value)
+    elseif type(debug_value) == "boolean" then
+        return debug_value and "true" or "false"
+    end
+    return tostring(debug_value) .. " (encode_error=" .. tostring(encoded) .. ")"
+end
+
 local function assert_model_value(ctx, label, expected, actual, trace)
     local value = actual
     if type(actual) == "table" then
@@ -362,34 +409,54 @@ local function assert_model_value(ctx, label, expected, actual, trace)
     end
     assert.is_true(
         semantic_equal(expected, value),
-        fail_message(ctx, label, trace, "value did not match model")
+        fail_message(
+            ctx,
+            label,
+            trace,
+            "expected=" .. model_debug_json(expected) .. "\nactual=" .. actual_debug_json(actual)
+        )
     )
 end
 
 local function assert_checkpoint(ctx, name, lazy, model, trace)
     local materialized = qjson.materialize(lazy)
+    local expected_json = model_encode(model)
     assert.is_true(
         semantic_equal(model, materialized),
-        fail_message(ctx, name, trace, "qjson.materialize(lazy) did not match model")
+        fail_message(
+            ctx,
+            name,
+            trace,
+            "expected=" .. expected_json .. "\nactual_materialized=" .. actual_debug_json(materialized)
+        )
     )
 
     local encoded = qjson.encode(lazy)
-    local expected_json = model_encode(model)
     assert.is_true(
         encoded == expected_json,
-        fail_message(ctx, name, trace, "expected=" .. expected_json .. "\nencoded=" .. encoded)
+        fail_message(ctx, name, trace, "expected=" .. expected_json .. "\nactual_encoded=" .. encoded)
     )
 
     local cjson_value = cjson_decode_with_array_mt(encoded)
     assert.is_true(
         semantic_equal(model, cjson_value),
-        fail_message(ctx, name, trace, "cjson.decode(qjson.encode(lazy)) did not match model")
+        fail_message(
+            ctx,
+            name,
+            trace,
+            "expected=" .. expected_json .. "\nactual_cjson_roundtrip=" .. actual_debug_json(cjson_value)
+        )
     )
 
     local reparsed = qjson.materialize(qjson.decode(encoded))
     assert.is_true(
         semantic_equal(model, reparsed),
-        fail_message(ctx, name, trace, "qjson.decode(qjson.encode(lazy)) did not match model")
+        fail_message(
+            ctx,
+            name,
+            trace,
+            "expected=" .. expected_json .. "\nactual_qjson_roundtrip=" .. actual_debug_json(reparsed)
+        )
     )
 end
 
@@ -683,9 +750,9 @@ end
 
 local function shortest_failing_prefix(seed, case_no, steps)
     for n = 1, steps do
-        local ok = pcall(execute_case, seed, case_no, n)
+        local ok, err = pcall(execute_case, seed, case_no, n)
         if not ok then
-            return n
+            return n, err
         end
     end
     return nil
@@ -696,8 +763,10 @@ describe("qjson lazy mutation stateful property coverage", function()
         for case_no = 1, CASES do
             local ok, err = pcall(execute_case, SEED, case_no, STEPS)
             if not ok then
-                local prefix = shortest_failing_prefix(SEED, case_no, STEPS)
-                local shrink = prefix and ("shortest_failing_prefix=" .. prefix)
+                local prefix, prefix_err = shortest_failing_prefix(SEED, case_no, STEPS)
+                local shrink = prefix and (
+                    "shortest_failing_prefix=" .. prefix .. "\nminimized_error:\n" .. tostring(prefix_err)
+                )
                     or "shortest_failing_prefix=not prefix-reproducible"
                 error(tostring(err) .. "\n" .. shrink, 0)
             end
