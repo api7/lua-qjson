@@ -177,11 +177,28 @@ qjson intentionally does not implement every lua-cjson configuration API.
 | lua-cjson API | qjson status |
 | --- | --- |
 | `cjson.new()` | No equivalent. qjson has module-level functions and no isolated per-instance encoder/decoder state. |
-| `cjson.encode_sparse_array()` | No equivalent. qjson follows its own table shape rules and uses `qjson.empty_array_mt` for empty arrays. |
 
 If your application depends on an unsupported lua-cjson knob, keep lua-cjson for
 that path or isolate the migration to call sites that use decode/encode without
 per-instance configuration.
+
+## Supported sparse-array configuration
+
+qjson now supports lua-cjson style sparse-array controls via
+`qjson.encode_sparse_array(convert, ratio, safe)`.
+
+- Getter mode (`qjson.encode_sparse_array()`) returns the current triplet.
+- Setter mode updates only arguments that are non-`nil`, and still returns the
+  full updated triplet.
+- Defaults match lua-cjson/OpenResty lua-cjson: `false, 2, 10`.
+- Excessive sparsity triggers only when
+  `ratio > 0 and max_index > safe and max_index > key_count * ratio`; setting
+  `ratio = 0` disables the excessive-sparse check.
+
+`qjson.encode_sparse_array` is module-level global state, just like other qjson
+module settings. There is no `cjson.new()`-style isolated instance, so in
+OpenResty the setting persists for the lifetime of each worker process and can
+affect subsequent requests handled by the same worker.
 
 ## Incremental checklist
 
@@ -194,5 +211,5 @@ per-instance configuration.
    encoders or helpers that require plain Lua tables.
 5. In hot paths that only read a few fields, consider `qjson.parse` plus
    `doc:get_*` or cursor getters instead of `qjson.decode`.
-6. Leave call sites that depend on `cjson.new` or sparse-array configuration on
-   lua-cjson until they can be redesigned.
+6. Leave call sites that depend on `cjson.new` on lua-cjson until they can be
+   redesigned.
