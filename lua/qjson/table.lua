@@ -521,6 +521,25 @@ local string_byte = string.byte
 local string_format = string.format
 local int64_ct = ffi.typeof("int64_t")
 local uint64_ct = ffi.typeof("uint64_t")
+local _ENCODE_NUMBER_PRECISION = 14
+local _ENCODE_NUMBER_FMT = "%.14g"
+
+function _M.encode_number_precision(precision)
+    if precision == nil then
+        return _ENCODE_NUMBER_PRECISION
+    end
+    if type(precision) ~= "number"
+        or precision ~= math.floor(precision)
+        or precision < 1
+        or precision > 14
+    then
+        error("expected integer between 1 and 14")
+    end
+    local old = _ENCODE_NUMBER_PRECISION
+    _ENCODE_NUMBER_PRECISION = precision
+    _ENCODE_NUMBER_FMT = "%." .. precision .. "g"
+    return old
+end
 
 -- Escape lookup table: byte value → escape sequence string (or nil if safe).
 local ESCAPES = {
@@ -568,7 +587,7 @@ local function encode_number(n)
     if n == math.floor(n) and math.abs(n) < 1e15 then
         return string_format("%d", n)
     end
-    return string_format("%.14g", n)
+    return string_format(_ENCODE_NUMBER_FMT, n)
 end
 
 local function encode_cdata(v)

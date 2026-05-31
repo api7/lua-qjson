@@ -14,6 +14,7 @@ Use this guide when replacing `lua-cjson` in existing LuaJIT or OpenResty code.
 | `cjson.decode(json)` | `qjson.decode(json)` | Returns a lazy object or array proxy, not a plain Lua table. |
 | `cjson.decode(json)` when a plain table is required | `qjson.materialize(qjson.decode(json))` | Use before passing decoded data to libraries that use raw table access or C encoders. |
 | `cjson.encode(value)` | `qjson.encode(value)` | Encodes lazy proxies, plain Lua tables, and mixed trees. |
+| `cjson.encode_number_precision(precision)` | `qjson.encode_number_precision(precision)` | Shared module-level encode setting in the Lua VM. qjson accepts integers from 1 to 14 and returns the previous setting when updated. |
 | `cjson.null` | `qjson.null` | Aliases `cjson.null` when lua-cjson is available; otherwise qjson provides its own sentinel. |
 | `cjson.empty_array_mt` | `qjson.empty_array_mt` | Aliases lua-cjson's empty-array metatable when available. |
 | `pairs(t)` / `ipairs(t)` on decoded data | `qjson.pairs(t)` / `qjson.ipairs(t)` | Works on all LuaJIT builds. Plain `pairs` / `ipairs` need LuaJIT 5.2-compat support. |
@@ -177,7 +178,6 @@ qjson intentionally does not implement every lua-cjson configuration API.
 | --- | --- |
 | `cjson.new()` | No equivalent. qjson has module-level functions and no isolated per-instance encoder/decoder state. |
 | `cjson.encode_sparse_array()` | No equivalent. qjson follows its own table shape rules and uses `qjson.empty_array_mt` for empty arrays. |
-| `cjson.encode_number_precision()` | No equivalent. qjson's encoder uses its built-in number formatting. |
 
 If your application depends on an unsupported lua-cjson knob, keep lua-cjson for
 that path or isolate the migration to call sites that use decode/encode without
@@ -194,5 +194,5 @@ per-instance configuration.
    encoders or helpers that require plain Lua tables.
 5. In hot paths that only read a few fields, consider `qjson.parse` plus
    `doc:get_*` or cursor getters instead of `qjson.decode`.
-6. Leave call sites that depend on `cjson.new`, sparse-array configuration, or
-   number-precision configuration on lua-cjson until they can be redesigned.
+6. Leave call sites that depend on `cjson.new` or sparse-array configuration on
+   lua-cjson until they can be redesigned.
