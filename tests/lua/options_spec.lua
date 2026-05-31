@@ -18,6 +18,15 @@ describe("parse with options", function()
         assert.is_not_nil(qjson.parse('[[[1]]]', { max_depth = 1024 }))
     end)
 
+    it("reports effective max_depth in nesting errors", function()
+        local ok, err = pcall(qjson.parse, '[[[1]]]', { max_depth = 2 })
+        assert.is_false(ok)
+        assert.is_truthy(
+            string.find(tostring(err), "nesting too deep at byte 2 (max 2)", 1, true),
+            tostring(err)
+        )
+    end)
+
     it("rejects invalid mode key value", function()
         assert.has_error(function()
             qjson.parse('{}', { lazy = "yes please" })

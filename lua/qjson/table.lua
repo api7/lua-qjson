@@ -48,11 +48,40 @@ local T_NUM  = 2
 local T_STR  = 3
 local T_ARR  = 4
 local T_OBJ  = 5
+local SIZE_MAX = ffi.cast("size_t", -1)
+local EXPECT_CONTAINER = ffi.cast("size_t", -2)
 
-local function check(rc)
+local function doc_from_context(ctx)
+    if ctx == nil then return nil end
+    if rawget(ctx, "_ptr") ~= nil then return ctx end
+    return rawget(ctx, "_doc")
+end
+
+local function format_error(code, offset, extra, buf)
+    local buf_len = 0
+    if type(buf) == "string" then
+        buf_len = #buf
+    else
+        buf = nil
+    end
+    if extra == nil then extra = SIZE_MAX end
+    local needed = tonumber(C.qjson_format_error(code, offset, extra, buf, buf_len, nil, 0))
+    local out = ffi.new("char[?]", needed + 1)
+    local written = tonumber(C.qjson_format_error(code, offset, extra, buf, buf_len, out, needed + 1))
+    return ffi.string(out, written)
+end
+
+local function check(ctx, rc, expected_type)
     if rc == QJSON_OK then return true end
     if rc == QJSON_NOT_FOUND then return false end
-    error("qjson: " .. ffi.string(C.qjson_strerror(rc)))
+    local doc = doc_from_context(ctx)
+    local offset = SIZE_MAX
+    local source = nil
+    if doc ~= nil and doc._ptr ~= nil then
+        offset = C.qjson_doc_last_error_offset(doc._ptr)
+        source = doc._hold
+    end
+    error("qjson: " .. format_error(rc, offset, expected_type, source))
 end
 
 local LazyObject = {}
@@ -103,19 +132,19 @@ end
 -- via wrap_child so the caller's box can be freely reused afterwards.
 local function decode_cursor(parent_view, src_box)
     local trc = C.qjson_cursor_typeof(src_box[0], "", 0, type_box)
-    if not check(trc) then return nil end
+    if not check(parent_view, trc) then return nil end
     local t = type_box[0]
     if t == T_STR then
         local rrc = C.qjson_cursor_get_str(src_box[0], "", 0, strp_box, size_box)
-        if not check(rrc) then return nil end
+        if not check(parent_view, rrc, T_STR) then return nil end
         return ffi.string(strp_box[0], size_box[0])
     elseif t == T_NUM then
         local rrc = C.qjson_cursor_get_f64(src_box[0], "", 0, f64_box)
-        if not check(rrc) then return nil end
+        if not check(parent_view, rrc, T_NUM) then return nil end
         return f64_box[0]
     elseif t == T_BOOL then
         local rrc = C.qjson_cursor_get_bool(src_box[0], "", 0, bool_box)
-        if not check(rrc) then return nil end
+        if not check(parent_view, rrc, T_BOOL) then return nil end
         return bool_box[0] ~= 0
     elseif t == T_NULL then
         return _M.null
@@ -147,7 +176,7 @@ local function read_object_field(self, key)
     -- Use child_box so the lookup result does not alias self._cur (which is
     -- itself stored in root_box's backing memory in the decode caller).
     local rc = C.qjson_cursor_field(self._cur, key, #key, child_box)
-    if not check(rc) then return nil end
+    if not check(self, rc, T_OBJ) then return nil end
     local v = decode_cursor(self, child_box)
     -- Cache containers so identity is stable and materialization sticks.
     if type(v) == "table" then get_child_cache(self)[key] = v end
@@ -166,7 +195,7 @@ local function read_array_index(self, key)
     local i = key - 1
     if i < 0 or i ~= math.floor(i) then return nil end
     local rc = C.qjson_cursor_index(self._cur, i, child_box)
-    if not check(rc) then return nil end
+    if not check(self, rc, T_ARR) then return nil end
     local v = decode_cursor(self, child_box)
     -- Cache containers so identity is stable and materialization sticks.
     if type(v) == "table" then rawset(self, key, v) end
@@ -178,7 +207,7 @@ LazyArray.__index = read_array_index
 local function new_object_iter(view)
     local it = ffi.new("qjson_iter[1]")
     local rc = C.qjson_iter_init(view._cur, it)
-    check(rc)
+    check(view, rc, T_OBJ)
     return it
 end
 
@@ -187,7 +216,7 @@ end
 local function lazy_object_iter(state, _prev_key)
     local rc = C.qjson_iter_next(state.it, strp_box, size_box, child_box)
     if rc == QJSON_NOT_FOUND then return nil end
-    check(rc)
+    check(state.view, rc)
     local k = ffi.string(strp_box[0], size_box[0])
     local seen = state.seen
     local count = (seen[k] or 0) + 1
@@ -230,7 +259,7 @@ local function lazy_array_iter(state, _prev_i)
     local i = state.i
     local rc = C.qjson_cursor_index(state.view._cur, i, child_box)
     if rc == QJSON_NOT_FOUND then return nil end
-    check(rc)
+    check(state.view, rc, T_ARR)
     state.i = i + 1
     local v = decode_cursor(state.view, child_box)
     return i + 1, v
@@ -264,7 +293,7 @@ local function lazy_len(self)
         if keys then return #keys end
     end
     local rc = C.qjson_cursor_len(self._cur, "", 0, size_box)
-    check(rc)
+    check(self, rc, EXPECT_CONTAINER)
     return tonumber(size_box[0])
 end
 
@@ -292,7 +321,7 @@ local function materialize_object_contents(view)
     while true do
         local rc = C.qjson_iter_next(it, strp_box, size_box, child_box)
         if rc == QJSON_NOT_FOUND then break end
-        check(rc)
+        check(view, rc)
         local k = ffi.string(strp_box[0], size_box[0])
         local v = decode_cursor(view, child_box)
         pairs_out[#pairs_out+1] = {k, v}
@@ -308,7 +337,7 @@ local function materialize_array_contents(view)
     while true do
         local rc = C.qjson_cursor_index(view._cur, i, child_box)
         if rc == QJSON_NOT_FOUND then break end
-        check(rc)
+        check(view, rc, T_ARR)
         out[i + 1] = decode_cursor(view, child_box)
         i = i + 1
     end
@@ -332,7 +361,7 @@ local function ensure_object_order_state(view)
     while true do
         local rc = C.qjson_iter_next(it, strp_box, size_box, child_box)
         if rc == QJSON_NOT_FOUND then break end
-        check(rc)
+        check(view, rc)
         local key = ffi.string(strp_box[0], size_box[0])
         local count = (seen[key] or 0) + 1
         seen[key] = count
@@ -444,7 +473,7 @@ function _M.decode(json_str)
     -- by the view so that later child lookups (which reuse child_box) do not
     -- alias the root cursor's backing storage.
     local rc = C.qjson_open(doc._ptr, "", 0, cur_box)
-    if not check(rc) then
+    if not check(doc, rc) then
         error("qjson: open root failed")
     end
     local root_box = ffi.new("qjson_cursor[1]")
@@ -452,12 +481,12 @@ function _M.decode(json_str)
     -- Determine root container kind (object/array) and wrap accordingly.
     -- Both have meaningful byte spans for encode.
     local trc = C.qjson_cursor_typeof(root_box[0], "", 0, type_box)
-    if not check(trc) then
+    if not check(doc, trc) then
         error("qjson: root typeof failed")
     end
     local rt = type_box[0]
     local brc = C.qjson_cursor_bytes(root_box[0], sz_a, sz_b)
-    if not check(brc) then
+    if not check(doc, brc) then
         error("qjson: root byte-span failed")
     end
     local view = {
@@ -640,11 +669,11 @@ local function encode_lazy_array_walking(t, depth, active)
     end
     local parts = {}
     local rc = C.qjson_cursor_len(t._cur, "", 0, size_box)
-    check(rc)
+    check(t, rc, EXPECT_CONTAINER)
     local n = tonumber(size_box[0])
     for i = 0, n - 1 do
         local irc = C.qjson_cursor_index(t._cur, i, child_box)
-        check(irc)
+        check(t, irc, T_ARR)
         local cached = rawget(t, i + 1)
         local v
         if cached ~= nil then

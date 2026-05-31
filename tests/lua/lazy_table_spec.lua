@@ -47,6 +47,14 @@ describe("LazyObject __index — scalars", function()
         local t = qjson.decode('{"a":1}')
         assert.is_nil(t.missing)
     end)
+
+    it("formats lazy numeric decode failures with byte offsets", function()
+        local t = qjson.decode('{"n":1e9999}')
+        assert.has_error(
+            function() return t.n end,
+            "qjson: out of range at byte 5"
+        )
+    end)
 end)
 
 describe("LazyObject __index — nested containers", function()
