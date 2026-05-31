@@ -473,7 +473,7 @@ function _M.decode(json_str)
     elseif rt == T_ARR then
         return setmetatable(view, LazyArray)
     else
-        error("qjson: top-level JSON value is not an object or array")
+        return decode_cursor(view, root_box)
     end
 end
 
