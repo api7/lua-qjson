@@ -48,7 +48,7 @@ fn fuzz_one(data: &[u8]) {
     let doc = unsafe { qjson_parse_ex(data.as_ptr(), data.len(), &opts, &mut err) };
     assert!(!doc.is_null(), "qjson lazy rejected serde-accepted input with err={err:?}: {data:?}");
 
-    let (actual, path_checks) = unsafe {
+    let actual = unsafe {
         let mut root: qjson_cursor = std::mem::zeroed();
         let rc = qjson_open(doc, ptr::null(), 0, &mut root);
         assert_eq!(rc, 0, "qjson_open root failed with rc={rc}: {data:?}");
@@ -60,11 +60,11 @@ fn fuzz_one(data: &[u8]) {
             !path_checks.is_empty(),
             "semantic replay must record at least the root path for input={data:?}",
         );
+        verify_path_getter_consistency(doc, &root, &path_checks);
         qjson_free(doc);
-        (actual, path_checks)
+        actual
     };
 
-    assert!(!path_checks.is_empty(), "path checks should include at least the root value");
     assert_eq!(actual, expected, "lazy value mismatch for input={data:?}");
 }
 
@@ -146,14 +146,11 @@ fn append_index_segment(path: &mut String, index: usize) -> usize {
 }
 
 #[allow(dead_code)]
-fn record_path_check(path_checks: &mut Vec<PathCheck>, path: &str, value: &Value) {
+fn record_path_check(path_checks: &mut Vec<PathCheck>, path: &str, expected: PathExpected) {
     if path_checks.len() >= MAX_PATH_CHECKS {
         return;
     }
-    path_checks.push(PathCheck {
-        path: path.as_bytes().to_vec(),
-        expected: PathExpected::from_value(value),
-    });
+    path_checks.push(PathCheck { path: path.as_bytes().to_vec(), expected });
 }
 
 unsafe fn cursor_to_value(
@@ -164,7 +161,8 @@ unsafe fn cursor_to_value(
     path_checks: &mut Vec<PathCheck>,
 ) -> Value {
     assert!(depth <= FUZZ_MAX_DEPTH, "walker exceeded depth limit");
-    let value = match cursor_type(cur) {
+    let ty = cursor_type(cur);
+    let value = match ty {
         T_NULL => Value::Null,
         T_BOOL => Value::Bool(cursor_bool(cur)),
         T_NUM => Value::Number(cursor_number(cur)),
@@ -175,16 +173,26 @@ unsafe fn cursor_to_value(
     };
 
     if path_safe {
-        record_path_check(path_checks, path, &value);
+        let expected = match ty {
+            T_ARR => PathExpected::ArrayLen(cursor_len(cur)),
+            T_OBJ => PathExpected::ObjectLen(cursor_len(cur)),
+            _ => PathExpected::from_value(&value),
+        };
+        record_path_check(path_checks, path, expected);
     }
 
     value
 }
 
 unsafe fn cursor_type(cur: &qjson_cursor) -> c_int {
+    cursor_type_at(cur, &[])
+}
+
+unsafe fn cursor_type_at(cur: &qjson_cursor, path: &[u8]) -> c_int {
     let mut ty: c_int = -1;
-    let rc = qjson_cursor_typeof(cur, ptr::null(), 0, &mut ty);
-    assert_eq!(rc, 0, "qjson_cursor_typeof failed with rc={rc}");
+    let (path_ptr, path_len) = ffi_path(path);
+    let rc = qjson_cursor_typeof(cur, path_ptr, path_len, &mut ty);
+    assert_eq!(rc, 0, "qjson_cursor_typeof({:?}) failed with rc={rc}", path_debug(path));
     ty
 }
 
@@ -281,9 +289,11 @@ unsafe fn cursor_object(
     }
 
     for (key, value_cur) in raw_entries {
-        let child_path_safe = path_safe
-            && counts.get(&key).copied().unwrap_or(0) == 1
-            && path_key_can_be_in_qjson_path(&key);
+        let key_is_unique = counts.get(&key).copied().unwrap_or(0) == 1;
+        let field_lookup_safe =
+            key_is_unique && decoded_key_field_lookup_matches(cur, &key, &value_cur);
+        let child_path_safe =
+            path_safe && field_lookup_safe && path_key_can_be_in_qjson_path(&key);
         let old_len = if child_path_safe {
             append_key_segment(path, &key)
         } else {
@@ -294,12 +304,12 @@ unsafe fn cursor_object(
         path.truncate(old_len);
 
         map.insert(key.clone(), value.clone());
-        entries.push((key, value));
+        entries.push((key, value, field_lookup_safe));
     }
 
     for i in varied_order(entries.len()) {
-        let (key, expected) = &entries[i];
-        if counts.get(key).copied().unwrap_or(0) != 1 {
+        let (key, expected, field_lookup_safe) = &entries[i];
+        if !field_lookup_safe {
             continue;
         }
 
@@ -315,6 +325,16 @@ unsafe fn cursor_object(
     map
 }
 
+unsafe fn decoded_key_field_lookup_matches(
+    cur: &qjson_cursor,
+    key: &str,
+    expected: &qjson_cursor,
+) -> bool {
+    let mut child: qjson_cursor = std::mem::zeroed();
+    let rc = qjson_cursor_field(cur, key.as_ptr() as *const c_char, key.len(), &mut child);
+    rc == 0 && child.idx_start == expected.idx_start && child.idx_end == expected.idx_end
+}
+
 unsafe fn cursor_object_entry_at(cur: &qjson_cursor, index: usize) -> (String, qjson_cursor) {
     let mut key_ptr: *const u8 = ptr::null();
     let mut key_len = 0usize;
@@ -325,6 +345,185 @@ unsafe fn cursor_object_entry_at(cur: &qjson_cursor, index: usize) -> (String, q
     let key_bytes = std::slice::from_raw_parts(key_ptr, key_len).to_vec();
     let key = String::from_utf8(key_bytes).expect("serde accepted object key must decode as UTF-8");
     (key, value_cur)
+}
+
+unsafe fn verify_path_getter_consistency(
+    doc: *mut qjson_doc,
+    root: &qjson_cursor,
+    path_checks: &[PathCheck],
+) {
+    for check in path_checks {
+        let root_ty = root_type(doc, &check.path);
+        let cursor_ty = cursor_type_at(root, &check.path);
+        assert_eq!(
+            root_ty,
+            cursor_ty,
+            "root/cursor typeof mismatch at path {:?}",
+            path_debug(&check.path),
+        );
+        assert_eq!(
+            root_ty,
+            check.expected.type_tag(),
+            "getter type mismatch against replay model at path {:?}",
+            path_debug(&check.path),
+        );
+
+        match &check.expected {
+            PathExpected::Null => {}
+            PathExpected::Bool(expected) => {
+                let root_value = root_bool(doc, &check.path);
+                let cursor_value = cursor_bool_at(root, &check.path);
+                assert_eq!(
+                    root_value,
+                    cursor_value,
+                    "root/cursor bool mismatch at path {:?}",
+                    path_debug(&check.path),
+                );
+                assert_eq!(
+                    root_value,
+                    *expected,
+                    "bool mismatch against replay model at path {:?}",
+                    path_debug(&check.path),
+                );
+            }
+            PathExpected::Number(expected) => {
+                let root_value = root_number(doc, &check.path);
+                let cursor_value = cursor_number_at(root, &check.path);
+                assert_eq!(
+                    root_value.to_bits(),
+                    cursor_value.to_bits(),
+                    "root/cursor number mismatch at path {:?}",
+                    path_debug(&check.path),
+                );
+                assert_eq!(
+                    root_value.to_bits(),
+                    expected.to_bits(),
+                    "number mismatch against replay model at path {:?}",
+                    path_debug(&check.path),
+                );
+            }
+            PathExpected::String(expected) => {
+                let root_value = root_string(doc, &check.path);
+                let cursor_value = cursor_string_at(root, &check.path);
+                assert_eq!(
+                    root_value,
+                    cursor_value,
+                    "root/cursor string mismatch at path {:?}",
+                    path_debug(&check.path),
+                );
+                assert_eq!(
+                    root_value,
+                    *expected,
+                    "string mismatch against replay model at path {:?}",
+                    path_debug(&check.path),
+                );
+            }
+            PathExpected::ArrayLen(expected) | PathExpected::ObjectLen(expected) => {
+                let root_value = root_len(doc, &check.path);
+                let cursor_value = cursor_len_at(root, &check.path);
+                assert_eq!(
+                    root_value,
+                    cursor_value,
+                    "root/cursor len mismatch at path {:?}",
+                    path_debug(&check.path),
+                );
+                assert_eq!(
+                    root_value,
+                    *expected,
+                    "len mismatch against replay model at path {:?}",
+                    path_debug(&check.path),
+                );
+            }
+        }
+    }
+}
+
+fn ffi_path(path: &[u8]) -> (*const c_char, usize) {
+    if path.is_empty() {
+        (ptr::null(), 0)
+    } else {
+        (path.as_ptr() as *const c_char, path.len())
+    }
+}
+
+fn path_debug(path: &[u8]) -> String {
+    String::from_utf8_lossy(path).into_owned()
+}
+
+unsafe fn root_type(doc: *mut qjson_doc, path: &[u8]) -> c_int {
+    let mut ty: c_int = -1;
+    let (path_ptr, path_len) = ffi_path(path);
+    let rc = qjson_typeof(doc, path_ptr, path_len, &mut ty);
+    assert_eq!(rc, 0, "qjson_typeof({:?}) failed with rc={rc}", path_debug(path));
+    ty
+}
+
+unsafe fn root_bool(doc: *mut qjson_doc, path: &[u8]) -> bool {
+    let mut value: c_int = -1;
+    let (path_ptr, path_len) = ffi_path(path);
+    let rc = qjson_get_bool(doc, path_ptr, path_len, &mut value);
+    assert_eq!(rc, 0, "qjson_get_bool({:?}) failed with rc={rc}", path_debug(path));
+    value != 0
+}
+
+unsafe fn cursor_bool_at(cur: &qjson_cursor, path: &[u8]) -> bool {
+    let mut value: c_int = -1;
+    let (path_ptr, path_len) = ffi_path(path);
+    let rc = qjson_cursor_get_bool(cur, path_ptr, path_len, &mut value);
+    assert_eq!(rc, 0, "qjson_cursor_get_bool({:?}) failed with rc={rc}", path_debug(path));
+    value != 0
+}
+
+unsafe fn root_number(doc: *mut qjson_doc, path: &[u8]) -> f64 {
+    let mut value = 0.0f64;
+    let (path_ptr, path_len) = ffi_path(path);
+    let rc = qjson_get_f64(doc, path_ptr, path_len, &mut value);
+    assert_eq!(rc, 0, "qjson_get_f64({:?}) failed with rc={rc}", path_debug(path));
+    value
+}
+
+unsafe fn cursor_number_at(cur: &qjson_cursor, path: &[u8]) -> f64 {
+    let mut value = 0.0f64;
+    let (path_ptr, path_len) = ffi_path(path);
+    let rc = qjson_cursor_get_f64(cur, path_ptr, path_len, &mut value);
+    assert_eq!(rc, 0, "qjson_cursor_get_f64({:?}) failed with rc={rc}", path_debug(path));
+    value
+}
+
+unsafe fn root_string(doc: *mut qjson_doc, path: &[u8]) -> String {
+    let mut ptr_out: *const u8 = ptr::null();
+    let mut len_out: usize = 0;
+    let (path_ptr, path_len) = ffi_path(path);
+    let rc = qjson_get_str(doc, path_ptr, path_len, &mut ptr_out, &mut len_out);
+    assert_eq!(rc, 0, "qjson_get_str({:?}) failed with rc={rc}", path_debug(path));
+    let bytes = std::slice::from_raw_parts(ptr_out, len_out).to_vec();
+    String::from_utf8(bytes).expect("serde accepted string must decode as UTF-8")
+}
+
+unsafe fn cursor_string_at(cur: &qjson_cursor, path: &[u8]) -> String {
+    let mut ptr_out: *const u8 = ptr::null();
+    let mut len_out: usize = 0;
+    let (path_ptr, path_len) = ffi_path(path);
+    let rc = qjson_cursor_get_str(cur, path_ptr, path_len, &mut ptr_out, &mut len_out);
+    assert_eq!(rc, 0, "qjson_cursor_get_str({:?}) failed with rc={rc}", path_debug(path));
+    let bytes = std::slice::from_raw_parts(ptr_out, len_out).to_vec();
+    String::from_utf8(bytes).expect("serde accepted string must decode as UTF-8")
+}
+
+unsafe fn root_len(doc: *mut qjson_doc, path: &[u8]) -> usize {
+    let mut len = 0usize;
+    let (path_ptr, path_len) = ffi_path(path);
+    let rc = qjson_len(doc, path_ptr, path_len, &mut len);
+    assert_eq!(rc, 0, "qjson_len({:?}) failed with rc={rc}", path_debug(path));
+    len
+}
+
+unsafe fn cursor_len_at(cur: &qjson_cursor, path: &[u8]) -> usize {
+    let mut len = 0usize;
+    let (path_ptr, path_len) = ffi_path(path);
+    let rc = qjson_cursor_len(cur, path_ptr, path_len, &mut len);
+    assert_eq!(rc, 0, "qjson_cursor_len({:?}) failed with rc={rc}", path_debug(path));
+    len
 }
 
 fn varied_order(len: usize) -> Vec<usize> {
@@ -426,6 +625,7 @@ mod tests {
     fn deterministic_replay_cases_cover_path_safe_and_ambiguous_keys() {
         fuzz_one(br#"{"body":{"model":"gpt","temperature":0.5,"ok":true,"none":null,"items":[{"id":1},{"id":2}]}}"#);
         fuzz_one(br#"{"dup":1,"dup":2,"a.b":3,"arr[0]":4,"nested":{"x":true}}"#);
+        fuzz_one(br#"{"a\nb":"line\nvalue","\u0064up":1,"dup":2,"emoji":"\uD83D\uDE00","nul":"\u0000","inner":{"same":3,"same":4}}"#);
         fuzz_one(br#"[{"name":"first"},{"name":"second","values":[1,2,3]}]"#);
     }
 }
