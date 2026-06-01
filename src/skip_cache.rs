@@ -35,27 +35,44 @@ impl SkipCache {
         }
     }
 
-    /// Get an existing slot for this opener idx, or allocate a new (empty) one.
-    /// Returns (slot_number, was_already_populated).
-    pub(crate) fn get_or_insert(&mut self, opener_idx: u32) -> (u32, bool) {
-        if let Some(&slot) = self.by_opener.get(&opener_idx) {
-            return (slot, true);
-        }
-        let new = self.slots.len() as u32;
-        self.slots.push(SkipSlot {
-            child_starts: Rc::clone(&self.empty_rc),
-            child_ends: Rc::clone(&self.empty_rc),
-        });
-        self.by_opener.insert(opener_idx, new);
-        (new, false)
-    }
-
-    pub(crate) fn slot_mut(&mut self, n: u32) -> &mut SkipSlot {
-        &mut self.slots[n as usize]
+    pub(crate) fn get(&self, opener_idx: u32) -> Option<u32> {
+        self.by_opener.get(&opener_idx).copied()
     }
 
     pub(crate) fn slot(&self, n: u32) -> &SkipSlot {
         &self.slots[n as usize]
+    }
+
+    pub(crate) fn insert(&mut self, opener_idx: u32, child_starts: Vec<u32>, child_ends: Vec<u32>) {
+        debug_assert_eq!(child_starts.len(), child_ends.len());
+
+        let child_starts = if child_starts.is_empty() {
+            Rc::clone(&self.empty_rc)
+        } else {
+            child_starts.into()
+        };
+        let child_ends = if child_ends.is_empty() {
+            Rc::clone(&self.empty_rc)
+        } else {
+            child_ends.into()
+        };
+
+        let slot_n = match self.by_opener.get(&opener_idx).copied() {
+            Some(slot) => slot,
+            None => {
+                let slot = self.slots.len() as u32;
+                self.slots.push(SkipSlot {
+                    child_starts: Rc::clone(&self.empty_rc),
+                    child_ends: Rc::clone(&self.empty_rc),
+                });
+                self.by_opener.insert(opener_idx, slot);
+                slot
+            }
+        };
+
+        let slot = &mut self.slots[slot_n as usize];
+        slot.child_starts = child_starts;
+        slot.child_ends = child_ends;
     }
 
     #[cfg(test)]

@@ -65,10 +65,9 @@ fn container_opener_byte(doc: &Document, cur: Cursor) -> Option<u8> {
 /// subsequent visits.
 fn walk_children(doc: &Document, cur: Cursor, seg: &PathSeg) -> Result<Cursor, qjson_err> {
     let is_obj = matches!(seg, PathSeg::Key(_));
-    let mut cache = doc.skip.borrow_mut();
-    let (slot_n, was_cached) = cache.get_or_insert(cur.idx_start);
 
-    if was_cached {
+    let cache = doc.skip.borrow();
+    if let Some(slot_n) = cache.get(cur.idx_start) {
         // Fast path: iterate cached (start, end) pairs. No brace counting.
         // Rc::clone is O(1) — avoids O(n) Vec clone of previous implementation.
         let slot = cache.slot(slot_n);
@@ -77,6 +76,7 @@ fn walk_children(doc: &Document, cur: Cursor, seg: &PathSeg) -> Result<Cursor, q
         drop(cache);
         return resolve_in_known_children(doc, &starts, &ends, is_obj, seg);
     }
+    drop(cache);
 
     // Slow path: walk all children, populate cache fully, record match if any.
     let mut starts: Vec<u32> = Vec::new();
@@ -96,9 +96,7 @@ fn walk_children(doc: &Document, cur: Cursor, seg: &PathSeg) -> Result<Cursor, q
             p += 1;
         }
         if p == closer_byte_pos {
-            let slot = cache.slot_mut(slot_n);
-            slot.child_starts = starts.into();
-            slot.child_ends   = ends.into();
+            doc.skip.borrow_mut().insert(cur.idx_start, starts, ends);
             return Err(qjson_err::QJSON_NOT_FOUND);
         }
     }
@@ -141,9 +139,7 @@ fn walk_children(doc: &Document, cur: Cursor, seg: &PathSeg) -> Result<Cursor, q
         }
     }
 
-    let slot = cache.slot_mut(slot_n);
-    slot.child_starts = starts.into();
-    slot.child_ends   = ends.into();
+    doc.skip.borrow_mut().insert(cur.idx_start, starts, ends);
 
     match result {
         Some(c) => Ok(c),
