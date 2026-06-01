@@ -550,19 +550,20 @@ local function materialize_plain(v)
     return v
 end
 
-local function cursor_raw_token(ctx, cursor)
+local function cursor_token_span(ctx, cursor)
     local rc = C.qjson_cursor_bytes(cursor, sz_a, sz_b)
     check(ctx, rc)
     local bs = tonumber(sz_a[0])
     local be = tonumber(sz_b[0])
-    return ctx._doc._hold:sub(bs + 1, be), bs, be
+    return bs, be
 end
 
-local function origin_child_record(v, raw_token)
+local function origin_child_record(v, source, bs, be)
+    local raw_len = be - bs
     local tv = type(v)
     if tv == "string" then
-        if #raw_token > ORIGIN_STRING_MIN_RAW then
-            return { tag = "string", value = v, raw = raw_token }, true
+        if raw_len > ORIGIN_STRING_MIN_RAW then
+            return { tag = "string", value = v, raw = source:sub(bs + 1, be) }, true
         end
         return nil, false
     end
@@ -603,7 +604,7 @@ local function materialize_object_with_origin(view)
             had_duplicates = true
         end
 
-        local raw_token = cursor_raw_token(view, child_box[0])
+        local bs, be = cursor_token_span(view, child_box[0])
         local child
         if count == 1 then
             local cached = cached_child(view, key)
@@ -621,7 +622,7 @@ local function materialize_object_with_origin(view)
         local materialized_child = materialize_with_origin(child)
         out[key] = materialized_child
 
-        local record, captured = origin_child_record(materialized_child, raw_token)
+        local record, captured = origin_child_record(materialized_child, view._doc._hold, bs, be)
         if not captured then
             complete = false
         end
@@ -651,14 +652,14 @@ local function materialize_array_with_origin(view)
         local rc = C.qjson_cursor_index(view._cur, i, child_box)
         if rc == QJSON_NOT_FOUND then break end
         check(view, rc, T_ARR)
-        local raw_token = cursor_raw_token(view, child_box[0])
+        local bs, be = cursor_token_span(view, child_box[0])
         local idx = i + 1
         local cached = rawget(view, idx)
         local child = cached or decode_cursor(view, child_box)
         local materialized_child = materialize_with_origin(child)
         out[idx] = materialized_child
 
-        local record, captured = origin_child_record(materialized_child, raw_token)
+        local record, captured = origin_child_record(materialized_child, view._doc._hold, bs, be)
         if not captured then
             complete = false
         end

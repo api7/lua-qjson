@@ -2,6 +2,23 @@ local qjson = require("qjson")
 local cjson = require("cjson")
 local LONG_ESC_A = "\\u0061\\u0062\\u0063\\u0064\\u0065"
 local LONG_ESC_B = "\\u0066\\u0067\\u0068\\u0069\\u006A"
+local EXACT_24_ESC = "\\u0061\\u0062abcdefghij"
+local EXACT_64_CHILD_VALUE = string.rep("a", 56)
+
+local function count_string_sub_calls(fn)
+    local original = string.sub
+    local calls = 0
+    string.sub = function(...)
+        calls = calls + 1
+        return original(...)
+    end
+    local ok, err = pcall(fn)
+    string.sub = original
+    if not ok then
+        error(err, 0)
+    end
+    return calls
+end
 
 describe("qjson.materialize keep_origin", function()
     it("keeps default materialize semantics when keep_origin is not set", function()
@@ -34,6 +51,24 @@ describe("qjson.materialize keep_origin", function()
         assert.are.equal('{"blob":"a","x":2}', qjson.encode(t))
     end)
 
+    it("does not slice raw tokens for dropped provenance records", function()
+        local doc = qjson.decode('{"n":1,"b":true,"u":null,"s":"x","arr":[1,2],"obj":{"x":1}}')
+        local sub_calls = count_string_sub_calls(function()
+            qjson.materialize(doc, { keep_origin = true })
+        end)
+
+        assert.are.equal(0, sub_calls)
+    end)
+
+    it("does not treat an exact 24-byte string token as above threshold", function()
+        assert.are.equal(24, #('"' .. EXACT_24_ESC .. '"'))
+
+        local t = qjson.materialize(qjson.decode('{"blob":"' .. EXACT_24_ESC .. '","x":1}'), { keep_origin = true })
+        t.x = 2
+
+        assert.are.equal('{"blob":"ababcdefghij","x":2}', qjson.encode(t))
+    end)
+
     it("reuses unchanged escaped string token when raw token is above threshold", function()
         local src = '{"blob":"' .. LONG_ESC_A .. '","x":1}'
         local t = qjson.materialize(qjson.decode(src), { keep_origin = true })
@@ -63,6 +98,16 @@ describe("qjson.materialize keep_origin", function()
         local t = qjson.materialize(qjson.decode(src), { keep_origin = true })
 
         assert.are.equal(src, qjson.encode(t))
+    end)
+
+    it("does not treat an exact 64-byte child container as above threshold", function()
+        local child = '{"a":"' .. EXACT_64_CHILD_VALUE .. '"}'
+        assert.are.equal(64, #child)
+
+        local src = '{ "child" : ' .. child .. ' }'
+        local t = qjson.materialize(qjson.decode(src), { keep_origin = true })
+
+        assert.are.equal('{"child":' .. child .. '}', qjson.encode(t))
     end)
 
     it("does not reintroduce duplicate keys after materialization", function()
