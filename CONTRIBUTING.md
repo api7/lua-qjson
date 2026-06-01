@@ -176,12 +176,17 @@ parse/get/cursor/free operation sequences. It focuses on panic-barrier and
 pointer-safety regressions around null docs/cursors, path/key bytes, repeated
 parses/frees, and mixed root/cursor accessors.
 
-The `fuzz_parse_lazy` target compares serde-accepted inputs by reconstructing a
-whole `serde_json::Value` through qjson's public cursor FFI APIs. It normalizes
-numbers through qjson's `f64` getter semantics, with serde_json's
-`float_roundtrip` parser enabled for bit-exact `f64` oracle comparisons, and
-performs repeated varied-order sibling lookups so both cold and warm skip-cache
-paths are covered.
+The `fuzz_parse_lazy` target is the Phase 2 semantic replay target. It compares
+serde-accepted inputs by reconstructing a whole `serde_json::Value` through
+qjson's public cursor FFI APIs, including ordered `object_entry_at` replay,
+varied-order `cursor_field` / `cursor_index` lookups, and root getter vs cursor
+getter consistency for path-safe unique-key paths. It normalizes numbers through
+qjson's `f64` getter semantics, with serde_json's `float_roundtrip` parser
+enabled for bit-exact `f64` oracle comparisons. Duplicate keys and path-like
+keys are covered by ordered entry replay; they are not used for path getter
+consistency because qjson path syntax cannot express those object members
+unambiguously. Repeated varied-order sibling lookups exercise both cold and warm
+skip-cache paths.
 
 The committed corpus under `fuzz/corpus/fuzz_parse_eager/` is seeded from
 JSONTestSuite `y_*`/`n_*`, cJSON fuzzing inputs, and benchmark fixtures. Crash
