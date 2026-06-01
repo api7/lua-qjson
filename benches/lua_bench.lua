@@ -1,8 +1,9 @@
-package.path  = package.path  .. ";./lua/?.lua"
+package.path  = package.path  .. ";./lua/?.lua;./benches/?.lua"
 package.cpath = package.cpath .. ";./target/release/lib?.so"
 
 local qjson    = require("qjson")
 local cjson = require("cjson")
+local manifest_mod = require("manifest")
 local simdjson_ok, simdjson_or_err = pcall(function()
     return require("resty.simdjson").new()
 end)
@@ -955,6 +956,40 @@ local function run_benchmarks()
             end)
         end
     end  -- filter == "interleaved"
+
+    -- Manifest-driven scenarios: reuse the real-world fixture manifest shared
+    -- with the Rust correctness gate (tests/fixtures/manifest.json). Fixture
+    -- paths, per-fixture iteration counts and access paths all come from the
+    -- manifest, so the benchmark and the correctness tests cover the same
+    -- payloads and paths. The access closure is generated from each fixture's
+    -- declared checks rather than being hand-written here. NDJSON fixtures are
+    -- correctness-only (validated by the Rust gate) and skipped here.
+    if not filter or filter == "manifest" then
+        print("=== manifest fixtures ===")
+
+        local manifest = manifest_mod.load()
+        for _, f in ipairs(manifest.fixtures) do
+            if manifest_mod.has_ci(f, "bench") and f.format == "json" then
+                local payload = read_file(f.path)
+                local access = manifest_mod.qjson_access(f.checks)
+                local iters = f.bench_iters or 500
+                print(string.format("--- %s [%s] (%d bytes) ---",
+                    f.id, f.payload_type, #payload))
+
+                bench("qjson.parse + manifest access", iters, function()
+                    local d = qjson.parse(payload)
+                    access(d)
+                end)
+
+                if has_pooled_api then
+                    bench("qjson pooled :parse + manifest access", iters, function()
+                        local d = pooled_decoder:parse(payload)
+                        access(d)
+                    end)
+                end
+            end
+        end
+    end  -- filter == "manifest"
 end
 
 if smoke_mode then
