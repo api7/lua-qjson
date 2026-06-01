@@ -30,6 +30,8 @@ local TABLE_TYPE_HINT = setmetatable({}, { __mode = "k" })
 -- Weak side-table for keep_origin materialization metadata.
 -- Maps materialized table -> provenance record used by qjson.encode.
 local TABLE_ORIGIN = setmetatable({}, { __mode = "k" })
+local ORIGIN_STRING_MIN_RAW = 24
+local ORIGIN_TABLE_MIN_RAW = 64
 
 -- Box scratch used for one-shot FFI returns. Reused across calls to avoid
 -- per-call allocation; safe because the parent Doc / lazy view holds the
@@ -556,21 +558,25 @@ local function cursor_raw_token(ctx, cursor)
     return ctx._doc._hold:sub(bs + 1, be), bs, be
 end
 
-local function scalar_origin_record(v, raw_token)
-    if rawequal(v, _M.null) then
-        return { tag = "null", raw = raw_token }
-    end
+local function origin_child_record(v, raw_token)
     local tv = type(v)
     if tv == "string" then
-        return { tag = "string", value = v, raw = raw_token }
+        if #raw_token > ORIGIN_STRING_MIN_RAW then
+            return { tag = "string", value = v, raw = raw_token }, true
+        end
+        return nil, false
     end
-    if tv == "number" then
-        return { tag = "number", value = v, raw = raw_token }
+    if tv == "table" then
+        local child_origin = TABLE_ORIGIN[v]
+        if child_origin ~= nil
+            and child_origin.complete == true
+            and (child_origin.be - child_origin.bs) > ORIGIN_TABLE_MIN_RAW
+        then
+            return { tag = "table", origin = child_origin }, true
+        end
+        return nil, false
     end
-    if tv == "boolean" then
-        return { tag = "boolean", value = v, raw = raw_token }
-    end
-    return nil
+    return nil, false
 end
 
 local materialize_with_origin
@@ -581,6 +587,7 @@ local function materialize_object_with_origin(view)
     local records = {}
     local seen = {}
     local had_duplicates = false
+    local complete = true
     local it = new_object_iter(view)
 
     while true do
@@ -614,16 +621,16 @@ local function materialize_object_with_origin(view)
         local materialized_child = materialize_with_origin(child)
         out[key] = materialized_child
 
-        local record = scalar_origin_record(materialized_child, raw_token)
-        local child_origin = type(materialized_child) == "table" and TABLE_ORIGIN[materialized_child] or nil
-        if record == nil and child_origin ~= nil then
-            record = { tag = "table", origin = child_origin }
+        local record, captured = origin_child_record(materialized_child, raw_token)
+        if not captured then
+            complete = false
         end
         records[key] = record
     end
 
     TABLE_ORIGIN[out] = {
         kind = "object",
+        complete = complete,
         source = view._doc._hold,
         bs = view._bs,
         be = view._be,
@@ -638,6 +645,7 @@ end
 local function materialize_array_with_origin(view)
     local out = {}
     local records = {}
+    local complete = true
     local i = 0
     while true do
         local rc = C.qjson_cursor_index(view._cur, i, child_box)
@@ -650,10 +658,9 @@ local function materialize_array_with_origin(view)
         local materialized_child = materialize_with_origin(child)
         out[idx] = materialized_child
 
-        local record = scalar_origin_record(materialized_child, raw_token)
-        local child_origin = type(materialized_child) == "table" and TABLE_ORIGIN[materialized_child] or nil
-        if record == nil and child_origin ~= nil then
-            record = { tag = "table", origin = child_origin }
+        local record, captured = origin_child_record(materialized_child, raw_token)
+        if not captured then
+            complete = false
         end
         records[idx] = record
         i = idx
@@ -663,6 +670,7 @@ local function materialize_array_with_origin(view)
     end
     TABLE_ORIGIN[out] = {
         kind = "array",
+        complete = complete,
         source = view._doc._hold,
         bs = view._bs,
         be = view._be,
@@ -973,13 +981,7 @@ local function origin_record_matches(record, value, depth, active)
         return false
     end
     local tag = record.tag
-    if tag == "null" then
-        return rawequal(value, _M.null)
-    elseif tag == "boolean" then
-        return type(value) == "boolean" and value == record.value
-    elseif tag == "number" then
-        return type(value) == "number" and value == record.value
-    elseif tag == "string" then
+    if tag == "string" then
         return type(value) == "string" and value == record.value
     elseif tag == "table" then
         if type(value) ~= "table" then
@@ -1015,6 +1017,9 @@ local function origin_table_slice(origin)
 end
 
 origin_object_fully_matches = function(t, origin, depth, active)
+    if origin.complete ~= true then
+        return false
+    end
     if origin.had_duplicates then
         return false
     end
@@ -1036,6 +1041,9 @@ origin_object_fully_matches = function(t, origin, depth, active)
 end
 
 origin_array_fully_matches = function(t, origin, depth, active)
+    if origin.complete ~= true then
+        return false
+    end
     if depth > ENCODE_MAX_DEPTH then
         error(ENCODE_DEPTH_ERROR)
     end
@@ -1067,18 +1075,8 @@ local function encode_origin_child(value, depth, active, record)
         then
             return record.raw
         end
-        if record.tag == "null" and rawequal(value, _M.null) then
-            return record.raw
-        end
-        if record.tag == "boolean"
-            and type(value) == "boolean"
-            and value == record.value
-        then
-            return record.raw
-        end
     end
-    -- Numeric scalars intentionally do not reuse raw lexical form when a
-    -- parent container is being walked; use the normal number encoder.
+    -- Small scalars and incomplete child tables are re-encoded.
     return encode(value, depth + 1, active)
 end
 
@@ -1086,7 +1084,7 @@ local function encode_object_with_origin(t, depth, active, origin)
     if depth > ENCODE_MAX_DEPTH then
         error(ENCODE_DEPTH_ERROR)
     end
-    if origin_object_fully_matches(t, origin, depth, active) then
+    if origin.complete == true and origin_object_fully_matches(t, origin, depth, active) then
         return origin_table_slice(origin)
     end
 
@@ -1124,7 +1122,7 @@ local function encode_array_with_origin(t, depth, active, origin)
     if depth > ENCODE_MAX_DEPTH then
         error(ENCODE_DEPTH_ERROR)
     end
-    if origin_array_fully_matches(t, origin, depth, active) then
+    if origin.complete == true and origin_array_fully_matches(t, origin, depth, active) then
         return origin_table_slice(origin)
     end
     local kind, max = classify_plain_table(t)

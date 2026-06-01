@@ -1,5 +1,7 @@
 local qjson = require("qjson")
 local cjson = require("cjson")
+local LONG_ESC_A = "\\u0061\\u0062\\u0063\\u0064\\u0065"
+local LONG_ESC_B = "\\u0066\\u0067\\u0068\\u0069\\u006A"
 
 describe("qjson.materialize keep_origin", function()
     it("keeps default materialize semantics when keep_origin is not set", function()
@@ -25,11 +27,19 @@ describe("qjson.materialize keep_origin", function()
         end, "qjson.materialize: opts.keep_origin must be a boolean")
     end)
 
-    it("reuses unchanged escaped string token when parent is changed", function()
+    it("does not guarantee reuse for short escaped strings when parent is changed", function()
         local t = qjson.materialize(qjson.decode('{"blob":"\\u0061","x":1}'), { keep_origin = true })
         t.x = 2
 
-        assert.are.equal('{"blob":"\\u0061","x":2}', qjson.encode(t))
+        assert.are.equal('{"blob":"a","x":2}', qjson.encode(t))
+    end)
+
+    it("reuses unchanged escaped string token when raw token is above threshold", function()
+        local src = '{"blob":"' .. LONG_ESC_A .. '","x":1}'
+        local t = qjson.materialize(qjson.decode(src), { keep_origin = true })
+        t.x = 2
+
+        assert.are.equal('{"blob":"' .. LONG_ESC_A .. '","x":2}', qjson.encode(t))
     end)
 
     it("falls back to normal escaping for changed string children", function()
@@ -39,15 +49,20 @@ describe("qjson.materialize keep_origin", function()
         assert.are.equal('{"blob":"line1\\nline2","x":1}', qjson.encode(t))
     end)
 
-    it("reuses unchanged nested object and array siblings when parent is changed", function()
-        local src = '{"x":0,"obj":{"k":"\\u0061"},"arr":[1, 2 ,3]}'
+    it("re-emits small-scalar containers field-by-field when unmodified", function()
+        local src = '{ "n":1.0, "s":"\\u0061", "b":true, "u":null }'
         local t = qjson.materialize(qjson.decode(src), { keep_origin = true })
-        t.x = 9
-
         local out = qjson.encode(t)
-        assert.is_truthy(string.find(out, '"obj":{"k":"\\u0061"}', 1, true))
-        assert.is_truthy(string.find(out, '"arr":[1, 2 ,3]', 1, true))
-        assert.are.equal(9, cjson.decode(out).x)
+
+        assert.are.equal('{"n":1,"s":"a","b":true,"u":null}', out)
+        assert.are_not.equal(src, out)
+    end)
+
+    it("returns original slice for unmodified containers with complete large children", function()
+        local src = '{ "a":"' .. LONG_ESC_A .. '" , "b":"' .. LONG_ESC_B .. '" }'
+        local t = qjson.materialize(qjson.decode(src), { keep_origin = true })
+
+        assert.are.equal(src, qjson.encode(t))
     end)
 
     it("does not reintroduce duplicate keys after materialization", function()
@@ -67,11 +82,18 @@ describe("qjson.materialize keep_origin", function()
         assert.are.equal('{"n":1,"e":1000,"z":0,"x":2}', qjson.encode(t))
     end)
 
-    it("does not hide nested table mutations behind a parent raw slice", function()
+    it("partial origins do not hide nested table mutations behind a parent raw slice", function()
         local t = qjson.materialize(qjson.decode('{"a":{"x":1},"b":2}'), { keep_origin = true })
         t.a.x = 9
 
         assert.are.equal('{"a":{"x":9},"b":2}', qjson.encode(t))
+    end)
+
+    it("falls back to normal array/object classification for incomplete arrays", function()
+        local src = '[ 1 , 2 , 3 ]'
+        local t = qjson.materialize(qjson.decode(src), { keep_origin = true })
+
+        assert.are.equal("[1,2,3]", qjson.encode(t))
     end)
 
     it("still reports circular references after materialization", function()
@@ -128,13 +150,23 @@ describe("qjson.materialize keep_origin", function()
 
     it("keeps source bytes alive for provenance-backed reuse", function()
         local function materialized()
-            local src = '{"blob":"\\u0061","x":1}'
+            local src = '{"blob":"' .. LONG_ESC_A .. '","x":1}'
             return qjson.materialize(qjson.decode(src), { keep_origin = true })
         end
         local t = materialized()
         collectgarbage("collect")
         t.x = 2
 
-        assert.are.equal('{"blob":"\\u0061","x":2}', qjson.encode(t))
+        assert.are.equal('{"blob":"' .. LONG_ESC_A .. '","x":2}', qjson.encode(t))
+    end)
+
+    it("reuses large complete child subtrees when parent is modified", function()
+        local src = '{"x":0,"big": { "a":"' .. LONG_ESC_A .. '" , "b":"' .. LONG_ESC_B .. '" }}'
+        local t = qjson.materialize(qjson.decode(src), { keep_origin = true })
+        t.x = 9
+
+        local out = qjson.encode(t)
+        assert.are.equal(9, cjson.decode(out).x)
+        assert.is_truthy(string.find(out, '"big":{ "a":"' .. LONG_ESC_A .. '" , "b":"' .. LONG_ESC_B .. '" }', 1, true))
     end)
 end)
