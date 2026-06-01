@@ -224,6 +224,7 @@ Numbers from the same run as [`docs/benchmarks.md`](docs/benchmarks.md).
 > numbers, and environment.
 
 ```sh
+make bench-smoke # correctness smoke, no timing
 make bench       # qjson vs cjson and lua-resty-simdjson
 ```
 
