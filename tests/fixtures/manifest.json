@@ -1,0 +1,119 @@
+{
+  "version": 1,
+  "fixtures": [
+    {
+      "id": "rest_api_small",
+      "path": "benches/fixtures/small_api.json",
+      "source": "qjson bench fixture",
+      "payload_type": "rest_api",
+      "format": "json",
+      "size_bytes": 2115,
+      "structural_density": "medium",
+      "workloads": ["parse_access", "decode_access", "decode_encode", "modify_encode"],
+      "ci": ["pr", "scheduled", "bench"],
+      "bench_iters": 5000,
+      "checks": [
+        { "path": "model", "type": "string", "value": "gpt-4" },
+        { "path": "stream", "type": "bool", "value": false },
+        { "path": "max_tokens", "type": "number", "value": 1024 },
+        { "path": "messages", "type": "array", "len": 4 },
+        { "path": "messages[0].role", "type": "string", "value": "system" },
+        { "path": "metadata.tags", "type": "array", "len": 4 },
+        { "path": "metadata.user_preferences.code_blocks", "type": "bool", "value": true }
+      ]
+    },
+    {
+      "id": "rest_api_medium",
+      "path": "benches/fixtures/medium_resp.json",
+      "source": "qjson bench fixture",
+      "payload_type": "rest_api",
+      "format": "json",
+      "size_bytes": 60368,
+      "structural_density": "low",
+      "workloads": ["parse_access", "decode_access", "modify_encode"],
+      "ci": ["scheduled", "bench"],
+      "bench_iters": 500,
+      "checks": [
+        { "path": "id", "type": "string", "value": "resp_2026051599999" },
+        { "path": "object", "type": "string", "value": "chat.completion" },
+        { "path": "created", "type": "number", "value": 1747353600 },
+        { "path": "choices", "type": "array", "len": 1 },
+        { "path": "choices[0].finish_reason", "type": "string", "value": "stop" },
+        { "path": "usage.total_tokens", "type": "number", "value": 1750 }
+      ]
+    },
+    {
+      "id": "unicode_heavy_twitter",
+      "path": "tests/vendor/simdjson/jsonexamples/twitter.json",
+      "source": "simdjson jsonexamples",
+      "payload_type": "unicode_heavy",
+      "format": "json",
+      "size_bytes": 631515,
+      "structural_density": "high",
+      "workloads": ["parse_access", "decode_access"],
+      "ci": ["scheduled", "bench"],
+      "bench_iters": 200,
+      "checks": [
+        { "path": "statuses", "type": "array", "len": 100 },
+        { "path": "statuses[0].lang", "type": "string", "value": "ja" },
+        { "path": "statuses[0].user.screen_name", "type": "string", "value": "ayuu0123" },
+        { "path": "search_metadata.count", "type": "number", "value": 100 }
+      ]
+    },
+    {
+      "id": "wide_object",
+      "path": "tests/fixtures/data/wide_object.json",
+      "source": "qjson generated fixture (256 keys k00000..k00255, value i*2)",
+      "payload_type": "wide_object",
+      "format": "json",
+      "size_bytes": 3275,
+      "structural_density": "high",
+      "workloads": ["parse_access"],
+      "ci": ["pr", "bench"],
+      "bench_iters": 5000,
+      "checks": [
+        { "path": "", "type": "object", "len": 256 },
+        { "path": "k00000", "type": "number", "value": 0 },
+        { "path": "k00128", "type": "number", "value": 256 },
+        { "path": "k00255", "type": "number", "value": 510 }
+      ]
+    },
+    {
+      "id": "deep_nesting",
+      "path": "tests/fixtures/data/deep_nesting.json",
+      "source": "qjson generated fixture (256 nested arrays, leaf 42)",
+      "payload_type": "deep_nesting",
+      "format": "json",
+      "size_bytes": 515,
+      "structural_density": "high",
+      "workloads": ["parse_access"],
+      "ci": ["pr"],
+      "checks": [
+        { "path": "", "type": "array", "len": 1 },
+        { "path": "[0]", "type": "array", "len": 1 },
+        { "path": "[0][0][0][0][0]", "type": "array", "len": 1 }
+      ]
+    },
+    {
+      "id": "ndjson_amazon",
+      "path": "tests/vendor/simdjson/jsonexamples/amazon_cellphones.ndjson",
+      "source": "simdjson jsonexamples",
+      "payload_type": "ndjson",
+      "format": "ndjson",
+      "size_bytes": 277673,
+      "structural_density": "medium",
+      "workloads": ["parse_access"],
+      "ci": ["scheduled", "bench"],
+      "bench_iters": 100,
+      "checks": [
+        { "record": 0, "path": "", "type": "array", "len": 9 },
+        { "record": 0, "path": "[0]", "type": "string", "value": "asin" },
+        { "record": 1, "path": "[0]", "type": "string", "value": "B0000SX2UC" },
+        { "record": 1, "path": "[1]", "type": "string", "value": "Nokia" },
+        { "record": 1, "path": "[7]", "type": "number", "value": 14 },
+        { "record": 2, "path": "[1]", "type": "string", "value": "Motorola" },
+        { "record": 2, "path": "[8]", "type": "string", "value": "$49.95" }
+      ]
+    }
+  ]
+}
