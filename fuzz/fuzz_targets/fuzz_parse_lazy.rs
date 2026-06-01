@@ -55,7 +55,7 @@ fn fuzz_one(data: &[u8]) {
 
         let mut path = String::new();
         let mut path_checks = Vec::new();
-        let actual = cursor_to_value(&root, 0, &mut path, true, &mut path_checks);
+        let actual = cursor_to_value(&root, data, 0, &mut path, true, &mut path_checks);
         assert!(
             !path_checks.is_empty(),
             "semantic replay must record at least the root path for input={data:?}",
@@ -155,6 +155,7 @@ fn record_path_check(path_checks: &mut Vec<PathCheck>, path: &str, expected: Pat
 
 unsafe fn cursor_to_value(
     cur: &qjson_cursor,
+    data: &[u8],
     depth: u32,
     path: &mut String,
     path_safe: bool,
@@ -167,8 +168,8 @@ unsafe fn cursor_to_value(
         T_BOOL => Value::Bool(cursor_bool(cur)),
         T_NUM => Value::Number(cursor_number(cur)),
         T_STR => Value::String(cursor_string(cur)),
-        T_ARR => Value::Array(cursor_array(cur, depth + 1, path, path_safe, path_checks)),
-        T_OBJ => Value::Object(cursor_object(cur, depth + 1, path, path_safe, path_checks)),
+        T_ARR => Value::Array(cursor_array(cur, data, depth + 1, path, path_safe, path_checks)),
+        T_OBJ => Value::Object(cursor_object(cur, data, depth + 1, path, path_safe, path_checks)),
         other => panic!("unknown qjson type {other}"),
     };
 
@@ -228,6 +229,7 @@ unsafe fn cursor_len(cur: &qjson_cursor) -> usize {
 
 unsafe fn cursor_array(
     cur: &qjson_cursor,
+    data: &[u8],
     depth: u32,
     path: &mut String,
     path_safe: bool,
@@ -236,12 +238,12 @@ unsafe fn cursor_array(
     let len = cursor_len(cur);
     let mut values = Vec::with_capacity(len);
     for i in 0..len {
-        values.push(cursor_index_value(cur, i, depth, path, path_safe, path_checks));
+        values.push(cursor_index_value(cur, data, i, depth, path, path_safe, path_checks));
     }
 
     for i in varied_order(len) {
         let mut scratch_path = String::new();
-        let _ = cursor_index_value(cur, i, depth, &mut scratch_path, false, path_checks);
+        let _ = cursor_index_value(cur, data, i, depth, &mut scratch_path, false, path_checks);
     }
 
     values
@@ -249,6 +251,7 @@ unsafe fn cursor_array(
 
 unsafe fn cursor_index_value(
     cur: &qjson_cursor,
+    data: &[u8],
     index: usize,
     depth: u32,
     path: &mut String,
@@ -264,13 +267,14 @@ unsafe fn cursor_index_value(
     } else {
         path.len()
     };
-    let value = cursor_to_value(&child, depth, path, path_safe, path_checks);
+    let value = cursor_to_value(&child, data, depth, path, path_safe, path_checks);
     path.truncate(old_len);
     value
 }
 
 unsafe fn cursor_object(
     cur: &qjson_cursor,
+    data: &[u8],
     depth: u32,
     path: &mut String,
     path_safe: bool,
@@ -278,61 +282,185 @@ unsafe fn cursor_object(
 ) -> Map<String, Value> {
     let len = cursor_len(cur);
     let mut map = Map::new();
+    let raw_keys = cursor_raw_object_keys(cur, data, len);
     let mut raw_entries = Vec::with_capacity(len);
     let mut entries = Vec::with_capacity(len);
     let mut counts: HashMap<String, usize> = HashMap::with_capacity(len);
 
-    for i in 0..len {
+    for (i, raw_key) in raw_keys.into_iter().enumerate() {
         let (key, value_cur) = cursor_object_entry_at(cur, i);
         *counts.entry(key.clone()).or_insert(0) += 1;
-        raw_entries.push((key, value_cur));
+        raw_entries.push((key, raw_key, value_cur));
     }
 
-    for (key, value_cur) in raw_entries {
+    for (key, raw_key, value_cur) in raw_entries {
         let key_is_unique = counts.get(&key).copied().unwrap_or(0) == 1;
-        let field_lookup_safe =
-            key_is_unique && decoded_key_field_lookup_matches(cur, &key, &value_cur);
+        let field_lookup_key = field_lookup_key_for_replay(&key, &raw_key, key_is_unique);
         let child_path_safe =
-            path_safe && field_lookup_safe && path_key_can_be_in_qjson_path(&key);
+            path_safe && field_lookup_key.is_some() && path_key_can_be_in_qjson_path(&key);
         let old_len = if child_path_safe {
             append_key_segment(path, &key)
         } else {
             path.len()
         };
 
-        let value = cursor_to_value(&value_cur, depth, path, child_path_safe, path_checks);
+        let value = cursor_to_value(&value_cur, data, depth, path, child_path_safe, path_checks);
         path.truncate(old_len);
 
         map.insert(key.clone(), value.clone());
-        entries.push((key, value, field_lookup_safe));
+        entries.push((key, value, field_lookup_key, value_cur));
     }
 
     for i in varied_order(entries.len()) {
-        let (key, expected, field_lookup_safe) = &entries[i];
-        if !field_lookup_safe {
-            continue;
-        }
+        let (key, expected, field_lookup_key, expected_cur) = &entries[i];
+        let Some(field_lookup_key) = field_lookup_key else { continue };
 
         let mut child: qjson_cursor = std::mem::zeroed();
-        let rc = qjson_cursor_field(cur, key.as_ptr() as *const c_char, key.len(), &mut child);
+        let rc = qjson_cursor_field(
+            cur,
+            field_lookup_key.as_ptr() as *const c_char,
+            field_lookup_key.len(),
+            &mut child,
+        );
         assert_eq!(rc, 0, "qjson_cursor_field({key:?}) failed with rc={rc}");
+        assert_eq!(
+            child.idx_start, expected_cur.idx_start,
+            "qjson_cursor_field returned wrong idx_start for key {key:?}",
+        );
+        assert_eq!(
+            child.idx_end, expected_cur.idx_end,
+            "qjson_cursor_field returned wrong idx_end for key {key:?}",
+        );
 
         let mut scratch_path = String::new();
-        let actual = cursor_to_value(&child, depth, &mut scratch_path, false, path_checks);
+        let actual = cursor_to_value(&child, data, depth, &mut scratch_path, false, path_checks);
         assert_eq!(actual, *expected, "qjson_cursor_field warm lookup mismatch for key {key:?}");
     }
 
     map
 }
 
-unsafe fn decoded_key_field_lookup_matches(
-    cur: &qjson_cursor,
-    key: &str,
-    expected: &qjson_cursor,
-) -> bool {
-    let mut child: qjson_cursor = std::mem::zeroed();
-    let rc = qjson_cursor_field(cur, key.as_ptr() as *const c_char, key.len(), &mut child);
-    rc == 0 && child.idx_start == expected.idx_start && child.idx_end == expected.idx_end
+fn field_lookup_key_for_replay(decoded_key: &str, raw_key: &[u8], unique_decoded_key: bool) -> Option<Vec<u8>> {
+    if unique_decoded_key && decoded_key.as_bytes() == raw_key {
+        Some(raw_key.to_vec())
+    } else {
+        None
+    }
+}
+
+unsafe fn cursor_raw_object_keys(cur: &qjson_cursor, data: &[u8], expected_len: usize) -> Vec<Vec<u8>> {
+    let mut byte_start = 0usize;
+    let mut byte_end = 0usize;
+    let rc = qjson_cursor_bytes(cur, &mut byte_start, &mut byte_end);
+    assert_eq!(rc, 0, "qjson_cursor_bytes for object failed with rc={rc}");
+    assert!(
+        byte_start <= byte_end && byte_end <= data.len(),
+        "qjson_cursor_bytes returned invalid object range {byte_start}..{byte_end} for input len {}",
+        data.len(),
+    );
+
+    let keys = raw_object_keys(&data[byte_start..byte_end]);
+    assert_eq!(
+        keys.len(),
+        expected_len,
+        "raw object key scan disagreed with qjson_cursor_len for object range {byte_start}..{byte_end}",
+    );
+    keys
+}
+
+fn raw_object_keys(object: &[u8]) -> Vec<Vec<u8>> {
+    let mut keys = Vec::new();
+    let mut pos = skip_json_ws(object, 0);
+    assert_eq!(object.get(pos), Some(&b'{'), "raw object scan must start at object opener");
+    pos += 1;
+
+    loop {
+        pos = skip_json_ws(object, pos);
+        match object.get(pos) {
+            Some(b'}') => return keys,
+            Some(b'"') => {}
+            other => panic!("raw object scan expected key string, got {other:?}"),
+        }
+
+        let key_start = pos + 1;
+        let key_end = scan_json_string_end(object, pos).expect("raw object key string must terminate");
+        keys.push(object[key_start..key_end].to_vec());
+
+        pos = skip_json_ws(object, key_end + 1);
+        assert_eq!(object.get(pos), Some(&b':'), "raw object scan expected ':' after key");
+        pos = skip_json_value(object, pos + 1).expect("raw object value must terminate");
+        pos = skip_json_ws(object, pos);
+
+        match object.get(pos) {
+            Some(b',') => pos += 1,
+            Some(b'}') => return keys,
+            other => panic!("raw object scan expected ',' or '}}', got {other:?}"),
+        }
+    }
+}
+
+fn skip_json_ws(bytes: &[u8], mut pos: usize) -> usize {
+    while pos < bytes.len() && matches!(bytes[pos], b' ' | b'\t' | b'\n' | b'\r') {
+        pos += 1;
+    }
+    pos
+}
+
+fn scan_json_string_end(bytes: &[u8], quote_pos: usize) -> Option<usize> {
+    if bytes.get(quote_pos).copied() != Some(b'"') {
+        return None;
+    }
+
+    let mut pos = quote_pos + 1;
+    let mut escaped = false;
+    while pos < bytes.len() {
+        let byte = bytes[pos];
+        if escaped {
+            escaped = false;
+        } else if byte == b'\\' {
+            escaped = true;
+        } else if byte == b'"' {
+            return Some(pos);
+        }
+        pos += 1;
+    }
+    None
+}
+
+fn skip_json_value(bytes: &[u8], pos: usize) -> Option<usize> {
+    let mut pos = skip_json_ws(bytes, pos);
+    match bytes.get(pos).copied()? {
+        b'"' => scan_json_string_end(bytes, pos).map(|end| end + 1),
+        b'{' | b'[' => skip_json_container(bytes, pos),
+        _ => {
+            while pos < bytes.len() && !matches!(bytes[pos], b',' | b'}' | b']') {
+                pos += 1;
+            }
+            Some(pos)
+        }
+    }
+}
+
+fn skip_json_container(bytes: &[u8], mut pos: usize) -> Option<usize> {
+    let mut depth = 0usize;
+    while pos < bytes.len() {
+        match bytes[pos] {
+            b'"' => pos = scan_json_string_end(bytes, pos)? + 1,
+            b'{' | b'[' => {
+                depth += 1;
+                pos += 1;
+            }
+            b'}' | b']' => {
+                depth = depth.checked_sub(1)?;
+                pos += 1;
+                if depth == 0 {
+                    return Some(pos);
+                }
+            }
+            _ => pos += 1,
+        }
+    }
+    None
 }
 
 unsafe fn cursor_object_entry_at(cur: &qjson_cursor, index: usize) -> (String, qjson_cursor) {
@@ -620,6 +748,32 @@ mod tests {
         assert_eq!(PathExpected::from_value(&serde_json::json!("x")), PathExpected::String("x".to_string()));
         assert_eq!(PathExpected::from_value(&serde_json::json!([1, 2, 3])), PathExpected::ArrayLen(3));
         assert_eq!(PathExpected::from_value(&serde_json::json!({"a": 1, "b": 2})), PathExpected::ObjectLen(2));
+    }
+
+    #[test]
+    fn raw_object_keys_preserve_field_lookup_bytes() {
+        let keys = raw_object_keys(
+            br#"{"plain":1,"a\nb":2,"a.b":{"nested":[true,false]},"arr":[{"k":3}]}"#,
+        );
+
+        assert_eq!(
+            keys,
+            vec![
+                b"plain".to_vec(),
+                br#"a\nb"#.to_vec(),
+                b"a.b".to_vec(),
+                b"arr".to_vec(),
+            ],
+        );
+    }
+
+    #[test]
+    fn field_lookup_key_requires_unique_raw_decoded_identity() {
+        assert_eq!(field_lookup_key_for_replay("plain", b"plain", true), Some(b"plain".to_vec()));
+        assert_eq!(field_lookup_key_for_replay("a.b", b"a.b", true), Some(b"a.b".to_vec()));
+        assert_eq!(field_lookup_key_for_replay("dup", b"dup", false), None);
+        assert_eq!(field_lookup_key_for_replay("a\nb", br#"a\nb"#, true), None);
+        assert_eq!(field_lookup_key_for_replay("emoji", br#"\u0065moji"#, true), None);
     }
 
     #[test]
