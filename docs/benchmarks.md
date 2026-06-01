@@ -77,6 +77,18 @@ The new modify+encode scenarios were added in [#54](https://github.com/api7/lua-
 
 ## Reproducing
 
+Run the lightweight correctness smoke without timing:
+
+```sh
+make bench-smoke
+```
+
+The smoke reuses the benchmark payloads and workload accessors on representative
+scenarios, including the interleaved payload cycle. It checks qjson, cjson, and
+simdjson access semantics when simdjson is available, plus qjson encode output
+after the unmodified and mutation workloads. `make bench` runs this smoke first;
+if it fails, timing rows are not printed.
+
 Run the full comparison with one command:
 
 ```sh

@@ -22,7 +22,7 @@ else
 LUA_ENV := LD_LIBRARY_PATH=$(LIB_DIR) LUA_PATH='$(LUA_PATH)' LUA_CPATH='$(LUA_CPATH)'
 endif
 
-.PHONY: help build test lua-property-test lua-mutation-property-test lint lua-lint bench clean
+.PHONY: help build test lua-property-test lua-mutation-property-test lint lua-lint bench-smoke bench clean
 
 help: ## Show this help
 	@# FS uses [^#]* (not .*) so a description containing `##` isn't truncated.
@@ -57,7 +57,10 @@ lua-lint: ## Run luacheck over Lua sources and tests
 
 BENCH_SCENARIOS := small medium github-100k 100k 200k 500k 1m 2m 5m 10m interleaved
 
-bench: build vendor/lua-cjson/cjson.so ## Run each scenario in a fresh LuaJIT process
+bench-smoke: build vendor/lua-cjson/cjson.so ## Run benchmark correctness smoke without timing
+	@$(LUA_ENV) $(RESTY) benches/lua_bench.lua --smoke
+
+bench: bench-smoke build vendor/lua-cjson/cjson.so ## Run each scenario in a fresh LuaJIT process
 	@for s in $(BENCH_SCENARIOS); do \
 		$(LUA_ENV) $(RESTY) benches/lua_bench.lua $$s; \
 	done
