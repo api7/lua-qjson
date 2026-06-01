@@ -48,16 +48,23 @@ fn fuzz_one(data: &[u8]) {
     let doc = unsafe { qjson_parse_ex(data.as_ptr(), data.len(), &opts, &mut err) };
     assert!(!doc.is_null(), "qjson lazy rejected serde-accepted input with err={err:?}: {data:?}");
 
-    let actual = unsafe {
+    let (actual, path_checks) = unsafe {
         let mut root: qjson_cursor = std::mem::zeroed();
         let rc = qjson_open(doc, ptr::null(), 0, &mut root);
         assert_eq!(rc, 0, "qjson_open root failed with rc={rc}: {data:?}");
 
-        let actual = cursor_to_value(&root, 0);
+        let mut path = String::new();
+        let mut path_checks = Vec::new();
+        let actual = cursor_to_value(&root, 0, &mut path, true, &mut path_checks);
+        assert!(
+            !path_checks.is_empty(),
+            "semantic replay must record at least the root path for input={data:?}",
+        );
         qjson_free(doc);
-        actual
+        (actual, path_checks)
     };
 
+    assert!(!path_checks.is_empty(), "path checks should include at least the root value");
     assert_eq!(actual, expected, "lazy value mismatch for input={data:?}");
 }
 
@@ -149,17 +156,29 @@ fn record_path_check(path_checks: &mut Vec<PathCheck>, path: &str, value: &Value
     });
 }
 
-unsafe fn cursor_to_value(cur: &qjson_cursor, depth: u32) -> Value {
+unsafe fn cursor_to_value(
+    cur: &qjson_cursor,
+    depth: u32,
+    path: &mut String,
+    path_safe: bool,
+    path_checks: &mut Vec<PathCheck>,
+) -> Value {
     assert!(depth <= FUZZ_MAX_DEPTH, "walker exceeded depth limit");
-    match cursor_type(cur) {
-        0 => Value::Null,
-        1 => Value::Bool(cursor_bool(cur)),
-        2 => Value::Number(cursor_number(cur)),
-        3 => Value::String(cursor_string(cur)),
-        4 => Value::Array(cursor_array(cur, depth + 1)),
-        5 => Value::Object(cursor_object(cur, depth + 1)),
+    let value = match cursor_type(cur) {
+        T_NULL => Value::Null,
+        T_BOOL => Value::Bool(cursor_bool(cur)),
+        T_NUM => Value::Number(cursor_number(cur)),
+        T_STR => Value::String(cursor_string(cur)),
+        T_ARR => Value::Array(cursor_array(cur, depth + 1, path, path_safe, path_checks)),
+        T_OBJ => Value::Object(cursor_object(cur, depth + 1, path, path_safe, path_checks)),
         other => panic!("unknown qjson type {other}"),
+    };
+
+    if path_safe {
+        record_path_check(path_checks, path, &value);
     }
+
+    value
 }
 
 unsafe fn cursor_type(cur: &qjson_cursor) -> c_int {
@@ -199,37 +218,81 @@ unsafe fn cursor_len(cur: &qjson_cursor) -> usize {
     len
 }
 
-unsafe fn cursor_array(cur: &qjson_cursor, depth: u32) -> Vec<Value> {
+unsafe fn cursor_array(
+    cur: &qjson_cursor,
+    depth: u32,
+    path: &mut String,
+    path_safe: bool,
+    path_checks: &mut Vec<PathCheck>,
+) -> Vec<Value> {
     let len = cursor_len(cur);
     let mut values = Vec::with_capacity(len);
     for i in 0..len {
-        values.push(cursor_index_value(cur, i, depth));
+        values.push(cursor_index_value(cur, i, depth, path, path_safe, path_checks));
     }
 
     for i in varied_order(len) {
-        let _ = cursor_index_value(cur, i, depth);
+        let mut scratch_path = String::new();
+        let _ = cursor_index_value(cur, i, depth, &mut scratch_path, false, path_checks);
     }
 
     values
 }
 
-unsafe fn cursor_index_value(cur: &qjson_cursor, index: usize, depth: u32) -> Value {
+unsafe fn cursor_index_value(
+    cur: &qjson_cursor,
+    index: usize,
+    depth: u32,
+    path: &mut String,
+    path_safe: bool,
+    path_checks: &mut Vec<PathCheck>,
+) -> Value {
     let mut child: qjson_cursor = std::mem::zeroed();
     let rc = qjson_cursor_index(cur, index, &mut child);
     assert_eq!(rc, 0, "qjson_cursor_index({index}) failed with rc={rc}");
-    cursor_to_value(&child, depth)
+
+    let old_len = if path_safe {
+        append_index_segment(path, index)
+    } else {
+        path.len()
+    };
+    let value = cursor_to_value(&child, depth, path, path_safe, path_checks);
+    path.truncate(old_len);
+    value
 }
 
-unsafe fn cursor_object(cur: &qjson_cursor, depth: u32) -> Map<String, Value> {
+unsafe fn cursor_object(
+    cur: &qjson_cursor,
+    depth: u32,
+    path: &mut String,
+    path_safe: bool,
+    path_checks: &mut Vec<PathCheck>,
+) -> Map<String, Value> {
     let len = cursor_len(cur);
     let mut map = Map::new();
+    let mut raw_entries = Vec::with_capacity(len);
     let mut entries = Vec::with_capacity(len);
     let mut counts: HashMap<String, usize> = HashMap::with_capacity(len);
 
     for i in 0..len {
         let (key, value_cur) = cursor_object_entry_at(cur, i);
-        let value = cursor_to_value(&value_cur, depth);
         *counts.entry(key.clone()).or_insert(0) += 1;
+        raw_entries.push((key, value_cur));
+    }
+
+    for (key, value_cur) in raw_entries {
+        let child_path_safe = path_safe
+            && counts.get(&key).copied().unwrap_or(0) == 1
+            && path_key_can_be_in_qjson_path(&key);
+        let old_len = if child_path_safe {
+            append_key_segment(path, &key)
+        } else {
+            path.len()
+        };
+
+        let value = cursor_to_value(&value_cur, depth, path, child_path_safe, path_checks);
+        path.truncate(old_len);
+
         map.insert(key.clone(), value.clone());
         entries.push((key, value));
     }
@@ -242,11 +305,10 @@ unsafe fn cursor_object(cur: &qjson_cursor, depth: u32) -> Map<String, Value> {
 
         let mut child: qjson_cursor = std::mem::zeroed();
         let rc = qjson_cursor_field(cur, key.as_ptr() as *const c_char, key.len(), &mut child);
-        if rc != 0 {
-            continue;
-        }
+        assert_eq!(rc, 0, "qjson_cursor_field({key:?}) failed with rc={rc}");
 
-        let actual = cursor_to_value(&child, depth);
+        let mut scratch_path = String::new();
+        let actual = cursor_to_value(&child, depth, &mut scratch_path, false, path_checks);
         assert_eq!(actual, *expected, "qjson_cursor_field warm lookup mismatch for key {key:?}");
     }
 
