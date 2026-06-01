@@ -166,6 +166,29 @@ lazy proxy directly to `cjson.encode` (cjson bypasses metamethods in C); use
 `qjson.encode` instead, or call `qjson.materialize(t)` to get a plain Lua table
 that any third-party encoder can handle.
 
+`qjson.materialize(t, { keep_origin = true })` keeps lightweight provenance on
+the returned plain Lua tables so `qjson.encode` can preserve key order and
+reuse selected original tokens. Recording is intentionally threshold-based:
+
+- String children are recorded only when their raw JSON token (including
+  quotes) is longer than 24 bytes.
+- Table children are recorded in the parent only when the child origin is
+  complete and its raw subtree span is longer than 64 bytes.
+- Numbers, booleans, null, and short strings are not recorded.
+
+Each recorded container tracks whether its provenance is complete:
+
+- `complete = true`: every child needed to prove byte-for-byte identity is
+  recorded, so an unchanged container can be emitted as the original slice.
+- `complete = false`: provenance is partial. Objects still preserve original
+  key order for existing keys and can reuse recorded large children, but arrays
+  fall back to normal array/object encoding.
+
+Because materialized tables are ordinary Lua tables (no dirty-tracking
+metatable), `keep_origin` with partial provenance preserves JSON-equivalent
+output rather than guaranteeing byte-identical re-emission of every unchanged
+small token.
+
 **Native `next` caveat.** `next(t)` is not proxy-aware: it bypasses the
 `__pairs` / `__ipairs` hooks and may see qjson implementation fields instead of
 JSON fields. Do not use native `next` to iterate a lazy proxy or test whether it
