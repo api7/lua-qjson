@@ -8,12 +8,12 @@ local EXACT_64_CHILD_VALUE = string.rep("a", 56)
 local function count_string_sub_calls(fn)
     local original = string.sub
     local calls = 0
-    string.sub = function(...)
+    rawset(string, "sub", function(...)
         calls = calls + 1
         return original(...)
-    end
+    end)
     local ok, err = pcall(fn)
-    string.sub = original
+    rawset(string, "sub", original)
     if not ok then
         error(err, 0)
     end
