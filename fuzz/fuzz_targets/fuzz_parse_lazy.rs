@@ -127,7 +127,7 @@ impl PathExpected {
 }
 
 fn path_key_can_be_in_qjson_path(key: &str) -> bool {
-    !key.as_bytes().iter().any(|&byte| matches!(byte, b'.' | b'[' | b']'))
+    !key.is_empty() && !key.as_bytes().iter().any(|&byte| matches!(byte, b'.' | b'[' | b']'))
 }
 
 fn append_key_segment(path: &mut String, key: &str) -> usize {
@@ -582,6 +582,7 @@ mod tests {
     fn path_key_safety_rejects_qjson_path_delimiters() {
         assert!(path_key_can_be_in_qjson_path("plain"));
         assert!(path_key_can_be_in_qjson_path("emoji"));
+        assert!(!path_key_can_be_in_qjson_path(""));
         assert!(!path_key_can_be_in_qjson_path("a.b"));
         assert!(!path_key_can_be_in_qjson_path("arr[0]"));
         assert!(!path_key_can_be_in_qjson_path("bad]key"));
@@ -626,6 +627,7 @@ mod tests {
         fuzz_one(br#"{"body":{"model":"gpt","temperature":0.5,"ok":true,"none":null,"items":[{"id":1},{"id":2}]}}"#);
         fuzz_one(br#"{"dup":1,"dup":2,"a.b":3,"arr[0]":4,"nested":{"x":true}}"#);
         fuzz_one(br#"{"a\nb":"line\nvalue","\u0064up":1,"dup":2,"emoji":"\uD83D\uDE00","nul":"\u0000","inner":{"same":3,"same":4}}"#);
+        fuzz_one(br#"{"d":{"e":[{"":"g"},4.5,-0]},"h":[]}"#);
         fuzz_one(br#"[{"name":"first"},{"name":"second","values":[1,2,3]}]"#);
     }
 }
