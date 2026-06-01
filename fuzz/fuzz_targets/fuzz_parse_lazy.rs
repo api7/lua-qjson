@@ -1,16 +1,34 @@
-#![no_main]
+#![cfg_attr(not(test), no_main)]
 
+#[cfg(not(test))]
 use libfuzzer_sys::fuzz_target;
 use qjson::ffi::*;
 use qjson::options::{Options, QJSON_MODE_LAZY};
 use serde_json::{Map, Number, Value};
 use std::collections::HashMap;
+use std::fmt::Write as _;
 use std::os::raw::{c_char, c_int};
 use std::ptr;
 
 const FUZZ_MAX_DEPTH: u32 = 128;
 const DEPTH_SKIP_LIMIT: u32 = 64;
+#[allow(dead_code)]
+const MAX_PATH_CHECKS: usize = 256;
 
+#[allow(dead_code)]
+const T_NULL: c_int = 0;
+#[allow(dead_code)]
+const T_BOOL: c_int = 1;
+#[allow(dead_code)]
+const T_NUM: c_int = 2;
+#[allow(dead_code)]
+const T_STR: c_int = 3;
+#[allow(dead_code)]
+const T_ARR: c_int = 4;
+#[allow(dead_code)]
+const T_OBJ: c_int = 5;
+
+#[cfg(not(test))]
 fuzz_target!(|data: &[u8]| {
     fuzz_one(data);
 });
@@ -55,6 +73,80 @@ fn normalize_numbers(value: Value) -> Value {
         }
         other => other,
     }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+#[allow(dead_code)]
+struct PathCheck {
+    path: Vec<u8>,
+    expected: PathExpected,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+enum PathExpected {
+    Null,
+    Bool(bool),
+    Number(f64),
+    String(String),
+    ArrayLen(usize),
+    ObjectLen(usize),
+}
+
+impl PathExpected {
+    fn from_value(value: &Value) -> Self {
+        match value {
+            Value::Null => Self::Null,
+            Value::Bool(value) => Self::Bool(*value),
+            Value::Number(number) => {
+                Self::Number(number.as_f64().expect("normalized qjson number must fit f64"))
+            }
+            Value::String(value) => Self::String(value.clone()),
+            Value::Array(items) => Self::ArrayLen(items.len()),
+            Value::Object(map) => Self::ObjectLen(map.len()),
+        }
+    }
+
+    #[allow(dead_code)]
+    fn type_tag(&self) -> c_int {
+        match self {
+            Self::Null => T_NULL,
+            Self::Bool(_) => T_BOOL,
+            Self::Number(_) => T_NUM,
+            Self::String(_) => T_STR,
+            Self::ArrayLen(_) => T_ARR,
+            Self::ObjectLen(_) => T_OBJ,
+        }
+    }
+}
+
+fn path_key_can_be_in_qjson_path(key: &str) -> bool {
+    !key.as_bytes().iter().any(|&byte| matches!(byte, b'.' | b'[' | b']'))
+}
+
+fn append_key_segment(path: &mut String, key: &str) -> usize {
+    let old_len = path.len();
+    if old_len != 0 {
+        path.push('.');
+    }
+    path.push_str(key);
+    old_len
+}
+
+fn append_index_segment(path: &mut String, index: usize) -> usize {
+    let old_len = path.len();
+    write!(path, "[{index}]").expect("writing to String cannot fail");
+    old_len
+}
+
+#[allow(dead_code)]
+fn record_path_check(path_checks: &mut Vec<PathCheck>, path: &str, value: &Value) {
+    if path_checks.len() >= MAX_PATH_CHECKS {
+        return;
+    }
+    path_checks.push(PathCheck {
+        path: path.as_bytes().to_vec(),
+        expected: PathExpected::from_value(value),
+    });
 }
 
 unsafe fn cursor_to_value(cur: &qjson_cursor, depth: u32) -> Value {
@@ -219,4 +311,59 @@ fn exceeds_container_depth(data: &[u8], limit: u32) -> bool {
     }
 
     false
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn path_key_safety_rejects_qjson_path_delimiters() {
+        assert!(path_key_can_be_in_qjson_path("plain"));
+        assert!(path_key_can_be_in_qjson_path("emoji"));
+        assert!(!path_key_can_be_in_qjson_path("a.b"));
+        assert!(!path_key_can_be_in_qjson_path("arr[0]"));
+        assert!(!path_key_can_be_in_qjson_path("bad]key"));
+    }
+
+    #[test]
+    fn path_segment_builders_match_qjson_path_syntax() {
+        let mut path = String::new();
+
+        let root_len = path.len();
+        append_key_segment(&mut path, "body");
+        assert_eq!(path, "body");
+
+        let body_len = path.len();
+        append_key_segment(&mut path, "messages");
+        assert_eq!(path, "body.messages");
+
+        let messages_len = path.len();
+        append_index_segment(&mut path, 12);
+        assert_eq!(path, "body.messages[12]");
+
+        path.truncate(messages_len);
+        assert_eq!(path, "body.messages");
+        path.truncate(body_len);
+        assert_eq!(path, "body");
+        path.truncate(root_len);
+        assert_eq!(path, "");
+    }
+
+    #[test]
+    fn expected_summary_records_getter_observable_values() {
+        assert_eq!(PathExpected::from_value(&Value::Null), PathExpected::Null);
+        assert_eq!(PathExpected::from_value(&Value::Bool(true)), PathExpected::Bool(true));
+        assert_eq!(PathExpected::from_value(&serde_json::json!(1.5)), PathExpected::Number(1.5));
+        assert_eq!(PathExpected::from_value(&serde_json::json!("x")), PathExpected::String("x".to_string()));
+        assert_eq!(PathExpected::from_value(&serde_json::json!([1, 2, 3])), PathExpected::ArrayLen(3));
+        assert_eq!(PathExpected::from_value(&serde_json::json!({"a": 1, "b": 2})), PathExpected::ObjectLen(2));
+    }
+
+    #[test]
+    fn deterministic_replay_cases_cover_path_safe_and_ambiguous_keys() {
+        fuzz_one(br#"{"body":{"model":"gpt","temperature":0.5,"ok":true,"none":null,"items":[{"id":1},{"id":2}]}}"#);
+        fuzz_one(br#"{"dup":1,"dup":2,"a.b":3,"arr[0]":4,"nested":{"x":true}}"#);
+        fuzz_one(br#"[{"name":"first"},{"name":"second","values":[1,2,3]}]"#);
+    }
 }
