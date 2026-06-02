@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1780376502281,
+  "lastUpdate": 1780377020848,
   "repoUrl": "https://github.com/api7/lua-qjson",
   "entries": {
     "Benchmark": [
@@ -310,6 +310,84 @@ window.BENCHMARK_DATA = {
           {
             "name": "field_access/get_str/nested",
             "value": 75,
+            "range": "± 0",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "membphis@gmail.com",
+            "name": "YuanSheng Wang",
+            "username": "membphis"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "8e1b394e0dd0322bedae3a9fc87d15d8049a02ce",
+          "message": "fuzz: add dedicated number boundary fuzzer (#160)",
+          "timestamp": "2026-06-02T13:07:59+08:00",
+          "tree_id": "e34b56c2025e01512ace02c94edd75eae57f5d0b",
+          "url": "https://github.com/api7/lua-qjson/commit/8e1b394e0dd0322bedae3a9fc87d15d8049a02ce"
+        },
+        "date": 1780377020203,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "parse_eager/parse/small_api",
+            "value": 2951,
+            "range": "± 28",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "parse_eager/parse/wide_object",
+            "value": 10243,
+            "range": "± 31",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "parse_eager/parse/deep_nesting",
+            "value": 6435,
+            "range": "± 149",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "parse_lazy/parse/small_api",
+            "value": 1066,
+            "range": "± 4",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "parse_lazy/parse/wide_object",
+            "value": 3478,
+            "range": "± 53",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "parse_lazy/parse/deep_nesting",
+            "value": 2623,
+            "range": "± 75",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "field_access/get_str/model",
+            "value": 30,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "field_access/get_f64/max_tokens",
+            "value": 46,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "field_access/get_str/nested",
+            "value": 74,
             "range": "± 0",
             "unit": "ns/iter"
           }
