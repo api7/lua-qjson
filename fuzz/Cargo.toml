@@ -42,3 +42,10 @@ path = "fuzz_targets/fuzz_parse_lazy.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "fuzz_numbers"
+path = "fuzz_targets/fuzz_numbers.rs"
+test = false
+doc = false
+bench = false
