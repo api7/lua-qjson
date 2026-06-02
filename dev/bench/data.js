@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1780376080484,
+  "lastUpdate": 1780376502281,
   "repoUrl": "https://github.com/api7/lua-qjson",
   "entries": {
     "Benchmark": [
@@ -232,6 +232,84 @@ window.BENCHMARK_DATA = {
           {
             "name": "field_access/get_str/nested",
             "value": 74,
+            "range": "± 0",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "membphis@gmail.com",
+            "name": "Yuansheng Wang",
+            "username": "membphis"
+          },
+          "committer": {
+            "email": "membphis@gmail.com",
+            "name": "Yuansheng Wang",
+            "username": "membphis"
+          },
+          "distinct": true,
+          "id": "ce8642b3d5e5029713b25cdc0b8098334b95791e",
+          "message": "test: add error message quality validation for all qjson_err variants\n\n- Add format_error_complete_coverage test covering 8 previously untested error codes\n- Validates message format for QJSON_OK, OUT_OF_RANGE, DECODE_FAILED, INVALID_PATH,\n  INVALID_ARG, OOM, NUMBER_OUT_OF_RANGE, INVALID_STRING, INVALID_UTF8\n- Tests both with-offset and no-offset scenarios where applicable\n- All 15 qjson_err variants now have message format validation\n\nCloses #155",
+          "timestamp": "2026-06-02T12:58:37+08:00",
+          "tree_id": "5d6780a1350ef81ffeae89299ff0344db843ca50",
+          "url": "https://github.com/api7/lua-qjson/commit/ce8642b3d5e5029713b25cdc0b8098334b95791e"
+        },
+        "date": 1780376501934,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "parse_eager/parse/small_api",
+            "value": 2955,
+            "range": "± 46",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "parse_eager/parse/wide_object",
+            "value": 10250,
+            "range": "± 603",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "parse_eager/parse/deep_nesting",
+            "value": 6667,
+            "range": "± 54",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "parse_lazy/parse/small_api",
+            "value": 1049,
+            "range": "± 3",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "parse_lazy/parse/wide_object",
+            "value": 3520,
+            "range": "± 37",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "parse_lazy/parse/deep_nesting",
+            "value": 2488,
+            "range": "± 14",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "field_access/get_str/model",
+            "value": 29,
+            "range": "± 1",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "field_access/get_f64/max_tokens",
+            "value": 46,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "field_access/get_str/nested",
+            "value": 75,
             "range": "± 0",
             "unit": "ns/iter"
           }
