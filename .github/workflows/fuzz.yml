@@ -66,4 +66,5 @@ jobs:
           cargo +nightly fuzz run fuzz_parse_eager -- -max_total_time="$max_total_time"
           cargo +nightly fuzz run fuzz_depth -- -max_total_time="$max_total_time"
           cargo +nightly fuzz run fuzz_ffi_ops -- -max_total_time="$max_total_time"
+          cargo +nightly fuzz run fuzz_numbers -- -max_total_time="$max_total_time"
           cargo +nightly fuzz run fuzz_parse_lazy -- -max_total_time="$max_total_time"
