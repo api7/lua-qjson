@@ -1,6 +1,7 @@
 //! Wide-object skip-cache test (spec §9.2): 5K keys, repeatedly access random
 //! keys via the same cursor and confirm correctness.
 
+use std::os::raw::c_char;
 use qjson::ffi::*;
 
 fn build_wide(n: usize) -> (String, Vec<String>) {
@@ -31,14 +32,14 @@ fn wide_object_5k_keys_all_resolvable() {
     for &i in &samples {
         let mut v: i64 = -1;
         let k = keys[i].as_bytes();
-        let rc = unsafe { qjson_get_i64(d, k.as_ptr() as *const i8, k.len(), &mut v) };
+        let rc = unsafe { qjson_get_i64(d, k.as_ptr() as *const c_char, k.len(), &mut v) };
         assert_eq!(rc, 0, "miss on first pass for key {}", keys[i]);
         assert_eq!(v as usize, i * 2);
     }
     for &i in samples.iter().rev() {
         let mut v: i64 = -1;
         let k = keys[i].as_bytes();
-        let rc = unsafe { qjson_get_i64(d, k.as_ptr() as *const i8, k.len(), &mut v) };
+        let rc = unsafe { qjson_get_i64(d, k.as_ptr() as *const c_char, k.len(), &mut v) };
         assert_eq!(rc, 0, "miss on cache-hit pass for key {}", keys[i]);
         assert_eq!(v as usize, i * 2);
     }
@@ -46,7 +47,7 @@ fn wide_object_5k_keys_all_resolvable() {
     // Unknown key still returns NOT_FOUND after the cache is populated.
     let bogus = b"definitely_not_a_key";
     let mut v: i64 = 0;
-    let rc = unsafe { qjson_get_i64(d, bogus.as_ptr() as *const i8, bogus.len(), &mut v) };
+    let rc = unsafe { qjson_get_i64(d, bogus.as_ptr() as *const c_char, bogus.len(), &mut v) };
     assert_eq!(rc, 2); // QJSON_NOT_FOUND
 
     unsafe { qjson_free(d) };

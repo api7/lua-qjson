@@ -1,3 +1,4 @@
+use std::os::raw::c_char;
 use qjson::ffi::*;
 
 fn parse(s: &[u8]) -> *mut qjson_doc {
@@ -13,7 +14,7 @@ fn get_str_simple() {
     let mut p: *const u8 = std::ptr::null();
     let mut n: usize = 0;
     let path = b"a";
-    let rc = unsafe { qjson_get_str(d, path.as_ptr() as *const i8, path.len(), &mut p, &mut n) };
+    let rc = unsafe { qjson_get_str(d, path.as_ptr() as *const c_char, path.len(), &mut p, &mut n) };
     assert_eq!(rc, 0);
     let s = unsafe { std::slice::from_raw_parts(p, n) };
     assert_eq!(s, b"hello");
@@ -26,7 +27,7 @@ fn get_str_with_escape() {
     let mut p: *const u8 = std::ptr::null();
     let mut n: usize = 0;
     let path = b"a";
-    let rc = unsafe { qjson_get_str(d, path.as_ptr() as *const i8, path.len(), &mut p, &mut n) };
+    let rc = unsafe { qjson_get_str(d, path.as_ptr() as *const c_char, path.len(), &mut p, &mut n) };
     assert_eq!(rc, 0);
     let s = unsafe { std::slice::from_raw_parts(p, n) };
     assert_eq!(s, b"he\nlo");
@@ -39,7 +40,7 @@ fn get_str_type_mismatch() {
     let mut p: *const u8 = std::ptr::null();
     let mut n: usize = 0;
     let path = b"a";
-    let rc = unsafe { qjson_get_str(d, path.as_ptr() as *const i8, path.len(), &mut p, &mut n) };
+    let rc = unsafe { qjson_get_str(d, path.as_ptr() as *const c_char, path.len(), &mut p, &mut n) };
     assert_eq!(rc, 3); // TYPE_MISMATCH
     unsafe { qjson_free(d) };
 }

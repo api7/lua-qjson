@@ -1,4 +1,10 @@
 #![cfg(target_arch = "x86_64")]
+// ENDIAN NOTE: This module is x86_64-only (always little-endian). The
+// _mm256_movemask_epi8 intrinsic produces a 32-bit mask where bit i corresponds
+// to the sign bit of lane i; combined masks are composed as (lo | (hi << 32)).
+// This bit-index-to-lane mapping is fixed by the x86 ISA, not memory byte order,
+// so the code is correct on x86_64 without explicit endian handling. PowerPC
+// (big-endian) CI coverage runs the scalar scanner only.
 
 use core::arch::x86_64::*;
 use super::Scanner;
