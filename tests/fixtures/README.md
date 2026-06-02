@@ -114,7 +114,7 @@ them.
 | `amazon_cellphones.ndjson` | simdjson/jsonexamples | Apache-2.0 |
 | `citm_catalog.json` | simdjson/jsonexamples (CitmCatalog benchmark) | Apache-2.0 |
 | `k8s_openapi.json` | [Kubernetes OpenAPI spec](https://github.com/kubernetes/kubernetes/tree/master/api/openapi-spec) | Apache-2.0 |
-| `github_prs.json` | GitHub REST API v3 (public repo data) | Public API response, no PII |
+| `github_prs.json` | [GitHub REST API v3](https://docs.github.com/en/rest) (api7/lua-qjson public repo) | Public data ([GitHub ToS](https://docs.github.com/en/site-policy/github-terms/github-terms-of-service)) |
 | `small_api.json` | qjson synthetic | Project license |
 | `medium_resp.json` | qjson synthetic | Project license |
 | `wide_object.json` | qjson generated | Project license |
