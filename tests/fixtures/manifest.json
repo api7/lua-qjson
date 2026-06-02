@@ -114,6 +114,60 @@
         { "record": 2, "path": "[1]", "type": "string", "value": "Motorola" },
         { "record": 2, "path": "[8]", "type": "string", "value": "$49.95" }
       ]
+    },
+    {
+      "id": "citm_catalog",
+      "path": "tests/vendor/simdjson/jsonexamples/citm_catalog.json",
+      "source": "simdjson jsonexamples (CitmCatalog benchmark)",
+      "payload_type": "event_ticketing",
+      "format": "json",
+      "size_bytes": 1727204,
+      "structural_density": "high",
+      "workloads": ["parse_access", "decode_access"],
+      "ci": ["scheduled", "bench"],
+      "bench_iters": 50,
+      "checks": [
+        { "path": "areaNames", "type": "object", "len": 17 },
+        { "path": "areaNames.205705993", "type": "string", "value": "Arrière-scène central" },
+        { "path": "performances", "type": "array", "len": 243 },
+        { "path": "performances[0].id", "type": "number", "value": 339887544 },
+        { "path": "events", "type": "object", "len": 184 }
+      ]
+    },
+    {
+      "id": "k8s_openapi",
+      "path": "tests/fixtures/data/k8s_openapi.json",
+      "source": "Kubernetes official OpenAPI spec (Apache-2.0)",
+      "payload_type": "openapi_schema",
+      "format": "json",
+      "size_bytes": 924276,
+      "structural_density": "high",
+      "workloads": ["parse_access"],
+      "ci": ["scheduled"],
+      "checks": [
+        { "path": "openapi", "type": "string", "value": "3.0.0" },
+        { "path": "info.title", "type": "string", "value": "Kubernetes" },
+        { "path": "paths", "type": "object", "len": 38 },
+        { "path": "components.schemas", "type": "object", "len": 163 }
+      ]
+    },
+    {
+      "id": "github_prs",
+      "path": "tests/fixtures/data/github_prs.json",
+      "source": "GitHub REST API v3 (public repo, MIT)",
+      "payload_type": "rest_api",
+      "format": "json",
+      "size_bytes": 294616,
+      "structural_density": "medium",
+      "workloads": ["parse_access", "decode_access"],
+      "ci": ["pr", "scheduled"],
+      "checks": [
+        { "path": "", "type": "array", "len": 15 },
+        { "path": "[0].number", "type": "number", "value": 157 },
+        { "path": "[0].state", "type": "string", "value": "closed" },
+        { "path": "[0].user.login", "type": "string", "value": "membphis" },
+        { "path": "[0].base.repo.full_name", "type": "string", "value": "api7/lua-qjson" }
+      ]
     }
   ]
 }
