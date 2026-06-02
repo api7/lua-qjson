@@ -22,7 +22,7 @@ else
 LUA_ENV := LD_LIBRARY_PATH=$(LIB_DIR) LUA_PATH='$(LUA_PATH)' LUA_CPATH='$(LUA_CPATH)'
 endif
 
-.PHONY: help build test lua-property-test lua-mutation-property-test lint lua-lint bench-smoke bench clean
+.PHONY: help build test lua-property-test lua-mutation-property-test lint lua-lint bench-smoke bench bench-rust clean
 
 help: ## Show this help
 	@# FS uses [^#]* (not .*) so a description containing `##` isn't truncated.
@@ -64,6 +64,9 @@ bench: bench-smoke build vendor/lua-cjson/cjson.so ## Run each scenario in a fre
 	@for s in $(BENCH_SCENARIOS); do \
 		$(LUA_ENV) $(RESTY) benches/lua_bench.lua $$s; \
 	done
+
+bench-rust: build ## Run Rust criterion benchmarks
+	cargo bench --bench rust_bench
 
 vendor/lua-cjson/cjson.so: | vendor/lua-cjson/Makefile
 ifeq ($(shell uname),Darwin)

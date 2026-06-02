@@ -19,3 +19,9 @@ pub mod __test_api {
     #[cfg(target_arch = "aarch64")]
     pub use crate::scan::neon::NeonScanner;
 }
+
+#[doc(hidden)]
+pub mod __bench_api {
+    pub use crate::doc::Document;
+    pub use crate::options::{Options, QJSON_MODE_LAZY};
+}
