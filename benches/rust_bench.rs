@@ -60,6 +60,8 @@ fn bench_parse_lazy(c: &mut Criterion) {
     group.finish();
 }
 
+/// Field access benchmarks measure FFI overhead by calling through the C ABI surface,
+/// not just Rust internals. This reflects real-world usage from LuaJIT.
 fn bench_field_access(c: &mut Criterion) {
     let small = read_fixture("benches/fixtures/small_api.json");
     let doc = Document::parse(&small).unwrap();
@@ -69,6 +71,8 @@ fn bench_field_access(c: &mut Criterion) {
         b.iter(|| {
             let mut out_ptr = std::ptr::null();
             let mut out_len = 0usize;
+            // SAFETY: doc ptr is valid (borrowed from stack), path ptr+len are valid
+            // (static byte string), out-pointers are non-null and writable.
             unsafe {
                 qjson::ffi::qjson_get_str(
                     &doc as *const _ as *mut _,
@@ -84,6 +88,7 @@ fn bench_field_access(c: &mut Criterion) {
     group.bench_function("get_f64/max_tokens", |b| {
         b.iter(|| {
             let mut out = 0f64;
+            // SAFETY: same as above - doc, path, and out-pointer are all valid.
             unsafe {
                 qjson::ffi::qjson_get_f64(
                     &doc as *const _ as *mut _,
@@ -99,6 +104,7 @@ fn bench_field_access(c: &mut Criterion) {
         b.iter(|| {
             let mut out_ptr = std::ptr::null();
             let mut out_len = 0usize;
+            // SAFETY: same as above - doc, path, and out-pointers are all valid.
             unsafe {
                 qjson::ffi::qjson_get_str(
                     &doc as *const _ as *mut _,

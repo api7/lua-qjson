@@ -6,8 +6,8 @@ on:
   pull_request:
 
 permissions:
-  contents: write
-  pull-requests: write
+  contents: write      # needed for auto-push to gh-pages on main branch
+  pull-requests: write # needed for posting benchmark regression comments
 
 concurrency:
   group: bench-${{ github.event.pull_request.number || github.ref }}
@@ -22,8 +22,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          submodules: recursive
 
       - name: Install Rust (stable)
         run: |
