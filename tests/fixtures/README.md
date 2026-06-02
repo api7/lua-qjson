@@ -105,3 +105,17 @@ them.
    It fails loudly if a path, type, value or length does not match the file.
 5. To exercise the fixture in the benchmark, include `"bench"` in `ci` and set
    `bench_iters`; `make bench` (or `... lua_bench.lua manifest`) will pick it up.
+
+## Fixture sources and licenses
+
+| Fixture | Source | License |
+|---------|--------|---------|
+| `twitter.json` | [simdjson/jsonexamples](https://github.com/simdjson/simdjson/tree/master/jsonexamples) | Apache-2.0 |
+| `amazon_cellphones.ndjson` | simdjson/jsonexamples | Apache-2.0 |
+| `citm_catalog.json` | simdjson/jsonexamples (CitmCatalog benchmark) | Apache-2.0 |
+| `k8s_openapi.json` | [Kubernetes OpenAPI spec](https://github.com/kubernetes/kubernetes/tree/master/api/openapi-spec) | Apache-2.0 |
+| `github_prs.json` | GitHub REST API v3 (public repo data) | Public API response, no PII |
+| `small_api.json` | qjson synthetic | Project license |
+| `medium_resp.json` | qjson synthetic | Project license |
+| `wide_object.json` | qjson generated | Project license |
+| `deep_nesting.json` | qjson generated | Project license |
