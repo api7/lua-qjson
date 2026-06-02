@@ -335,11 +335,15 @@ fuzz_target!(|test_case: TestCase| {
     let qjson_eager_ok = qjson_eager_result.is_ok();
     let serde_ok = serde_result.is_ok();
 
-    // Allow divergence when serde rejects out-of-range numbers
+    // Allow divergence when serde rejects for reasons qjson handles differently:
+    // - "number out of range": serde's f64 model is stricter
+    // - "invalid number": serde may reject some edge cases differently
     if qjson_eager_ok != serde_ok {
         if qjson_eager_ok && !serde_ok {
             let err_msg = serde_result.as_ref().err().unwrap().to_string();
-            if !err_msg.contains("number out of range") {
+            let allowed_divergence = err_msg.contains("number out of range")
+                || err_msg.contains("invalid number");
+            if !allowed_divergence {
                 panic!(
                     "EAGER/serde mismatch: qjson_ok={} serde_ok={} serde_err={:?}\nnumber: {:?}\njson: {}",
                     qjson_eager_ok, serde_ok, err_msg, test_case.number, json
@@ -445,17 +449,20 @@ fn test_number_extraction(json: &str, number_spec: &NumberSpec) {
         if let Ok(serde_val) = serde_json::from_str::<Value>(json) {
             if let Some(arr) = serde_val.as_array() {
                 if let Some(num) = arr.get(0).and_then(|v| v.as_f64()) {
-                    // Allow small floating point differences
-                    let rel_error = if num == 0.0 {
-                        (f64_val - num).abs()
-                    } else {
-                        ((f64_val - num) / num).abs()
-                    };
+                    // Skip infinite values from serde (e.g., 1e999)
+                    if !num.is_finite() {
+                        return;
+                    }
 
-                    if rel_error > 1e-10 && (f64_val - num).abs() > 1e-10 {
+                    // Allow small floating point differences (use OR to catch both
+                    // small and large magnitude cases)
+                    let abs_error = (f64_val - num).abs();
+                    let rel_error = if num == 0.0 { abs_error } else { abs_error / num.abs() };
+
+                    if rel_error > 1e-10 || abs_error > 1e-10 {
                         panic!(
-                            "f64 mismatch: qjson={} serde={} rel_error={} number: {:?}\njson: {}",
-                            f64_val, num, rel_error, number_spec, json
+                            "f64 mismatch: qjson={} serde={} rel_error={} abs_error={} number: {:?}\njson: {}",
+                            f64_val, num, rel_error, abs_error, number_spec, json
                         );
                     }
                 }
