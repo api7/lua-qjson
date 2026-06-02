@@ -355,3 +355,73 @@ fn lazy_string_decode_error_reports_string_content_offset() {
 
     unsafe { qjson_free(doc) };
 }
+
+#[test]
+fn format_error_complete_coverage() {
+    // QJSON_OK
+    let msg = format_error_message(qjson_err::QJSON_OK, usize::MAX, 0, b"");
+    assert_eq!(msg, "ok");
+
+    // QJSON_OUT_OF_RANGE (code 4) - integer overflow
+    let msg = format_error_message(
+        qjson_err::QJSON_OUT_OF_RANGE,
+        24,
+        0,
+        b"",
+    );
+    assert_eq!(msg, "out of range at byte 24");
+
+    let msg = format_error_message(qjson_err::QJSON_OUT_OF_RANGE, usize::MAX, 0, b"");
+    assert_eq!(msg, "out of range");
+
+    // QJSON_DECODE_FAILED (code 5) - generic decode failure
+    let msg = format_error_message(qjson_err::QJSON_DECODE_FAILED, 10, 0, b"");
+    assert_eq!(msg, "decode failed at byte 10");
+
+    let msg = format_error_message(qjson_err::QJSON_DECODE_FAILED, usize::MAX, 0, b"");
+    assert_eq!(msg, "decode failed");
+
+    // QJSON_INVALID_PATH (code 6) - malformed path string
+    let msg = format_error_message(qjson_err::QJSON_INVALID_PATH, usize::MAX, 0, b"");
+    assert_eq!(msg, "invalid path syntax");
+
+    // QJSON_INVALID_ARG (code 7) - null pointer etc
+    let msg = format_error_message(qjson_err::QJSON_INVALID_ARG, usize::MAX, 0, b"");
+    assert_eq!(msg, "invalid argument");
+
+    // QJSON_OOM (code 8) - out of memory
+    let msg = format_error_message(qjson_err::QJSON_OOM, usize::MAX, 0, b"");
+    assert_eq!(msg, "out of memory");
+
+    // QJSON_NUMBER_OUT_OF_RANGE (code 11) - number overflow
+    let msg = format_error_message(
+        qjson_err::QJSON_NUMBER_OUT_OF_RANGE,
+        20,
+        0,
+        b"",
+    );
+    assert_eq!(msg, "out of range at byte 20");
+
+    let msg = format_error_message(
+        qjson_err::QJSON_NUMBER_OUT_OF_RANGE,
+        usize::MAX,
+        0,
+        b"",
+    );
+    assert_eq!(msg, "out of range");
+
+    // QJSON_INVALID_STRING (code 13) - bad escape sequence etc
+    let msg = format_error_message(qjson_err::QJSON_INVALID_STRING, 6, 0, b"");
+    assert_eq!(msg, "invalid string content at byte 6");
+
+    let msg = format_error_message(qjson_err::QJSON_INVALID_STRING, usize::MAX, 0, b"");
+    assert_eq!(msg, "invalid string content");
+
+    // QJSON_INVALID_UTF8 (code 14) - invalid UTF-8 bytes
+    let msg = format_error_message(qjson_err::QJSON_INVALID_UTF8, 5, 0, b"");
+    assert_eq!(msg, "invalid UTF-8 in string at byte 5");
+
+    let msg = format_error_message(qjson_err::QJSON_INVALID_UTF8, usize::MAX, 0, b"");
+    assert_eq!(msg, "invalid UTF-8 in string");
+}
+
