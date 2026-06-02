@@ -42,6 +42,17 @@ jobs:
       - name: Run benchmarks
         run: cargo bench --bench rust_bench -- --output-format bencher | tee output.txt
 
+      - name: Ensure gh-pages branch exists
+        run: |
+          if ! git ls-remote --exit-code --heads origin gh-pages; then
+            echo "Creating gh-pages branch..."
+            git checkout --orphan gh-pages
+            git reset --hard
+            git commit --allow-empty -m "Initialize gh-pages branch for benchmark data"
+            git push origin gh-pages
+            git checkout -
+          fi
+
       - name: Store benchmark result
         uses: benchmark-action/github-action-benchmark@v1
         with:
