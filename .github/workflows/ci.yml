@@ -321,7 +321,7 @@ jobs:
       - name: Install Rust (nightly)
         run: |
           rustup toolchain install nightly --profile minimal --no-self-update
-          rustup +nightly target add x86_64-unknown-linux-gnu i686-unknown-linux-gnu
+          rustup +nightly target add x86_64-unknown-linux-gnu i686-unknown-linux-gnu powerpc64-unknown-linux-gnu
           rustup +nightly component add miri
 
       - name: Cache cargo registry & target
@@ -348,6 +348,13 @@ jobs:
           cargo +nightly miri test --target i686-unknown-linux-gnu --no-default-features --test ffi_cursor
           cargo +nightly miri test --target i686-unknown-linux-gnu --no-default-features --test ffi_strings
           cargo +nightly miri test --target i686-unknown-linux-gnu --no-default-features --test ffi_ops_interleave
+
+      - name: Miri FFI tests powerpc64 (big-endian validation)
+        run: |
+          cargo +nightly miri test --target powerpc64-unknown-linux-gnu --no-default-features --test ffi_smoke
+          cargo +nightly miri test --target powerpc64-unknown-linux-gnu --no-default-features --test ffi_cursor
+          cargo +nightly miri test --target powerpc64-unknown-linux-gnu --no-default-features --test ffi_strings
+          cargo +nightly miri test --target powerpc64-unknown-linux-gnu --no-default-features --test ffi_ops_interleave
 
       - name: ASan FFI smoke tests
         continue-on-error: true

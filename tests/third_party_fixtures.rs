@@ -1,5 +1,5 @@
 use std::fs;
-use std::os::raw::c_int;
+use std::os::raw::{c_char, c_int};
 use std::path::{Path, PathBuf};
 use std::ptr;
 
@@ -98,35 +98,35 @@ fn simdjson_ndjson_cases() -> Vec<PathBuf> {
 fn get_str(doc: *mut qjson_doc, path: &[u8]) -> String {
     let mut p: *const u8 = ptr::null();
     let mut n: usize = 0;
-    let rc = unsafe { qjson_get_str(doc, path.as_ptr() as *const i8, path.len(), &mut p, &mut n) };
+    let rc = unsafe { qjson_get_str(doc, path.as_ptr() as *const c_char, path.len(), &mut p, &mut n) };
     assert_eq!(rc, qjson_err::QJSON_OK as c_int);
     String::from_utf8(unsafe { std::slice::from_raw_parts(p, n) }.to_vec()).unwrap()
 }
 
 fn get_i64(doc: *mut qjson_doc, path: &[u8]) -> i64 {
     let mut v: i64 = 0;
-    let rc = unsafe { qjson_get_i64(doc, path.as_ptr() as *const i8, path.len(), &mut v) };
+    let rc = unsafe { qjson_get_i64(doc, path.as_ptr() as *const c_char, path.len(), &mut v) };
     assert_eq!(rc, qjson_err::QJSON_OK as c_int);
     v
 }
 
 fn get_bool(doc: *mut qjson_doc, path: &[u8]) -> bool {
     let mut v: c_int = -1;
-    let rc = unsafe { qjson_get_bool(doc, path.as_ptr() as *const i8, path.len(), &mut v) };
+    let rc = unsafe { qjson_get_bool(doc, path.as_ptr() as *const c_char, path.len(), &mut v) };
     assert_eq!(rc, qjson_err::QJSON_OK as c_int);
     v != 0
 }
 
 fn is_null(doc: *mut qjson_doc, path: &[u8]) -> bool {
     let mut v: c_int = -1;
-    let rc = unsafe { qjson_is_null(doc, path.as_ptr() as *const i8, path.len(), &mut v) };
+    let rc = unsafe { qjson_is_null(doc, path.as_ptr() as *const c_char, path.len(), &mut v) };
     assert_eq!(rc, qjson_err::QJSON_OK as c_int);
     v != 0
 }
 
 fn len(doc: *mut qjson_doc, path: &[u8]) -> usize {
     let mut n: usize = 0;
-    let rc = unsafe { qjson_len(doc, path.as_ptr() as *const i8, path.len(), &mut n) };
+    let rc = unsafe { qjson_len(doc, path.as_ptr() as *const c_char, path.len(), &mut n) };
     assert_eq!(rc, qjson_err::QJSON_OK as c_int);
     n
 }
@@ -136,7 +136,7 @@ fn open(doc: *mut qjson_doc, path: &[u8]) -> qjson_cursor {
     let rc = unsafe {
         qjson_open(
             doc,
-            path.as_ptr() as *const i8,
+            path.as_ptr() as *const c_char,
             path.len(),
             cur.as_mut_ptr(),
         )
@@ -156,7 +156,7 @@ fn cursor_get_str(cur: &qjson_cursor) -> String {
     let empty = b"";
     let mut p: *const u8 = ptr::null();
     let mut n: usize = 0;
-    let rc = unsafe { qjson_cursor_get_str(cur, empty.as_ptr() as *const i8, 0, &mut p, &mut n) };
+    let rc = unsafe { qjson_cursor_get_str(cur, empty.as_ptr() as *const c_char, 0, &mut p, &mut n) };
     assert_eq!(rc, qjson_err::QJSON_OK as c_int);
     String::from_utf8(unsafe { std::slice::from_raw_parts(p, n) }.to_vec()).unwrap()
 }
@@ -304,7 +304,7 @@ fn cjson_menu_and_matrix_fixtures_keep_array_shape() {
     let rc = unsafe {
         qjson_cursor_field(
             &second,
-            b"onclick".as_ptr() as *const i8,
+            b"onclick".as_ptr() as *const c_char,
             b"onclick".len(),
             onclick.as_mut_ptr(),
         )
@@ -324,7 +324,7 @@ fn cjson_menu_and_matrix_fixtures_keep_array_shape() {
     let first = cursor_index(&middle_row, 0);
     let mut v: i64 = 0;
     let empty = b"";
-    let rc = unsafe { qjson_cursor_get_i64(&first, empty.as_ptr() as *const i8, 0, &mut v) };
+    let rc = unsafe { qjson_cursor_get_i64(&first, empty.as_ptr() as *const c_char, 0, &mut v) };
     assert_eq!(rc, qjson_err::QJSON_OK as c_int);
     assert_eq!(v, 1);
     unsafe { qjson_free(matrix_doc) };
@@ -444,7 +444,7 @@ fn cjson_fixture_invalid_paths_and_type_mismatches_fail() {
     let rc = unsafe {
         qjson_get_str(
             doc,
-            b"format.width".as_ptr() as *const i8,
+            b"format.width".as_ptr() as *const c_char,
             b"format.width".len(),
             &mut wrong_type_p,
             &mut wrong_type_n,
@@ -457,7 +457,7 @@ fn cjson_fixture_invalid_paths_and_type_mismatches_fail() {
     let rc = unsafe {
         qjson_get_str(
             doc,
-            b"format.missing".as_ptr() as *const i8,
+            b"format.missing".as_ptr() as *const c_char,
             b"format.missing".len(),
             &mut p,
             &mut n,
@@ -470,7 +470,7 @@ fn cjson_fixture_invalid_paths_and_type_mismatches_fail() {
     let rc = unsafe {
         qjson_cursor_field(
             &format_type,
-            b"child".as_ptr() as *const i8,
+            b"child".as_ptr() as *const c_char,
             b"child".len(),
             nested.as_mut_ptr(),
         )
@@ -559,7 +559,7 @@ fn simdjson_big_integer_literals_parse_but_do_not_fit_i64() {
     for data in &cases[..2] {
         let doc = parse(data);
         let mut v: i64 = 0;
-        let rc = unsafe { qjson_get_i64(doc, b"val".as_ptr() as *const i8, b"val".len(), &mut v) };
+        let rc = unsafe { qjson_get_i64(doc, b"val".as_ptr() as *const c_char, b"val".len(), &mut v) };
         assert_eq!(rc, qjson_err::QJSON_OUT_OF_RANGE as c_int);
         unsafe { qjson_free(doc) };
     }
@@ -569,7 +569,7 @@ fn simdjson_big_integer_literals_parse_but_do_not_fit_i64() {
     let big_integer = cursor_index(&root, 1);
     let empty = b"";
     let mut v: i64 = 0;
-    let rc = unsafe { qjson_cursor_get_i64(&big_integer, empty.as_ptr() as *const i8, 0, &mut v) };
+    let rc = unsafe { qjson_cursor_get_i64(&big_integer, empty.as_ptr() as *const c_char, 0, &mut v) };
     assert_eq!(rc, qjson_err::QJSON_OUT_OF_RANGE as c_int);
     unsafe { qjson_free(doc) };
 }
