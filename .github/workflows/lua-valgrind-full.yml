@@ -15,7 +15,7 @@ env:
 jobs:
   lua-valgrind-full:
     name: Full Lua valgrind memcheck
-    runs-on: ubuntu-latest
+    runs-on: ubicloud-standard-2
     timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4

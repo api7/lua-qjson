@@ -15,7 +15,7 @@ concurrency:
 jobs:
   audit:
     name: Supply-chain audit
-    runs-on: ubuntu-latest
+    runs-on: ubicloud-standard-2
     steps:
       - uses: actions/checkout@v4
 

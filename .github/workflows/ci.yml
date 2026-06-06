@@ -18,7 +18,7 @@ env:
 jobs:
   changes:
     name: Detect CI scope
-    runs-on: ubuntu-latest
+    runs-on: ubicloud-standard-2
     outputs:
       code: ${{ steps.scope.outputs.code }}
     steps:
@@ -84,7 +84,7 @@ jobs:
 
   audit:
     name: Supply-chain audit
-    runs-on: ubuntu-latest
+    runs-on: ubicloud-standard-2
     steps:
       - uses: actions/checkout@v4
         with:
@@ -147,7 +147,7 @@ jobs:
 
   build:
     name: Build release cdylib (linux)
-    runs-on: ubuntu-latest
+    runs-on: ubicloud-standard-2
     needs: changes
     if: github.event_name != 'pull_request' || needs.changes.outputs.code == 'true'
     steps:
@@ -189,7 +189,7 @@ jobs:
     if: github.event_name != 'pull_request' || needs.changes.outputs.code == 'true'
     strategy:
       matrix:
-        os: [ubuntu-latest, macos-14]
+        os: [ubicloud-standard-2, macos-14]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -218,11 +218,11 @@ jobs:
         run: cargo test --release --no-default-features
 
       - name: Test debug scalar-only
-        if: matrix.os == 'ubuntu-latest'
+        if: matrix.os == 'ubicloud-standard-2'
         run: cargo test --no-default-features
 
       - name: Test with test-panic feature
-        if: matrix.os == 'ubuntu-latest'
+        if: matrix.os == 'ubicloud-standard-2'
         run: cargo test --features test-panic --release
 
       - name: Install LuaJIT for package validation
@@ -251,7 +251,7 @@ jobs:
 
   lua-lint:
     name: Lua lint
-    runs-on: ubuntu-latest
+    runs-on: ubicloud-standard-2
     needs: changes
     if: github.event_name != 'pull_request' || needs.changes.outputs.code == 'true'
     steps:
@@ -271,7 +271,7 @@ jobs:
 
   fuzz:
     name: Fuzz corpus replay
-    runs-on: ubuntu-latest
+    runs-on: ubicloud-standard-2
     needs: changes
     if: github.event_name != 'pull_request' || needs.changes.outputs.code == 'true'
     steps:
@@ -310,7 +310,7 @@ jobs:
 
   sanitizers:
     name: Sanitizers (Rust nightly)
-    runs-on: ubuntu-latest
+    runs-on: ubicloud-standard-2
     needs: changes
     if: github.event_name != 'pull_request' || needs.changes.outputs.code == 'true'
     steps:
@@ -367,7 +367,7 @@ jobs:
 
   lua:
     name: Lua integration tests (${{ matrix.runtime.name }})
-    runs-on: ubuntu-latest
+    runs-on: ubicloud-standard-2
     needs: build
     strategy:
       fail-fast: false
@@ -431,7 +431,7 @@ jobs:
 
   lua-valgrind:
     name: Lua valgrind memcheck (upstream LuaJIT)
-    runs-on: ubuntu-latest
+    runs-on: ubicloud-standard-2
     needs: build
     timeout-minutes: 10
     steps:
@@ -494,7 +494,7 @@ jobs:
 
   openresty:
     name: OpenResty runtime (${{ matrix.openresty.version }})
-    runs-on: ubuntu-22.04
+    runs-on: ubicloud-standard-2-ubuntu-2204
     needs: build
     permissions:
       contents: read
