@@ -108,7 +108,7 @@ Numbers below come from one such run.
 Each row is "parse + access request fields" on the named payload.
 
 | Scenario | Size | cjson | simdjson | `qjson.parse` | `qjson.decode + access content` | `qjson.decode + qjson.encode` |
-|---|---|---:|---:|---:|---:|---:|---:|
+|---|---|---:|---:|---:|---:|---:|
 | small      |   2.1 KB |  92,716 | 102,602 | 128,005 | 125,815 | 260,322 |
 | medium     |  60.4 KB |   9,007 |  82,699 | 116,198 | 219,491 | 141,563 |
 | github-100k |   100 KB |   1,834 |   1,909 |   4,591 |   5,643 |   6,207 |
@@ -151,7 +151,7 @@ re-encode pipeline. Numbers below come from a 3-round per-scenario
 fresh-process run on x86_64 Linux (AMD EPYC Rome, Zen 2).
 
 | Scenario | modify top + encode | add field + encode | modify nested + encode |
-|---|---|---:|---:|---:|
+|---|---:|---:|---:|
 | small (2 KB)    | 58,242  | 58,190  | 43,003  |
 | medium (60 KB)  | 37,498  | 45,364  | 134,590 |
 | github-100k      |  4,419  |  3,964  |  4,359  |
